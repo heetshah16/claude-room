@@ -1,0 +1,224 @@
+import { createServer } from 'node:http'
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { join, extname } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { parseUsageLine, sumUsage, cacheRatio } from './ledger.mjs'
+import { mayApprove } from './identity.mjs'
+import { renderUI } from './ui.mjs'
+
+const json = (res, code, body) => {
+  const s = JSON.stringify(body)
+  res.writeHead(code, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(s) })
+  res.end(s)
+}
+
+const readBody = req =>
+  new Promise(resolve => {
+    const chunks = []
+    req.on('data', c => chunks.push(c))
+    req.on('end', () => resolve(Buffer.concat(chunks)))
+    req.on('error', () => resolve(Buffer.alloc(0)))
+  })
+
+export function createWeb(deps) {
+  const { config, registry, ledger, decisions, queue, store, bus, channel, permissions } = deps
+  const uploadDir = join(config.stateDir, 'uploads')
+  mkdirSync(uploadDir, { recursive: true })
+
+  // Gate on member identity, never on who can reach the port. Anyone able to
+  // put text in front of Claude is a prompt-injection path.
+  const memberFrom = (req, url, body) =>
+    registry.byToken(body?.token ?? url.searchParams.get('token') ?? req.headers['x-room-token'])
+
+  function drain() {
+    const turn = queue.beginTurn()
+    if (!turn) return
+    if (config.payerMode === 'rotate') store.writePayer(turn.payer)
+    channel.notify(turn.messages)
+    bus.publish('turn', { started: true, participants: turn.participants })
+  }
+
+  function broadcastMessage(m) {
+    store.appendMessage(m)
+    bus.publish('message', m)
+  }
+
+  function usageFromTranscript(path) {
+    if (!path) return null
+    let text
+    try {
+      text = readFileSync(path, 'utf8')
+    } catch {
+      return null
+    }
+    const lines = text.split('\n')
+    const usages = []
+    // Walk backwards to the previous user line so only this turn's requests count.
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i]
+      if (!line.trim()) continue
+      let o
+      try {
+        o = JSON.parse(line)
+      } catch {
+        continue
+      }
+      if (o.type === 'user') break
+      const u = parseUsageLine(line)
+      if (u) usages.push(u)
+    }
+    return usages.length ? sumUsage(usages) : null
+  }
+
+  function handleHook(event, p) {
+    if (event === 'PreToolUse') {
+      bus.publish('activity', { kind: 'tool-start', tool: p.tool_name, input: p.tool_input, ts: Date.now() })
+    } else if (event === 'PostToolUse') {
+      bus.publish('activity', { kind: 'tool-end', tool: p.tool_name, ts: Date.now() })
+    } else if (event === 'Notification') {
+      bus.publish('activity', { kind: 'notification', type: p.notification_type, ts: Date.now() })
+    } else if (event === 'SessionStart') {
+      bus.publish('activity', { kind: 'session-start', ts: Date.now() })
+    } else if (event === 'Stop') {
+      const participants = queue.participantsOf(p.prompt_id) ?? queue.participantsOf('__inflight__') ?? []
+      const usage = usageFromTranscript(p.transcript_path)
+      if (usage) {
+        ledger.record(p.prompt_id, usage, participants, config.splitMode)
+        store.saveLedger(ledger)
+        bus.publish('cost', {
+          promptId: p.prompt_id,
+          ratio: cacheRatio(usage),
+          usage,
+          totals: Object.fromEntries(registry.all().map(m => [m.id, ledger.totalsFor(m.id)])),
+        })
+      }
+      queue.endTurn(p.prompt_id)
+      bus.publish('turn', { started: false })
+      drain()
+    }
+  }
+
+  return createServer(async (req, res) => {
+    const url = new URL(req.url, `http://${req.headers.host ?? 'localhost'}`)
+    const path = url.pathname
+
+    try {
+      if (req.method === 'GET' && path === '/') {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        return res.end(renderUI(config))
+      }
+
+      if (req.method === 'GET' && path === '/events') {
+        const member = memberFrom(req, url, null)
+        if (!member) return json(res, 401, { error: 'bad token' })
+        res.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-cache',
+          connection: 'keep-alive',
+        })
+        res.write(': connected\n\n')
+        bus.subscribe(res)
+        bus.publish('presence', {
+          members: registry.all().map(m => ({ id: m.id, name: m.name, role: m.role })),
+          listeners: bus.count(),
+        })
+        return
+      }
+
+      if (req.method === 'GET' && path === '/api/state') {
+        const member = memberFrom(req, url, null)
+        if (!member) return json(res, 401, { error: 'bad token' })
+        return json(res, 200, {
+          you: { id: member.id, name: member.name, role: member.role, canApprove: mayApprove(member) },
+          room: config.roomName,
+          payerMode: config.payerMode,
+          members: registry.all().map(m => ({ id: m.id, name: m.name, role: m.role })),
+          messages: store.recent(200),
+          ledger: Object.fromEntries(registry.all().map(m => [m.id, ledger.totalsFor(m.id)])),
+          decisions: decisions.open(),
+          pending: queue.pending().length,
+          busy: queue.busy(),
+          pendingApprovals: mayApprove(member) ? permissions.pending() : [],
+        })
+      }
+
+      if (req.method === 'POST' && path === '/msg') {
+        let body = {}
+        try {
+          body = JSON.parse((await readBody(req)).toString('utf8') || '{}')
+        } catch {
+          return json(res, 400, { error: 'bad json' })
+        }
+        const member = memberFrom(req, url, body)
+        if (!member) return json(res, 401, { error: 'bad token' })
+
+        const r = queue.submit(member, String(body.text ?? ''), { force: body.force === true })
+        if (!r.ok) {
+          bus.publish('rejected', { memberId: member.id, name: member.name, reason: r.reason })
+          return json(res, 429, { ok: false, reason: r.reason })
+        }
+        broadcastMessage(r.message)
+        if (r.conflicts.length) bus.publish('conflicts', { msgId: r.message.id, conflicts: r.conflicts })
+        if (r.message.addressed) drain()
+        return json(res, 200, { ok: true, addressed: r.message.addressed, reason: r.reason, conflicts: r.conflicts })
+      }
+
+      if (req.method === 'POST' && path === '/upload') {
+        const member = memberFrom(req, url, null)
+        if (!member) return json(res, 401, { error: 'bad token' })
+        const buf = await readBody(req)
+        const name = String(url.searchParams.get('name') ?? 'upload.bin')
+        // Never trust the client filename for a path; keep only a short extension.
+        const ext = extname(name).slice(0, 12).replace(/[^.A-Za-z0-9]/g, '')
+        const dest = join(uploadDir, `${Date.now()}-${randomUUID().slice(0, 8)}${ext}`)
+        writeFileSync(dest, buf)
+        const r = queue.submit(member, String(url.searchParams.get('text') ?? ''), {
+          force: true,
+          attachment: { path: dest, name },
+        })
+        if (r.message) broadcastMessage(r.message)
+        if (r.message?.addressed) drain()
+        return json(res, 200, { ok: true, path: dest })
+      }
+
+      if (req.method === 'POST' && path === '/verdict') {
+        let body = {}
+        try {
+          body = JSON.parse((await readBody(req)).toString('utf8') || '{}')
+        } catch {
+          return json(res, 400, { error: 'bad json' })
+        }
+        const member = memberFrom(req, url, body)
+        if (!member) return json(res, 401, { error: 'bad token' })
+        const r = permissions.resolve(String(body.request_id), member, String(body.behavior))
+        if (r.ok) {
+          channel.sendVerdict(body.request_id, body.behavior)
+          bus.publish('approval', { request_id: body.request_id, behavior: body.behavior, by: member.name })
+        }
+        return json(res, r.ok ? 200 : 403, r)
+      }
+
+      if (req.method === 'POST' && path.startsWith('/hook/')) {
+        // Fire and forget. A hook must never stall a turn, so this always
+        // answers 200 even when the payload is unparseable.
+        const event = path.slice('/hook/'.length)
+        let payload = {}
+        try {
+          payload = JSON.parse((await readBody(req)).toString('utf8') || '{}')
+        } catch {
+          payload = {}
+        }
+        try {
+          handleHook(event, payload)
+        } catch {
+          // The activity feed may degrade; the room must not.
+        }
+        return json(res, 200, { ok: true })
+      }
+
+      return json(res, 404, { error: 'not found' })
+    } catch (err) {
+      return json(res, 500, { error: String(err?.message ?? err) })
+    }
+  })
+}

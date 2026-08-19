@@ -1,0 +1,6 @@
+{
+  "name": "claude-room",
+  "description": "Multiplayer Claude Code — several humans drive one shared session from their browsers over Tailscale, with per-member cost attribution.",
+  "version": "0.1.0",
+  "keywords": ["channel", "mcp", "multiplayer", "room", "collaboration", "tailscale"]
+}
