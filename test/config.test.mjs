@@ -31,3 +31,21 @@ test('env overrides are parsed and typed', () => {
 test('an unknown payer mode falls back to host rather than throwing', () => {
   assert.equal(loadConfig({ ROOM_PAYER_MODE: 'nonsense' }).payerMode, 'host')
 })
+
+test('observer settings default to off and safe', () => {
+  const c = loadConfig({})
+  assert.equal(c.observer.on, false)
+  assert.equal(c.observer.model, 'haiku')
+  assert.equal(c.observer.debounceMs, 4000)
+  assert.equal(c.observer.maxEvents, 8)
+  assert.equal(c.observer.notes, true)
+  assert.equal(c.observer.notesPerWindow, 6)
+})
+
+test('observer settings read from env, and notes need an explicit zero to silence', () => {
+  const c = loadConfig({ ROOM_OBSERVER: '1', ROOM_OBSERVER_DEBOUNCE_MS: '900', ROOM_OBSERVER_NOTES: '0' })
+  assert.equal(c.observer.on, true)
+  assert.equal(c.observer.debounceMs, 900)
+  assert.equal(c.observer.notes, false)
+  assert.equal(loadConfig({ ROOM_OBSERVER: '1' }).observer.notes, true)
+})

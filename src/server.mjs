@@ -16,8 +16,14 @@ import { createChannel } from './channel.mjs'
 import { createWeb } from './web.mjs'
 import { PermissionBroker } from './permissions.mjs'
 import { createMember } from './identity.mjs'
+import { Observer } from './observer.mjs'
+import { makeRunner } from './run-model.mjs'
 
 const log = s => process.stderr.write(`room: ${s}\n`)
+
+// Reserved ledger identity so the observer's spend sits beside the humans it
+// serves rather than hiding inside the host's total.
+const OBSERVER_ID = 'observer'
 
 const config = loadConfig(process.env)
 const store = new Store(config.stateDir)
@@ -71,7 +77,38 @@ const sweeper = setInterval(() => {
 }, 30_000)
 sweeper.unref()
 
-const web = createWeb({ config, registry, ledger, decisions, queue, store, bus, channel, permissions, turns })
+let observer = null
+if (config.observer.on) {
+  observer = new Observer({
+    config,
+    runModel: makeRunner(config),
+    onBrief() {
+      // Publish the same shape /api/state returns, so the browser has one format.
+      bus.publish('brief', { ...observer.briefForInjection(), on: true, paused: observer.paused() })
+    },
+    onNote(text) {
+      const m = {
+        id: randomUUID(), memberId: OBSERVER_ID, name: 'observer', text,
+        ts: Date.now(), addressed: false, kind: 'system',
+      }
+      store.appendMessage(m)
+      bus.publish('message', m)
+    },
+    onSpend(tokens) {
+      ledger.record(
+        `obs-${randomUUID()}`,
+        { input: tokens.input, output: tokens.output, cacheRead: 0, cacheCreate: 0, cache1h: 0, cache5m: 0 },
+        [{ memberId: OBSERVER_ID, weight: 1 }],
+        'equal',
+      )
+      store.saveLedger(ledger)
+      bus.publish('cost', { observer: ledger.totalsFor(OBSERVER_ID) })
+    },
+  })
+  log(`observer on (${config.observer.model}), notes ${config.observer.notes ? 'on' : 'off'}`)
+}
+
+const web = createWeb({ config, registry, ledger, decisions, queue, store, bus, channel, permissions, turns, observer })
 
 web.listen(config.port, config.host, () => {
   log(`listening on http://${config.host}:${config.port} (${registry.all().length} member(s))`)

@@ -21,6 +21,13 @@ test('a room name containing markup cannot break out of the document', () => {
   assert.ok(!html.includes('</script><img'))
 })
 
+test('the room state panel is present and defaults to observer off', () => {
+  const html = renderUI(loadConfig({}))
+  assert.ok(html.includes('id="brief"'))
+  assert.match(html, /Room state/)
+  assert.match(html, /observer off/)
+})
+
 test('the client never assigns untrusted values through innerHTML', () => {
   const html = renderUI(loadConfig({}))
   const script = html.slice(html.indexOf('<script>'))

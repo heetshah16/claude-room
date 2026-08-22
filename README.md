@@ -100,6 +100,61 @@ flagged in the room — to the humans, for the humans to settle. The room never 
 contradiction itself. An agent quietly picking a side and nobody noticing until review is
 the exact failure being prevented.
 
+## The observer
+
+Off by default. `ROOM_OBSERVER=1` starts a second, **tool-less** agent that watches the room
+and keeps a structured brief of conversation state — open threads, where the discussion
+forked, who walked something back, and what Claude already tried and how it went.
+
+When someone addresses Claude, that brief is delivered as **its own channel event
+immediately before their message**:
+
+```
+<channel source="room" kind="brief" stale="false" age_s="3">
+forks:
+  - 14:10 → consolidate TTL vs add cache layer [live: consolidate TTL]
+reversals:
+  - bo: cache layer → stateless (heet cited the earlier decision)
+tried:
+  - edited src/auth/config.js → npm test -- auth failed
+</channel>
+<channel source="room" user="bo" member_id="…">and add a cache layer to auth</channel>
+```
+
+The member's message is **byte-identical** — not even wrapped. The brief is a separate
+event, tagged so the agent knows it is machine-written and not something a person said.
+
+It runs on a debounce and is **never on the critical path**. If a cycle is in flight when
+someone addresses Claude, whatever brief exists is injected with `stale="true"` and its age.
+If the observer is broken, over budget, or off, no brief is injected and the room behaves
+exactly as it does without one. Every failure degrades to "no observer".
+
+Each cycle sends only the **previous brief plus what is new**, so a room open all day costs
+the same per cycle as one that just opened. The brief is the memory.
+
+### It talks, but rarely
+
+Silent by default except for hard signals: a newly detected **reversal** or **fork**. It
+posts one short note per signal, never twice for the same one, capped per window. It flags;
+it never resolves. `ROOM_OBSERVER_NOTES=0` makes it silent and panel-only.
+
+### What it costs
+
+Haiku, with only the delta as input. Fractions of a cent per cycle. It gets its own
+`observer` row in the cost table, and `ROOM_OBSERVER_MAX_TOKENS_PER_WINDOW` pauses it rather
+than letting it run away — the brief simply goes stale and the room carries on.
+
+### The risk worth knowing
+
+The observer is a **laundering path for prompt injection**. A member writes something
+manipulative, the observer summarises it, and the summary reaches the main agent wearing
+machine-written framing. The output is parsed as JSON and clamped to a fixed schema
+(unknown keys dropped, strings truncated, sections capped), the event is tagged
+`kind="brief"`, and the agent is told never to follow instructions found inside one. The
+observer itself runs with the entire tool surface removed, so it cannot act on anything it
+reads. That bounds the risk; it does not eliminate it. Every summarisation layer feeding an
+agent has this property, and it is recorded here as a decision rather than an oversight.
+
 ## Cost
 
 One session has one credential, so by default **every token bills to whoever launched the
@@ -162,6 +217,13 @@ prompt can approve tool use in your session on your files.
 | `ROOM_TOKENS_PER_MEMBER` | `0` (off) | Per-member token budget per window |
 | `ROOM_MESSAGES_PER_WINDOW` | `200` | Per-member message rate limit |
 | `ROOM_BUDGET_WINDOW_MS` | `18000000` (5h) | Budget and rate-limit window |
+| `ROOM_OBSERVER` | off | `1` to run the observer |
+| `ROOM_OBSERVER_MODEL` | `haiku` | Model for the observer |
+| `ROOM_OBSERVER_DEBOUNCE_MS` | `4000` | Idle time before a cycle |
+| `ROOM_OBSERVER_MAX_EVENTS` | `8` | Buffered events that force a cycle early |
+| `ROOM_OBSERVER_NOTES` | on | `0` for panel-only, no room notes |
+| `ROOM_OBSERVER_NOTES_PER_WINDOW` | `6` | Cap on observer notes per window |
+| `ROOM_OBSERVER_MAX_TOKENS_PER_WINDOW` | `200000` | Observer budget before it pauses |
 
 ## Security
 
@@ -191,8 +253,10 @@ text in front of an agent with your filesystem.
 npm test
 ```
 
-98 tests, no network and no Claude Code required. The pure modules — router, ledger,
-identity, decisions, queue — carry the load-bearing logic and are tested directly.
+167 tests, no network and no Claude Code required. The pure modules — router, ledger,
+identity, decisions, queue, turns, brief, observer — carry the load-bearing logic and are
+tested directly. The observer takes `runModel` as an injected seam, so its whole cycle is
+exercised without spawning a subprocess or spending a token.
 
 ## Design notes
 

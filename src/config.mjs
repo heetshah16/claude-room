@@ -26,5 +26,15 @@ export function loadConfig(env = process.env) {
       tokensPerMember: int(env.ROOM_TOKENS_PER_MEMBER, 0),
       messagesPerWindow: int(env.ROOM_MESSAGES_PER_WINDOW, 200),
     },
+    observer: {
+      on: bool(env.ROOM_OBSERVER),
+      model: env.ROOM_OBSERVER_MODEL || 'haiku',
+      debounceMs: int(env.ROOM_OBSERVER_DEBOUNCE_MS, 4000),
+      maxEvents: int(env.ROOM_OBSERVER_MAX_EVENTS, 8),
+      // Notes default on, so an explicit "0" is the only way to silence them.
+      notes: env.ROOM_OBSERVER_NOTES == null ? true : bool(env.ROOM_OBSERVER_NOTES),
+      notesPerWindow: int(env.ROOM_OBSERVER_NOTES_PER_WINDOW, 6),
+      maxTokensPerWindow: int(env.ROOM_OBSERVER_MAX_TOKENS_PER_WINDOW, 200_000),
+    },
   }
 }

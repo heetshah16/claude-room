@@ -14,10 +14,13 @@ import { Bus } from '../src/bus.mjs'
 import { PermissionBroker } from '../src/permissions.mjs'
 import { TurnLog } from '../src/turns.mjs'
 
-function harness(env = {}) {
+function harness(env = {}, observer = null) {
   const dir = mkdtempSync(join(tmpdir(), 'roomweb-'))
   const config = loadConfig({ ROOM_STATE_DIR: dir, ...env })
   const turns = new TurnLog()
+  const order = []
+  const briefs = []
+  const noted = []
   const registry = new Registry()
   const owner = registry.add(createMember({ name: 'heet', role: 'owner' }))
   const viewer = registry.add(createMember({ name: 'obs', role: 'viewer' }))
@@ -27,12 +30,27 @@ function harness(env = {}) {
   const sent = []
   const verdicts = []
   const permissions = new PermissionBroker()
+  const obs = observer
+    ? {
+        note: e => noted.push(e),
+        briefForInjection: observer.brief,
+        enabled: () => true,
+        paused: () => false,
+      }
+    : null
   const server = createWeb({
-    config, registry, ledger, decisions, queue, turns,
+    config, registry, ledger, decisions, queue, turns, observer: obs,
     store: new Store(dir), bus: new Bus(), permissions,
-    channel: { notify: m => sent.push(m), sendVerdict: (id, b) => verdicts.push([id, b]) },
+    channel: {
+      notify: m => { order.push('message'); sent.push(m) },
+      notifyBrief: (text, o) => { order.push('brief'); briefs.push({ text, ...o }) },
+      sendVerdict: (id, b) => verdicts.push([id, b]),
+    },
   })
-  return { dir, server, owner, viewer, sent, verdicts, queue, ledger, permissions, turns, config }
+  return {
+    dir, server, owner, viewer, sent, verdicts, queue, ledger, permissions, turns, config,
+    order, briefs, noted,
+  }
 }
 
 const listen = server =>
@@ -249,6 +267,78 @@ test('closing a turn stamps usage and cache ratio onto it', async () => {
   assert.ok(Math.abs(state.turns[0].ratio - 998 / 1000) < 1e-9)
   assert.equal(state.openTurnId, null)
   done(h)
+})
+
+test('the brief is sent as its own event immediately before the message', async () => {
+  const h = harness({}, { brief: () => ({ text: 'forks:\n  - a vs b', stale: false, ageS: 2 }) })
+  const base = await listen(h.server)
+  await post(base, '/msg', { token: h.owner.token, text: '@claude go' })
+
+  assert.equal(h.briefs.length, 1)
+  assert.equal(h.sent.length, 1)
+  assert.deepEqual(h.order, ['brief', 'message'])
+  // The member's words are untouched — not even a wrapper.
+  assert.equal(h.sent[0][0].content, '@claude go')
+  assert.ok(h.briefs[0].text.includes('a vs b'))
+  assert.equal(h.briefs[0].stale, false)
+  done(h)
+})
+
+test('no brief event is emitted when the observer has nothing yet', async () => {
+  const h = harness({}, { brief: () => ({ text: '', stale: false, ageS: 0 }) })
+  const base = await listen(h.server)
+  await post(base, '/msg', { token: h.owner.token, text: '@claude go' })
+  assert.equal(h.briefs.length, 0)
+  assert.equal(h.sent.length, 1)
+  done(h)
+})
+
+test('a stale brief is injected rather than waited for', async () => {
+  const h = harness({}, { brief: () => ({ text: 'threads:\n  - x', stale: true, ageS: 37 }) })
+  const base = await listen(h.server)
+  await post(base, '/msg', { token: h.owner.token, text: '@claude go' })
+  assert.equal(h.briefs[0].stale, true)
+  assert.equal(h.briefs[0].ageS, 37)
+  done(h)
+})
+
+test('the observer is fed chatter as well as addressed messages', async () => {
+  const h = harness({}, { brief: () => ({ text: '', stale: false, ageS: 0 }) })
+  const base = await listen(h.server)
+  await post(base, '/msg', { token: h.owner.token, text: 'just chatting' })
+  await post(base, '/msg', { token: h.owner.token, text: '@claude go' })
+  const kinds = h.noted.filter(n => n.kind === 'message').map(n => n.text)
+  assert.ok(kinds.includes('just chatting'))
+  done(h)
+})
+
+test('a closed turn is fed to the observer with its tools and reply', async () => {
+  const h = harness({}, { brief: () => ({ text: '', stale: false, ageS: 0 }) })
+  const base = await listen(h.server)
+  await post(base, '/msg', { token: h.owner.token, text: '@claude find the TTL' })
+  await post(base, '/hook/PreToolUse', { prompt_id: 'p1', tool_name: 'Grep', tool_input: { pattern: 'TTL' } })
+  await post(base, '/hook/Stop', { prompt_id: 'p1', transcript_path: '/nope' })
+
+  const turnEvt = h.noted.find(n => n.kind === 'turn')
+  assert.ok(turnEvt, 'expected a turn event')
+  assert.deepEqual(turnEvt.tools, ['Grep'])
+  assert.match(turnEvt.ask, /find the TTL/)
+  done(h)
+})
+
+test('state exposes the brief when an observer is attached, and null when not', async () => {
+  const withObs = harness({}, { brief: () => ({ text: 'threads:\n  - x', stale: false, ageS: 1 }) })
+  let base = await listen(withObs.server)
+  let s = await (await fetch(base + '/api/state?token=' + withObs.owner.token)).json()
+  assert.equal(s.brief.on, true)
+  assert.ok(s.brief.text.includes('x'))
+  done(withObs)
+
+  const without = harness()
+  base = await listen(without.server)
+  s = await (await fetch(base + '/api/state?token=' + without.owner.token)).json()
+  assert.equal(s.brief, null)
+  done(without)
 })
 
 test('a mid-sentence mention now reaches the channel', async () => {

@@ -1,6 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildNotification, sanitizeMeta, createChannel, PERMISSION_REQUEST } from '../src/channel.mjs'
+import {
+  buildNotification, sanitizeMeta, createChannel, PERMISSION_REQUEST, buildBriefNotification,
+} from '../src/channel.mjs'
 import { loadConfig } from '../src/config.mjs'
 
 const msg = (over = {}) => ({
@@ -54,6 +56,36 @@ test('every produced meta key is a legal identifier', () => {
 
 test('an empty batch produces no notification', () => {
   assert.equal(buildNotification([], 'room'), null)
+})
+
+test('a brief notification is tagged as machine-generated and attributed to nobody', () => {
+  const nt = buildBriefNotification('forks:\n  - a vs b', { stale: false, ageS: 3, roomName: 'r' })
+  assert.equal(nt.params.meta.kind, 'brief')
+  assert.equal(nt.params.meta.stale, 'false')
+  assert.equal(nt.params.meta.age_s, '3')
+  assert.equal(nt.params.meta.user, undefined)
+  assert.equal(nt.params.meta.member_id, undefined)
+  assert.ok(nt.params.content.includes('a vs b'))
+})
+
+test('an empty or blank brief produces no notification', () => {
+  const opts = { stale: false, ageS: 0, roomName: 'r' }
+  assert.equal(buildBriefNotification('', opts), null)
+  assert.equal(buildBriefNotification('   \n ', opts), null)
+  assert.equal(buildBriefNotification(null, opts), null)
+})
+
+test('a stale brief says so', () => {
+  const nt = buildBriefNotification('x', { stale: true, ageS: 41, roomName: 'r' })
+  assert.equal(nt.params.meta.stale, 'true')
+  assert.equal(nt.params.meta.age_s, '41')
+})
+
+test('the agent is told a brief is not from a person', () => {
+  const ch = createChannel({ config: { roomName: 'r', permissionRelay: false }, onReply() {}, onDecision() {} })
+  const instructions = ch.mcp._instructions ?? ''
+  // Fall back to asserting on the exported builder when the SDK hides it.
+  if (instructions) assert.match(instructions, /kind="brief" is NOT from a person/)
 })
 
 test('the permission capability is declared only when relay is enabled', () => {

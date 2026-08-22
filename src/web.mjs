@@ -21,7 +21,7 @@ const readBody = req =>
   })
 
 export function createWeb(deps) {
-  const { config, registry, ledger, decisions, queue, store, bus, channel, permissions, turns } = deps
+  const { config, registry, ledger, decisions, queue, store, bus, channel, permissions, turns, observer } = deps
   const uploadDir = join(config.stateDir, 'uploads')
   mkdirSync(uploadDir, { recursive: true })
 
@@ -35,6 +35,13 @@ export function createWeb(deps) {
     if (!turn) return
     if (config.payerMode === 'rotate') store.writePayer(turn.payer)
     const logged = turns.open({ messages: turn.messages, participants: turn.participants })
+
+    // The brief goes first, as its own event. Channel events queued together
+    // are delivered in order as one turn, so the agent sees the room's state
+    // and then the message, with the message untouched.
+    const brief = observer?.briefForInjection?.()
+    if (brief?.text) channel.notifyBrief(brief.text, { stale: brief.stale, ageS: brief.ageS })
+
     channel.notify(turn.messages)
     // msgIds let the browser link each message to the turn it caused, without
     // rewriting the append-only transcript.
@@ -56,6 +63,9 @@ export function createWeb(deps) {
   function broadcastMessage(m) {
     store.appendMessage(m)
     bus.publish('message', m)
+    // Chatter is fed to the observer too: walk-backs and forks happen in the
+    // conversation the agent never sees, which is exactly the gap it fills.
+    observer?.note?.({ kind: 'message', name: m.name, text: m.text })
   }
 
   function usageFromTranscript(path) {
@@ -114,6 +124,14 @@ export function createWeb(deps) {
       }
       const closed = turns.close(p.prompt_id, usage)
       store.saveTurns(turns)
+      if (closed) {
+        observer?.note?.({
+          kind: 'turn',
+          ask: closed.preview,
+          tools: [...new Set(closed.activity.filter(a => a.kind === 'tool-start').map(a => a.tool))],
+          reply: closed.replies.map(r => r.text).join(' ').slice(0, 300),
+        })
+      }
       queue.endTurn(p.prompt_id)
       bus.publish('turn', { started: false, turnId: closed?.id ?? null, summary: closed ? slimTurn(closed) : null })
       drain()
@@ -163,6 +181,7 @@ export function createWeb(deps) {
           pendingApprovals: mayApprove(member) ? permissions.pending() : [],
           turns: turns.recent(50).map(slimTurn),
           openTurnId: turns.openTurn()?.id ?? null,
+          brief: observer ? { ...observer.briefForInjection(), on: observer.enabled(), paused: observer.paused() } : null,
         })
       }
 

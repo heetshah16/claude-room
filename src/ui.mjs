@@ -97,6 +97,10 @@ export function renderUI(config) {
     border-left: 2px solid var(--line); padding-left: 8px; margin-bottom: 6px;
   }
   .note.conflict { color: var(--warn); border-color: var(--warn); }
+  .note.observer { color: var(--accent); border-color: var(--accent); }
+  #brief .line { font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; }
+  #brief .head { color: var(--accent); }
+  #brief .stale { color: var(--warn); font-size: 11px; }
   .note.reject { color: var(--bad); border-color: var(--bad); }
   table { width: 100%; border-collapse: collapse; font: 12px/1.5 var(--mono); }
   td { padding: 2px 0; }
@@ -149,6 +153,7 @@ export function renderUI(config) {
   <main>
     <div id="log"></div>
     <aside>
+      <h2>Room state</h2><div id="brief"><span class="note">observer off</span></div>
       <h2>Members</h2><div id="members"></div>
       <h2>Approvals</h2><div id="approvals"><span class="note">none pending</span></div>
       <h2>Cost by member</h2><table id="cost"></table>
@@ -197,7 +202,8 @@ export function renderUI(config) {
     var stick = atBottom();
     var wrap = el('div', 'msg' + (m.addressed ? ' queued' : ''));
     var head = el('div');
-    var who = el('span', 'who' + (m.kind === 'reply' ? ' claude' : ''), m.name || 'unknown');
+    var whoClass = 'who' + (m.kind === 'reply' || m.kind === 'system' ? ' claude' : '');
+    var who = el('span', whoClass, m.name || 'unknown');
     head.appendChild(who);
     var bits = new Date(m.ts || Date.now()).toTimeString().slice(0, 5);
     if (m.addressed) bits += ' · to claude';
@@ -335,6 +341,21 @@ export function renderUI(config) {
     });
   }
 
+  function renderBriefPanel(b) {
+    var box = $('brief');
+    box.textContent = '';
+    if (!b || !b.on) { box.appendChild(el('span', 'note', 'observer off')); return; }
+    if (b.paused) { box.appendChild(el('span', 'note', 'observer paused — over budget')); }
+    if (!b.text) { box.appendChild(el('span', 'note', 'nothing summarised yet')); return; }
+    // Section headers are the lines the renderer emits without indentation.
+    b.text.split('\n').forEach(function (l) {
+      box.appendChild(el('div', 'line' + (l.indexOf(' ') === 0 ? '' : ' head'), l));
+    });
+    if (b.stale || b.ageS > 30) {
+      box.appendChild(el('div', 'stale', b.stale ? 'catching up…' : b.ageS + 's old'));
+    }
+  }
+
   function renderDecisions(list) {
     var box = $('decisions');
     box.textContent = '';
@@ -396,6 +417,7 @@ export function renderUI(config) {
       liveAppend(a);
     });
     es.addEventListener('presence', function (e) { renderMembers(JSON.parse(e.data).members); });
+    es.addEventListener('brief', function (e) { renderBriefPanel(JSON.parse(e.data)); });
     es.addEventListener('decision', function (e) { load(); });
     es.addEventListener('turn', function (e) {
       var d = JSON.parse(e.data);
@@ -451,6 +473,7 @@ export function renderUI(config) {
         renderMembers(s.members);
         renderCost(s.members, s.ledger);
         renderDecisions(s.decisions);
+        renderBriefPanel(s.brief);
         approvals = s.pendingApprovals || [];
         renderApprovals();
         (s.turns || []).forEach(function (t) {
