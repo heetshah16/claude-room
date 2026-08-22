@@ -9,8 +9,18 @@
  * credential is fetched per turn and never stored at rest on the host. That is
  * the difference between per-person billing and holding everyone's tokens.
  *
- * Falls back to the host credential whenever anything is missing or unreachable,
- * because failing closed here would stall the session rather than the payment.
+ * Falls back to the host credential whenever anything is missing, unreachable,
+ * or not shaped like an API key.
+ *
+ * That last check matters more than it looks. Measured 2026-08-22: when this
+ * helper returns a credential Claude Code cannot authenticate with, the session
+ * does not error — it retries until it times out. A bad payer token therefore
+ * stalls the whole room rather than costing one turn. So anything that is not
+ * recognisably an API key is discarded here rather than handed over.
+ *
+ * Subscription OAuth access tokens are specifically NOT usable: the helper's
+ * value is sent as X-Api-Key/Bearer without the OAuth beta header, and such a
+ * token hangs the session. Rotation requires Console API keys.
  */
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -27,6 +37,14 @@ const read = p => {
   }
 }
 
+/**
+ * Console API keys start `sk-ant-api`. Subscription OAuth tokens start
+ * `sk-ant-oat` and do NOT work here — see the note above.
+ */
+const usable = v => /^sk-ant-api[\w-]{10,}$/.test(String(v ?? '').trim())
+
+const emit = v => process.stdout.write(usable(v) ? String(v).trim() : fallback)
+
 const payerRef = read(join(dir, 'current-payer'))
 
 if (!payerRef || !/^https?:\/\//.test(payerRef)) {
@@ -37,8 +55,18 @@ if (!payerRef || !/^https?:\/\//.test(payerRef)) {
       headers: { 'x-room-auth': process.env.ROOM_PAYER_SECRET ?? '' },
       signal: AbortSignal.timeout(3000),
     })
-    process.stdout.write(res.ok ? (await res.text()).trim() : fallback)
+    if (!res.ok) {
+      process.stderr.write(`room-payer: ${payerRef} returned ${res.status}, using host credential\n`)
+      process.stdout.write(fallback)
+    } else {
+      const body = (await res.text()).trim()
+      if (!usable(body)) {
+        process.stderr.write('room-payer: payer returned an unusable credential, using host credential\n')
+      }
+      emit(body)
+    }
   } catch {
+    process.stderr.write(`room-payer: cannot reach ${payerRef}, using host credential\n`)
     process.stdout.write(fallback)
   }
 }

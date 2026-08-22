@@ -228,32 +228,44 @@ room**. The room makes that visible rather than pretending otherwise:
 - `ROOM_TOKENS_PER_MEMBER` and `ROOM_MESSAGES_PER_WINDOW` are enforced **at the queue**,
   before a turn is ever spent. Rejections are visible, never silent.
 
-### Payer rotation, and the experiment that gates it
+### Payer rotation — tested, and unavailable on subscription plans
 
-`ROOM_PAYER_MODE=rotate` makes the queue pick a payer per turn and write it to
-`current-payer`; point `apiKeyHelper` at `scripts/room-payer.mjs` and each turn draws the
-credential of the person who asked for it. On Team plans that raises the ceiling roughly N
-times, because the binding constraint is the per-seat 5-hour and weekly allowance, not
-dollars.
+The design was: `ROOM_PAYER_MODE=rotate` makes the queue pick a payer per turn, `apiKeyHelper`
+points at `scripts/room-payer.mjs`, and each turn draws the credential of whoever asked. On
+Team plans that would raise the ceiling roughly N times, because the binding constraint is
+the per-seat 5-hour and weekly allowance rather than dollars.
 
-**It is off by default because one thing is unverified.** Claude Code resends the whole
-conversation every request and relies on the prompt cache to charge it at the cached rate.
-If swapping credentials busts that cache, rotation pays full input rate on the entire shared
-context every turn — far more than it saves. A cache miss is invisible from the terminal:
-same output, same context, bigger bill.
+**It does not work with claude.ai subscription or Team auth.** Measured 2026-08-22 with a
+two-arm test:
 
-The room measures it for you. Watch the **cache ratio** in the right pane:
+| Arm | `apiKeyHelper` returns | Result |
+|---|---|---|
+| baseline | nothing (stored login) | works |
+| control | a deliberately invalid token | hangs, times out |
+| real | a valid subscription OAuth access token | hangs, times out |
 
-1. Run with `ROOM_PAYER_MODE=host` and note the steady-state ratio.
-2. Switch to `rotate` with two members' `--payer` URLs set.
-3. Compare the ratio on the turn immediately after a swap.
+The control arm proves the helper is consulted and authoritative — Claude Code does not fall
+back to the stored login. The real arm then shows a subscription OAuth access token supplied
+that way does not authenticate. The helper's value is sent as `X-Api-Key`/`Bearer` without
+the `anthropic-beta: oauth-2025-04-20` header that OAuth tokens require.
 
-Ratio holds → rotation is correct, turn it on. Ratio collapses toward zero → stay on `host`
-and settle up from the ledger.
+Two consequences:
 
-A `--payer` value is a URL on that teammate's **own** machine that returns their credential.
-The helper fetches it per turn over the tailnet, so nobody's token is ever stored at rest on
-the host.
+- **Rotation requires Console API keys** (`sk-ant-api…`), one per member, and is unavailable
+  to teams on Pro/Max/Team subscriptions. The server detects this at startup and falls back
+  to `host` mode with a warning rather than hanging.
+- **A bad payer credential stalls the room, it does not error.** The session retries until it
+  times out. `room-payer.mjs` therefore validates the shape of anything it is handed and
+  falls back to the host credential rather than passing along something unusable.
+
+Swapping `CLAUDE_CONFIG_DIR` or the credentials file *does* work, but it is per-process: it
+needs a session restart, which destroys the shared context window the room exists to provide.
+
+If you do have Console API keys, a `--payer` value is a URL on that member's **own** machine
+returning their key; the helper fetches it per turn over the tailnet, so nothing is stored at
+rest on the host. Note that for the life of that credential the host process can spend on
+that account — the "no credentials leave your machine" property holds for `host` mode, not
+for rotation.
 
 ## Permission relay
 

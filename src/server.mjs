@@ -55,6 +55,18 @@ const runtime = {
 
 const admin = createAdmin({ registry, bans, store, bus, config, queue, runtime })
 
+// Rotation needs Console API keys. Verified 2026-08-22: a subscription OAuth
+// access token supplied through apiKeyHelper does not authenticate, and the
+// session hangs retrying rather than failing, which would stall the room.
+if (config.payerMode === 'rotate') {
+  const hostCred = process.env.ROOM_HOST_CREDENTIAL ?? process.env.ANTHROPIC_API_KEY ?? ''
+  if (!/^sk-ant-api/.test(hostCred)) {
+    log('WARNING: payerMode=rotate but no Console API key is configured as the host credential.')
+    log('         Rotation does not work with claude.ai subscription auth. Falling back to host mode.')
+    config.payerMode = 'host'
+  }
+}
+
 const channel = createChannel({
   config,
   onReply(text, to) {

@@ -300,3 +300,43 @@ exists but only the HTTP implementation is written.
 2. Can the Team org enable `channelsEnabled`? Blocking prerequisite; operator to confirm.
 3. Does `apiKeyHelper` accept an OAuth access token as a `Bearer` value across refresh
    boundaries? This surfaces during §8.
+
+---
+
+## 13. Addendum — the §8 rotation experiment, run 2026-08-22
+
+**Result: per-turn payer rotation is unavailable on claude.ai subscription and Team auth.**
+
+Two-arm test, plus a baseline, using `claude -p --model haiku --settings <apiKeyHelper>`:
+
+| Arm | Helper returns | Outcome |
+|---|---|---|
+| baseline | nothing (stored login) | succeeds |
+| control | a deliberately invalid token | hangs until timeout |
+| real | a valid subscription OAuth access token | hangs until timeout |
+
+The control arm establishes that `apiKeyHelper` is consulted and authoritative: Claude Code
+does not silently fall back to the stored login when the helper returns something bad. The
+real arm therefore shows that a subscription OAuth access token supplied through the helper
+does not authenticate. The likely cause is that the helper's value is sent as `X-Api-Key` and
+`Authorization: Bearer` without the `anthropic-beta: oauth-2025-04-20` header OAuth requires.
+
+This settles §12 open question 3 in the negative, and makes question 1 (whether prompt cache
+survives a swap) moot for this operator, since no swap is possible.
+
+**Two operational findings:**
+
+1. A credential the session cannot authenticate with produces a **hang, not an error**. In a
+   rotation setup a single bad payer token would stall the entire room indefinitely.
+   `room-payer.mjs` now validates that anything it emits looks like a Console API key and
+   falls back to the host credential otherwise.
+2. The server now detects `payerMode: rotate` without a Console API key at startup, warns,
+   and falls back to `host` rather than hanging on the first rotated turn.
+
+**What remains true:** rotation is still correct for a team that holds Console API keys in one
+org and workspace, where cache isolation would not bite. The mechanism is built and behind the
+same interface; only the credential type is the blocker.
+
+**Correction to an earlier claim:** "no credentials leave anyone's machine" describes `host`
+mode only. Under rotation the host process holds a bearer credential for the paying member for
+its lifetime — scoped to inference, never the refresh token, never written to disk, but real.
