@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { Registry } from './identity.mjs'
 import { Ledger } from './ledger.mjs'
 import { Decisions } from './decisions.mjs'
+import { TurnLog } from './turns.mjs'
 
 /**
  * Durable room state. Everything here is recoverable: the room server dies with
@@ -18,6 +19,7 @@ export class Store {
       transcript: join(dir, 'transcript.jsonl'),
       ledger: join(dir, 'ledger.json'),
       decisions: join(dir, 'decisions.json'),
+      turns: join(dir, 'turns.json'),
       payer: join(dir, 'current-payer'),
     }
   }
@@ -35,6 +37,7 @@ export class Store {
       registry: Registry.fromJSON(this.#readJSON(this.paths.members, [])),
       ledger: Ledger.fromJSON(this.#readJSON(this.paths.ledger, {})),
       decisions: Decisions.fromJSON(this.#readJSON(this.paths.decisions, [])),
+      turns: TurnLog.fromJSON(this.#readJSON(this.paths.turns, [])),
     }
   }
 
@@ -66,6 +69,15 @@ export class Store {
 
   saveDecisions(d) {
     writeFileSync(this.paths.decisions, JSON.stringify(d.toJSON(), null, 2))
+  }
+
+  /**
+   * Turns keep changing after they open, so unlike the transcript this is a
+   * rewritten document rather than an append log. Capped: a long-lived room
+   * would otherwise carry every tool call it ever made.
+   */
+  saveTurns(t) {
+    writeFileSync(this.paths.turns, JSON.stringify(t.recent(200)))
   }
 
   writePayer(ref) {

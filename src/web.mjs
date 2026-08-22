@@ -21,7 +21,7 @@ const readBody = req =>
   })
 
 export function createWeb(deps) {
-  const { config, registry, ledger, decisions, queue, store, bus, channel, permissions } = deps
+  const { config, registry, ledger, decisions, queue, store, bus, channel, permissions, turns } = deps
   const uploadDir = join(config.stateDir, 'uploads')
   mkdirSync(uploadDir, { recursive: true })
 
@@ -34,9 +34,24 @@ export function createWeb(deps) {
     const turn = queue.beginTurn()
     if (!turn) return
     if (config.payerMode === 'rotate') store.writePayer(turn.payer)
+    const logged = turns.open({ messages: turn.messages, participants: turn.participants })
     channel.notify(turn.messages)
-    bus.publish('turn', { started: true, participants: turn.participants })
+    // msgIds let the browser link each message to the turn it caused, without
+    // rewriting the append-only transcript.
+    bus.publish('turn', {
+      started: true,
+      turnId: logged.id,
+      msgIds: logged.msgIds,
+      participants: turn.participants,
+    })
   }
+
+  const slimTurn = t => ({
+    id: t.id, promptId: t.promptId, msgIds: t.msgIds, preview: t.preview,
+    startedAt: t.startedAt, endedAt: t.endedAt,
+    activityCount: t.activity.length, replyCount: t.replies.length,
+    usage: t.usage, ratio: t.ratio,
+  })
 
   function broadcastMessage(m) {
     store.appendMessage(m)
@@ -70,15 +85,20 @@ export function createWeb(deps) {
     return usages.length ? sumUsage(usages) : null
   }
 
+  function emitActivity(evt, promptId) {
+    const turn = turns.activity(evt, promptId)
+    bus.publish('activity', { ...evt, turnId: turn?.id ?? null })
+  }
+
   function handleHook(event, p) {
     if (event === 'PreToolUse') {
-      bus.publish('activity', { kind: 'tool-start', tool: p.tool_name, input: p.tool_input, ts: Date.now() })
+      emitActivity({ kind: 'tool-start', tool: p.tool_name, input: p.tool_input, ts: Date.now() }, p.prompt_id)
     } else if (event === 'PostToolUse') {
-      bus.publish('activity', { kind: 'tool-end', tool: p.tool_name, ts: Date.now() })
+      emitActivity({ kind: 'tool-end', tool: p.tool_name, ts: Date.now() }, p.prompt_id)
     } else if (event === 'Notification') {
-      bus.publish('activity', { kind: 'notification', type: p.notification_type, ts: Date.now() })
+      emitActivity({ kind: 'notification', type: p.notification_type, ts: Date.now() }, p.prompt_id)
     } else if (event === 'SessionStart') {
-      bus.publish('activity', { kind: 'session-start', ts: Date.now() })
+      bus.publish('activity', { kind: 'session-start', ts: Date.now(), turnId: null })
     } else if (event === 'Stop') {
       const participants = queue.participantsOf(p.prompt_id) ?? queue.participantsOf('__inflight__') ?? []
       const usage = usageFromTranscript(p.transcript_path)
@@ -92,8 +112,10 @@ export function createWeb(deps) {
           totals: Object.fromEntries(registry.all().map(m => [m.id, ledger.totalsFor(m.id)])),
         })
       }
+      const closed = turns.close(p.prompt_id, usage)
+      store.saveTurns(turns)
       queue.endTurn(p.prompt_id)
-      bus.publish('turn', { started: false })
+      bus.publish('turn', { started: false, turnId: closed?.id ?? null, summary: closed ? slimTurn(closed) : null })
       drain()
     }
   }
@@ -139,7 +161,18 @@ export function createWeb(deps) {
           pending: queue.pending().length,
           busy: queue.busy(),
           pendingApprovals: mayApprove(member) ? permissions.pending() : [],
+          turns: turns.recent(50).map(slimTurn),
+          openTurnId: turns.openTurn()?.id ?? null,
         })
+      }
+
+      // Detail is a separate fetch: a room with 50 turns of tool calls would
+      // otherwise make every state poll enormous.
+      if (req.method === 'GET' && path === '/api/turn') {
+        const member = memberFrom(req, url, null)
+        if (!member) return json(res, 401, { error: 'bad token' })
+        const turn = turns.get(url.searchParams.get('id'))
+        return turn ? json(res, 200, turn) : json(res, 404, { error: 'no such turn' })
       }
 
       if (req.method === 'POST' && path === '/msg') {

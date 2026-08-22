@@ -67,6 +67,26 @@ export function renderUI(config) {
   }
   aside h2:first-child { margin-top: 0; }
   .msg { margin-bottom: 10px; }
+  .msg.has-detail > div:first-child { cursor: pointer; }
+  .msg.has-detail > div:first-child:hover .disclose { color: var(--accent); }
+  .disclose { font: 11px/1 var(--mono); color: var(--dim); margin-left: 6px; }
+  .detail {
+    margin: 6px 0 0 10px; padding: 8px 10px; border-left: 2px solid var(--accent);
+    background: var(--panel); border-radius: 0 6px 6px 0;
+  }
+  .detail .step {
+    font: 12px/1.5 var(--mono); display: flex; gap: 8px; align-items: baseline;
+  }
+  .detail .step .tool { color: var(--accent); min-width: 8ch; }
+  .detail .step .arg {
+    color: var(--dim); white-space: pre-wrap; word-break: break-all; flex: 1;
+  }
+  .detail .step .dur { color: var(--dim); font-size: 11px; }
+  .detail .summary {
+    font: 11px/1.5 var(--mono); color: var(--dim);
+    margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line);
+  }
+  .detail .running { color: var(--warn); }
   .who { font-weight: 650; }
   .who.claude { color: var(--accent); }
   .meta { font: 11px/1 var(--mono); color: var(--dim); margin-left: 6px; }
@@ -167,6 +187,12 @@ export function renderUI(config) {
   }
   function scroll() { var l = $('log'); l.scrollTop = l.scrollHeight; }
 
+  // msgId -> turnId, and the DOM node for each message, so a turn that starts
+  // after a message was already rendered can still make it expandable.
+  var msgTurn = {};
+  var nodes = {};
+  var openDetails = {};   // turnId -> detail element currently expanded
+
   function addMessage(m) {
     var stick = atBottom();
     var wrap = el('div', 'msg' + (m.addressed ? ' queued' : ''));
@@ -177,10 +203,93 @@ export function renderUI(config) {
     if (m.addressed) bits += ' · to claude';
     if (m.attachment) bits += ' · ' + m.attachment.name;
     head.appendChild(el('span', 'meta', bits));
+    var disclose = el('span', 'disclose', '');
+    head.appendChild(disclose);
     wrap.appendChild(head);
     wrap.appendChild(el('div', 'body', m.text || ''));
     $('log').appendChild(wrap);
+    nodes[m.id] = wrap;
+
+    if (m.turnId) msgTurn[m.id] = m.turnId;
+    head.onclick = function () { toggleDetail(m.id, wrap, disclose); };
+    markExpandable(m.id);
+
     if (stick) scroll();
+  }
+
+  function markExpandable(msgId) {
+    var wrap = nodes[msgId];
+    if (!wrap || !msgTurn[msgId]) return;
+    wrap.className += wrap.className.indexOf('has-detail') === -1 ? ' has-detail' : '';
+    var d = wrap.querySelector('.disclose');
+    if (d && !d.textContent) d.textContent = '▸ what claude did';
+  }
+
+  function toggleDetail(msgId, wrap, disclose) {
+    var turnId = msgTurn[msgId];
+    if (!turnId) return;
+    var existing = wrap.querySelector('.detail');
+    if (existing) {
+      existing.remove();
+      delete openDetails[turnId];
+      disclose.textContent = '▸ what claude did';
+      return;
+    }
+    disclose.textContent = '▾ what claude did';
+    var box = el('div', 'detail');
+    box.appendChild(el('div', 'step', 'loading…'));
+    wrap.appendChild(box);
+    openDetails[turnId] = box;
+    fetch('/api/turn?id=' + encodeURIComponent(turnId) + '&token=' + encodeURIComponent(token))
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (t) { if (t) renderDetail(box, t); else box.textContent = 'no detail recorded'; });
+  }
+
+  function stepRow(a, prevTs) {
+    var row = el('div', 'step');
+    var mark = a.kind === 'tool-start' ? '→' : a.kind === 'tool-end' ? '✓' : '·';
+    row.appendChild(el('span', 'tool', mark + ' ' + (a.tool || a.type || a.kind)));
+    if (a.input) {
+      var v = a.input.file_path || a.input.command || a.input.pattern || a.input.path ||
+        JSON.stringify(a.input);
+      row.appendChild(el('span', 'arg', String(v).slice(0, 300)));
+    } else {
+      row.appendChild(el('span', 'arg', ''));
+    }
+    if (prevTs && a.ts) row.appendChild(el('span', 'dur', '+' + Math.max(0, a.ts - prevTs) + 'ms'));
+    return row;
+  }
+
+  function renderDetail(box, t) {
+    box.textContent = '';
+    if (!t.activity.length) box.appendChild(el('div', 'step', 'no tool calls recorded'));
+    var prev = null;
+    t.activity.forEach(function (a) {
+      box.appendChild(stepRow(a, prev));
+      prev = a.ts;
+    });
+    t.replies.forEach(function (r) {
+      box.appendChild(el('div', 'step', '💬 ' + r.text.slice(0, 400)));
+    });
+    var sum;
+    if (t.usage) {
+      sum = 'turn used ' + num(t.usage.input + t.usage.output + t.usage.cacheRead + t.usage.cacheCreate) +
+        ' tokens · ' + Math.round((t.ratio || 0) * 100) + '% cached' +
+        (t.endedAt ? ' · ' + ((t.endedAt - t.startedAt) / 1000).toFixed(1) + 's' : '');
+    } else {
+      sum = 'still running…';
+    }
+    var s = el('div', 'summary' + (t.usage ? '' : ' running'), sum);
+    box.appendChild(s);
+  }
+
+  /** Live-append into any detail pane that is open for the running turn. */
+  function liveAppend(a) {
+    var box = a.turnId && openDetails[a.turnId];
+    if (!box) return;
+    var placeholder = box.querySelector('.summary');
+    var row = stepRow(a, null);
+    if (placeholder) box.insertBefore(row, placeholder); else box.appendChild(row);
   }
 
   function addNote(cls, text) {
@@ -281,13 +390,27 @@ export function renderUI(config) {
       banner('Room offline. The Claude Code session may have exited. Retrying…');
     };
     es.addEventListener('message', function (e) { addMessage(JSON.parse(e.data)); });
-    es.addEventListener('activity', function (e) { addActivity(JSON.parse(e.data)); });
+    es.addEventListener('activity', function (e) {
+      var a = JSON.parse(e.data);
+      addActivity(a);
+      liveAppend(a);
+    });
     es.addEventListener('presence', function (e) { renderMembers(JSON.parse(e.data).members); });
     es.addEventListener('decision', function (e) { load(); });
     es.addEventListener('turn', function (e) {
       var d = JSON.parse(e.data);
       $('state').textContent = d.started ? 'claude working' : 'idle';
       $('state').className = 'pill' + (d.started ? ' busy' : '');
+      // A turn starts after its messages were already drawn, so this is where
+      // they become expandable.
+      if (d.started && d.msgIds) {
+        d.msgIds.forEach(function (id) { msgTurn[id] = d.turnId; markExpandable(id); });
+      }
+      if (!d.started && d.summary && openDetails[d.turnId]) {
+        fetch('/api/turn?id=' + encodeURIComponent(d.turnId) + '&token=' + encodeURIComponent(token))
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (t) { if (t) renderDetail(openDetails[d.turnId], t); });
+      }
     });
     es.addEventListener('cost', function (e) {
       var d = JSON.parse(e.data);
@@ -330,6 +453,9 @@ export function renderUI(config) {
         renderDecisions(s.decisions);
         approvals = s.pendingApprovals || [];
         renderApprovals();
+        (s.turns || []).forEach(function (t) {
+          (t.msgIds || []).forEach(function (id) { msgTurn[id] = t.id; markExpandable(id); });
+        });
         return s;
       });
   }

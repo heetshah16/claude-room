@@ -21,7 +21,7 @@ const log = s => process.stderr.write(`room: ${s}\n`)
 
 const config = loadConfig(process.env)
 const store = new Store(config.stateDir)
-const { registry, ledger, decisions } = store.load()
+const { registry, ledger, decisions, turns } = store.load()
 
 // Bootstrap an owner on first run, otherwise the room is unreachable.
 if (!registry.all().length) {
@@ -38,9 +38,11 @@ const queue = new Queue({ config, ledger, decisions })
 const channel = createChannel({
   config,
   onReply(text, to) {
+    const turn = turns.reply(text, to)
     const m = {
       id: randomUUID(), memberId: 'claude', name: 'claude', text,
       ts: Date.now(), addressed: false, kind: 'reply', to,
+      turnId: turn?.id ?? null,
     }
     store.appendMessage(m)
     bus.publish('message', m)
@@ -69,7 +71,7 @@ const sweeper = setInterval(() => {
 }, 30_000)
 sweeper.unref()
 
-const web = createWeb({ config, registry, ledger, decisions, queue, store, bus, channel, permissions })
+const web = createWeb({ config, registry, ledger, decisions, queue, store, bus, channel, permissions, turns })
 
 web.listen(config.port, config.host, () => {
   log(`listening on http://${config.host}:${config.port} (${registry.all().length} member(s))`)

@@ -12,10 +12,12 @@ import { Decisions } from '../src/decisions.mjs'
 import { Queue } from '../src/queue.mjs'
 import { Bus } from '../src/bus.mjs'
 import { PermissionBroker } from '../src/permissions.mjs'
+import { TurnLog } from '../src/turns.mjs'
 
 function harness(env = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'roomweb-'))
   const config = loadConfig({ ROOM_STATE_DIR: dir, ...env })
+  const turns = new TurnLog()
   const registry = new Registry()
   const owner = registry.add(createMember({ name: 'heet', role: 'owner' }))
   const viewer = registry.add(createMember({ name: 'obs', role: 'viewer' }))
@@ -26,11 +28,11 @@ function harness(env = {}) {
   const verdicts = []
   const permissions = new PermissionBroker()
   const server = createWeb({
-    config, registry, ledger, decisions, queue,
+    config, registry, ledger, decisions, queue, turns,
     store: new Store(dir), bus: new Bus(), permissions,
     channel: { notify: m => sent.push(m), sendVerdict: (id, b) => verdicts.push([id, b]) },
   })
-  return { dir, server, owner, viewer, sent, verdicts, queue, ledger, permissions, config }
+  return { dir, server, owner, viewer, sent, verdicts, queue, ledger, permissions, turns, config }
 }
 
 const listen = server =>
@@ -199,5 +201,61 @@ test('the root path serves the UI without a token', async () => {
 test('an unknown path is a 404, not a crash', async () => {
   const h = harness(); const base = await listen(h.server)
   assert.equal((await fetch(base + '/nope')).status, 404)
+  done(h)
+})
+
+test('a turn records the tool calls that ran during it, tied to its message', async () => {
+  const h = harness(); const base = await listen(h.server)
+  const sent = await (await post(base, '/msg', { token: h.owner.token, text: '@claude find the TTL' })).json()
+  assert.equal(sent.addressed, true)
+
+  await post(base, '/hook/PreToolUse', { prompt_id: 'p1', tool_name: 'Read', tool_input: { file_path: 'src/auth.js' } })
+  await post(base, '/hook/PostToolUse', { prompt_id: 'p1', tool_name: 'Read' })
+
+  const state = await (await fetch(base + '/api/state?token=' + h.owner.token)).json()
+  assert.equal(state.turns.length, 1)
+  assert.equal(state.turns[0].activityCount, 2)
+  assert.ok(state.openTurnId)
+
+  const turn = await (await fetch(base + `/api/turn?id=${state.turns[0].id}&token=${h.owner.token}`)).json()
+  assert.equal(turn.activity[0].tool, 'Read')
+  assert.equal(turn.activity[0].input.file_path, 'src/auth.js')
+  // The message that caused the turn is recoverable from it.
+  assert.equal(turn.msgIds.length, 1)
+  done(h)
+})
+
+test('turn detail requires a valid token', async () => {
+  const h = harness(); const base = await listen(h.server)
+  await post(base, '/msg', { token: h.owner.token, text: '@claude go' })
+  const state = await (await fetch(base + '/api/state?token=' + h.owner.token)).json()
+  assert.equal((await fetch(base + `/api/turn?id=${state.turns[0].id}&token=bad`)).status, 401)
+  assert.equal((await fetch(base + `/api/turn?id=nope&token=${h.owner.token}`)).status, 404)
+  done(h)
+})
+
+test('closing a turn stamps usage and cache ratio onto it', async () => {
+  const h = harness(); const base = await listen(h.server)
+  await post(base, '/msg', { token: h.owner.token, text: '@claude go' })
+  const tp = join(h.dir, 'ft.jsonl')
+  writeFileSync(tp, JSON.stringify({
+    type: 'assistant',
+    message: { usage: { input_tokens: 2, output_tokens: 50, cache_read_input_tokens: 998, cache_creation_input_tokens: 0 } },
+  }) + '\n')
+  await post(base, '/hook/Stop', { prompt_id: 'p1', transcript_path: tp })
+
+  const state = await (await fetch(base + '/api/state?token=' + h.owner.token)).json()
+  assert.equal(state.turns[0].usage.output, 50)
+  assert.ok(Math.abs(state.turns[0].ratio - 998 / 1000) < 1e-9)
+  assert.equal(state.openTurnId, null)
+  done(h)
+})
+
+test('a mid-sentence mention now reaches the channel', async () => {
+  const h = harness(); const base = await listen(h.server)
+  const r = await (await post(base, '/msg', { token: h.owner.token, text: 'while that runs — @claude check the refresh path' })).json()
+  assert.equal(r.addressed, true)
+  assert.equal(h.sent.length, 1)
+  assert.equal(h.sent[0][0].content, 'while that runs — @claude check the refresh path')
   done(h)
 })

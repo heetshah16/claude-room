@@ -23,8 +23,17 @@ test('content is preserved verbatim while display strips the mention', () => {
   assert.equal(r.display, 'fix   it')
 })
 
-test('the mention must lead - mid-sentence mentions stay chatter', () => {
-  assert.equal(classify('ask @claude about it later', member).addressed, false)
+test('a mid-sentence mention addresses the agent - this is how people write', () => {
+  const r = classify('while that runs — @claude also check the refresh path', member)
+  assert.equal(r.addressed, true)
+  assert.equal(r.reason, 'mention')
+})
+
+test('a mid-sentence mention is left in place in the display copy', () => {
+  const r = classify('ask @claude about it later', member)
+  assert.equal(r.addressed, true)
+  assert.equal(r.display, 'ask @claude about it later')
+  assert.equal(r.content, 'ask @claude about it later')
 })
 
 test('the mention is case-insensitive and tolerates punctuation', () => {
@@ -52,6 +61,15 @@ test('a viewer can never address, even with force or a mention', () => {
 
 test('an email-like token is not a mention', () => {
   assert.equal(classify('mail@claude.example.com is the alias', member).addressed, false)
+  assert.equal(classify('write to ops@claude.io about it', member).addressed, false)
+})
+
+test('a bare domain after the mention is not a mention either', () => {
+  assert.equal(classify('the docs live at @claude.example.com', member).addressed, false)
+})
+
+test('a mention glued to a preceding word does not count', () => {
+  assert.equal(classify('cc:heet@claude help', member).addressed, false)
 })
 
 test('empty and whitespace input is never addressed', () => {
