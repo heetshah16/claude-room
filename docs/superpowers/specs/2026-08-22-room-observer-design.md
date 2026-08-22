@@ -161,3 +161,39 @@ observer-only property), multi-room briefs, learned signal tuning.
 | `ROOM_OBSERVER_NOTES` | on when observer on | `0` to keep it silent, panel only |
 | `ROOM_OBSERVER_NOTES_PER_WINDOW` | `6` | Room-note cap per budget window |
 | `ROOM_OBSERVER_MAX_TOKENS_PER_WINDOW` | `200000` | Budget before pausing |
+
+---
+
+## 13. Addendum — measured cost, 2026-08-22
+
+The §7 estimate ("fractions of a cent per cycle") was wrong. Measured on the host:
+
+```
+echo "reply with the word ok" | claude -p --model haiku --output-format json
+input: 9 | cacheRead: 10,688 | cacheCreate: 7,298 | output: 31
+TOTAL IN: 17,995
+```
+
+Running from an empty directory with no CLAUDE.md or .mcp.json moved this by 2%, so the
+overhead is Claude Code's own system prompt and tool definitions, not project config, and
+cannot be stripped.
+
+**Consequence:** cost is per-cycle and near-constant, not proportional to prompt size. At
+Haiku 4.5 rates that is roughly one cent per cycle. The incremental design still earns its
+place — it keeps the brief bounded and useful — but the number of cycles is what determines
+the bill.
+
+**Changes made:** `debounceMs` default raised 4s to 15s, and a new
+`ROOM_OBSERVER_MIN_INTERVAL_MS` (default 60s) enforces a hard floor between cycles that the
+`maxEvents` early-trigger cannot bypass. At the floor a continuously active room costs about
+$0.60/hour of observer.
+
+**Not built:** calling the Messages API directly instead of shelling `claude -p` would cut
+per-cycle input from ~18,000 tokens to ~1,000. It requires a Console API key; subscription
+and Team-plan auth cannot be used that way, so it is unavailable to this operator.
+
+**Also found by running it live:** the observer had no access to the decision store, so it
+could not tell a fresh proposal from a contradiction of something the team had settled — the
+single most valuable signal it produces. Open decisions are now passed in the prompt under
+SETTLED DECISIONS. Separately, `/api/state` built its ledger payload from registry members
+only, so the observer's own spend was invisible in the cost table; it now has an explicit row.

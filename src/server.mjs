@@ -82,6 +82,7 @@ if (config.observer.on) {
   observer = new Observer({
     config,
     runModel: makeRunner(config),
+    getDecisions: () => decisions.open(),
     onBrief() {
       // Publish the same shape /api/state returns, so the browser has one format.
       bus.publish('brief', { ...observer.briefForInjection(), on: true, paused: observer.paused() })

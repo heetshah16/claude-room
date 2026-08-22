@@ -44,6 +44,25 @@ test('agent turns are described with their tools and outcome', () => {
   assert.match(p, /Grep, Edit/)
 })
 
+test('settled decisions are given to the observer so it can spot contradictions', () => {
+  const o = new Observer({
+    config: cfg(),
+    runModel: ok({}),
+    getDecisions: () => [{ text: 'keep the auth service stateless', by: 'heet' }],
+  })
+  o.note({ kind: 'message', name: 'bo', text: 'add a cache layer to auth' })
+  const p = o.buildPrompt()
+  assert.match(p, /SETTLED DECISIONS:/)
+  assert.ok(p.includes('keep the auth service stateless'))
+  assert.match(p, /contradicts is a reversal/)
+})
+
+test('with no decisions the prompt says so rather than omitting the section', () => {
+  const o = new Observer({ config: cfg(), runModel: ok({}) })
+  o.note({ kind: 'message', text: 'a' })
+  assert.match(o.buildPrompt(), /SETTLED DECISIONS:\n\(none recorded\)/)
+})
+
 test('flushing with nothing buffered does no work', async () => {
   let calls = 0
   const o = new Observer({ config: cfg(), runModel: async () => { calls++; return { text: '{}' } } })
@@ -166,12 +185,40 @@ test('a disabled observer never runs a cycle and never buffers', async () => {
 test('a full event buffer triggers a cycle without waiting for the debounce', async () => {
   let calls = 0
   const o = new Observer({
-    config: cfg({ ROOM_OBSERVER_MAX_EVENTS: '3' }),
+    config: cfg({ ROOM_OBSERVER_MAX_EVENTS: '3', ROOM_OBSERVER_MIN_INTERVAL_MS: '0' }),
     runModel: async () => { calls++; return { text: '{"forks":[]}' } },
   })
   for (let i = 0; i < 3; i++) o.note({ kind: 'message', text: String(i) })
   await o.settled()
   assert.equal(calls, 1)
+})
+
+test('the rate floor stops a busy room driving a cycle per burst', async () => {
+  let calls = 0
+  let t = 100_000
+  const o = new Observer({
+    config: cfg({ ROOM_OBSERVER_MAX_EVENTS: '2', ROOM_OBSERVER_MIN_INTERVAL_MS: '60000' }),
+    now: () => t,
+    runModel: async () => { calls++; return { text: '{"forks":[]}' } },
+  })
+  // First burst cycles immediately.
+  o.note({ kind: 'message', text: 'a' })
+  o.note({ kind: 'message', text: 'b' })
+  await o.settled()
+  assert.equal(calls, 1)
+
+  // A second burst one second later must not spend another cycle.
+  t += 1000
+  o.note({ kind: 'message', text: 'c' })
+  o.note({ kind: 'message', text: 'd' })
+  await o.settled()
+  assert.equal(calls, 1)
+})
+
+test('the pacing defaults are chosen for per-cycle cost, not per-token', () => {
+  const c = cfg()
+  assert.equal(c.observer.debounceMs, 15_000)
+  assert.equal(c.observer.minIntervalMs, 60_000)
 })
 
 test('injection reports staleness when events are waiting to be summarised', async () => {

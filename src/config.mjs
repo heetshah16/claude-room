@@ -29,7 +29,11 @@ export function loadConfig(env = process.env) {
     observer: {
       on: bool(env.ROOM_OBSERVER),
       model: env.ROOM_OBSERVER_MODEL || 'haiku',
-      debounceMs: int(env.ROOM_OBSERVER_DEBOUNCE_MS, 4000),
+      debounceMs: int(env.ROOM_OBSERVER_DEBOUNCE_MS, 15_000),
+      // Each `claude -p` carries ~18k tokens of Claude Code's own scaffolding
+      // before our prompt contributes anything, so cost is per-cycle and almost
+      // independent of prompt size. The floor is what actually bounds spend.
+      minIntervalMs: int(env.ROOM_OBSERVER_MIN_INTERVAL_MS, 60_000),
       maxEvents: int(env.ROOM_OBSERVER_MAX_EVENTS, 8),
       // Notes default on, so an explicit "0" is the only way to silence them.
       notes: env.ROOM_OBSERVER_NOTES == null ? true : bool(env.ROOM_OBSERVER_NOTES),

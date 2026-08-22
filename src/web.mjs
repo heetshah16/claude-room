@@ -174,7 +174,12 @@ export function createWeb(deps) {
           payerMode: config.payerMode,
           members: registry.all().map(m => ({ id: m.id, name: m.name, role: m.role })),
           messages: store.recent(200),
-          ledger: Object.fromEntries(registry.all().map(m => [m.id, ledger.totalsFor(m.id)])),
+          ledger: {
+            ...Object.fromEntries(registry.all().map(m => [m.id, ledger.totalsFor(m.id)])),
+            // The observer is not a registry member but does spend, so its row
+            // has to be added explicitly or its cost is invisible.
+            observer: ledger.totalsFor('observer'),
+          },
           decisions: decisions.open(),
           pending: queue.pending().length,
           busy: queue.busy(),

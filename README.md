@@ -138,11 +138,39 @@ Silent by default except for hard signals: a newly detected **reversal** or **fo
 posts one short note per signal, never twice for the same one, capped per window. It flags;
 it never resolves. `ROOM_OBSERVER_NOTES=0` makes it silent and panel-only.
 
-### What it costs
+### What it costs — measured, not estimated
 
-Haiku, with only the delta as input. Fractions of a cent per cycle. It gets its own
-`observer` row in the cost table, and `ROOM_OBSERVER_MAX_TOKENS_PER_WINDOW` pauses it rather
-than letting it run away — the brief simply goes stale and the room carries on.
+**Cost is per-cycle, not per-token.** Each `claude -p` invocation carries Claude Code's own
+system prompt and tool definitions before your prompt contributes anything. Measured on this
+machine, `echo "reply with the word ok" | claude -p --model haiku` costs:
+
+```
+input: 9  |  cacheRead: 10,688  |  cacheCreate: 7,298  |  output: 31
+TOTAL IN: 17,995 tokens
+```
+
+Running it from an empty directory with no `CLAUDE.md` or `.mcp.json` changed that by 2%, so
+the overhead is the harness itself and cannot be stripped. At Haiku 4.5 rates ($1/MTok input,
+$5/MTok output, ~$0.10/MTok cache read, ~$1.25/MTok cache write) that is roughly **one cent
+per cycle**, essentially regardless of how much room activity it summarises.
+
+The incremental design (previous brief plus delta) is still right — it keeps the brief useful
+and bounded — but it is not what determines the bill. **The number of cycles is.** Hence the
+two pacing defaults:
+
+| Setting | Default | Why |
+|---|---|---|
+| `ROOM_OBSERVER_DEBOUNCE_MS` | 15s | Wait for the conversation to settle before summarising |
+| `ROOM_OBSERVER_MIN_INTERVAL_MS` | 60s | Hard floor — a busy room cannot cycle faster than this |
+
+At the floor, a continuously active room costs about **$0.60/hour** of observer. Raise the
+floor to halve it. `ROOM_OBSERVER_MAX_TOKENS_PER_WINDOW` is the backstop: over budget, the
+observer pauses, the brief goes stale, and the room carries on unaffected.
+
+If you have a Console API key, calling the Messages API directly instead of shelling
+`claude -p` would cut per-cycle input from ~18,000 tokens to ~1,000 — a ~15× saving. That is
+the real lever, and it is not built, because subscription and Team-plan auth cannot be used
+that way.
 
 ### The risk worth knowing
 
@@ -219,8 +247,9 @@ prompt can approve tool use in your session on your files.
 | `ROOM_BUDGET_WINDOW_MS` | `18000000` (5h) | Budget and rate-limit window |
 | `ROOM_OBSERVER` | off | `1` to run the observer |
 | `ROOM_OBSERVER_MODEL` | `haiku` | Model for the observer |
-| `ROOM_OBSERVER_DEBOUNCE_MS` | `4000` | Idle time before a cycle |
-| `ROOM_OBSERVER_MAX_EVENTS` | `8` | Buffered events that force a cycle early |
+| `ROOM_OBSERVER_DEBOUNCE_MS` | `15000` | Idle time before a cycle |
+| `ROOM_OBSERVER_MIN_INTERVAL_MS` | `60000` | Hard floor between cycles — the main cost control |
+| `ROOM_OBSERVER_MAX_EVENTS` | `8` | Buffered events that force a cycle early (still subject to the floor) |
 | `ROOM_OBSERVER_NOTES` | on | `0` for panel-only, no room notes |
 | `ROOM_OBSERVER_NOTES_PER_WINDOW` | `6` | Cap on observer notes per window |
 | `ROOM_OBSERVER_MAX_TOKENS_PER_WINDOW` | `200000` | Observer budget before it pauses |

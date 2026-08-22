@@ -320,17 +320,21 @@ export function renderUI(config) {
       : v >= 1000 ? (v / 1000).toFixed(1) + 'k' : String(v);
   }
 
+  function costRow(t, name, u) {
+    u = u || { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 };
+    var row = el('tr');
+    row.appendChild(el('td', null, name));
+    row.appendChild(el('td', 'num', num(u.input + u.output + u.cacheRead + u.cacheCreate)));
+    t.appendChild(row);
+  }
+
   function renderCost(members, totals) {
     var t = $('cost');
     t.textContent = '';
-    members.forEach(function (m) {
-      var u = totals[m.id] || { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 };
-      var all = u.input + u.output + u.cacheRead + u.cacheCreate;
-      var row = el('tr');
-      row.appendChild(el('td', null, m.name));
-      row.appendChild(el('td', 'num', num(all)));
-      t.appendChild(row);
-    });
+    members.forEach(function (m) { costRow(t, m.name, totals[m.id]); });
+    var obs = totals.observer;
+    // The observer spends but is not a member, so it gets its own row.
+    if (obs && (obs.input + obs.output) > 0) costRow(t, 'observer', obs);
   }
 
   function renderMembers(members) {

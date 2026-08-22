@@ -326,6 +326,21 @@ test('a closed turn is fed to the observer with its tools and reply', async () =
   done(h)
 })
 
+test('observer spend appears in the ledger payload even though it is not a member', async () => {
+  const h = harness()
+  const base = await listen(h.server)
+  h.ledger.record(
+    'obs-1',
+    { input: 900, output: 100, cacheRead: 0, cacheCreate: 0, cache1h: 0, cache5m: 0 },
+    [{ memberId: 'observer', weight: 1 }],
+    'equal',
+  )
+  const s = await (await fetch(base + '/api/state?token=' + h.owner.token)).json()
+  assert.equal(s.ledger.observer.input, 900)
+  assert.equal(s.ledger.observer.output, 100)
+  done(h)
+})
+
 test('state exposes the brief when an observer is attached, and null when not', async () => {
   const withObs = harness({}, { brief: () => ({ text: 'threads:\n  - x', stale: false, ageS: 1 }) })
   let base = await listen(withObs.server)
