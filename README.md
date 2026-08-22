@@ -41,6 +41,12 @@ export ROOM_HOST=$(tailscale ip -4)
 export ROOM_NAME=auth-work
 ```
 
+Bind to `0.0.0.0` instead if you also want people on the local network. Either way the room
+works out which address to put in join links — it prefers the tailnet address (Tailscale's
+100.64.0.0/10 range) over a LAN one, because `0.0.0.0` is a bind address and not somewhere
+anyone can browse to. Override with `ROOM_ADVERTISE` if you have a MagicDNS name you would
+rather hand out.
+
 Start the session from the repo you want the team working in:
 
 ```bash
@@ -59,18 +65,47 @@ On first run the room bootstraps an owner and prints a join URL to stderr:
 room: join: http://100.x.y.z:8787/?token=…
 ```
 
-## Adding people
+## Running the room
+
+Administration happens against the **running** room, so nothing needs a restart. Point the
+CLI at an owner token:
 
 ```bash
-node scripts/room-admin.mjs add ana member
-node scripts/room-admin.mjs add bo member --approve
-node scripts/room-admin.mjs add sam viewer
+export ROOM_ADMIN_TOKEN=<the owner token from the join URL>
 node scripts/room-admin.mjs list
-node scripts/room-admin.mjs revoke sam
 ```
 
-Each command prints that person's join URL. Send it to them privately — the token *is* the
-identity. Restart the session after adding or revoking, since members are read at startup.
+Owners get the same controls as a panel in the browser sidebar.
+
+| Command | What it does |
+|---|---|
+| `list` | Members, roles, join links, bans, current agent handle |
+| `invite <name> [role] [--approve] [--payer <url>]` | Create a member, print their join link |
+| `remove <name>` | Revoke the token **and cut their live stream immediately** |
+| `ban <name> [--reason "…"] [--address]` | Remove them and stop the name being reused |
+| `unban <name>` | Lift it |
+| `role <name> <owner\|member\|viewer>` | Change what they can do |
+| `mute <name> [on\|off]` | Stop them addressing the agent, without demoting them |
+| `approve <name> [on\|off]` | Grant or revoke tool-approval authority |
+| `rename <name> <newName>` | Rename a member |
+| `rotate <name>` | Issue a new link and kill the old one — use when a link leaks |
+| `payer <name> <url>` | Set their credential endpoint for payer rotation |
+| `handle <@name>[,<@name>…]` | **Rename the agent.** `@claude` becomes `@ada` for everyone, at once |
+| `pause [on\|off]` | Stop taking work; conversation carries on |
+| `clear-queue` | Drop everything waiting |
+| `budget [--tokens N] [--messages N]` | Change per-member limits at runtime |
+
+Notes on the sharp edges:
+
+- **The token is the identity.** Send join links privately; `rotate` is the fix if one leaks.
+- **The last owner cannot be removed, demoted, or banned.** A room with no administrator is
+  unrecoverable except by editing state on disk.
+- **Address bans are opt-in (`--address`) and never inferred.** Banning whatever address
+  someone last used looks helpful and is a footgun: on loopback, behind NAT, or on shared
+  office wifi that address belongs to other people too — including the owner issuing the
+  ban. Loopback and any address an owner is currently using are refused outright.
+- **`mute` and `viewer` are different tools.** Muting is "stop talking over this turn" and
+  survives a role change; `viewer` is structural.
 
 | Role | Chatter | Address Claude | Approve tool calls |
 |---|---|---|---|
@@ -236,7 +271,10 @@ prompt can approve tool use in your session on your files.
 |---|---|---|
 | `ROOM_NAME` | `room` | Room name, shown in the UI and the `<channel>` tag |
 | `ROOM_HOST` | `127.0.0.1` | Bind address. Set to your Tailscale IP to admit teammates |
-| `ROOM_PORT` | `8787` | HTTP port. Change `settings.room.json` to match |
+| `ROOM_PORT` | `8787` | HTTP port. Change `settings.room.json` to match. `0` picks a free one |
+| `ROOM_ADVERTISE` | auto | Host used in join links; auto-detects the tailnet address |
+| `ROOM_HANDLES` | `claude` | Agent @handle(s), comma separated. Changeable at runtime |
+| `ROOM_PAUSED` | off | Start paused |
 | `ROOM_STATE_DIR` | `~/.claude/channels/room` | Members, transcript, ledger, decisions |
 | `ROOM_OWNER` | `owner` | Name for the bootstrapped owner |
 | `ROOM_PAYER_MODE` | `host` | `host` or `rotate` |
@@ -282,8 +320,8 @@ text in front of an agent with your filesystem.
 npm test
 ```
 
-167 tests, no network and no Claude Code required. The pure modules — router, ledger,
-identity, decisions, queue, turns, brief, observer — carry the load-bearing logic and are
+213 tests, no network and no Claude Code required. The pure modules — router, ledger,
+identity, decisions, queue, turns, brief, observer, admin — carry the load-bearing logic and are
 tested directly. The observer takes `runModel` as an injected seam, so its whole cycle is
 exercised without spawning a subprocess or spending a token.
 

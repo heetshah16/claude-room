@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import { createWeb } from '../src/web.mjs'
 import { loadConfig } from '../src/config.mjs'
 import { Store } from '../src/state.mjs'
-import { Registry, createMember } from '../src/identity.mjs'
+import { Registry, Bans, createMember } from '../src/identity.mjs'
+import { createAdmin } from '../src/admin.mjs'
 import { Ledger } from '../src/ledger.mjs'
 import { Decisions } from '../src/decisions.mjs'
 import { Queue } from '../src/queue.mjs'
@@ -38,9 +39,21 @@ function harness(env = {}, observer = null) {
         paused: () => false,
       }
     : null
+
+  const bans = new Bans()
+  const store = new Store(dir)
+  const bus = new Bus()
+  const addrs = new Map()
+  const runtime = {
+    joinUrl: t => `http://test/?token=${t}`,
+    noteAddr: (id, a) => addrs.set(id, a),
+    lastAddrOf: id => addrs.get(id) ?? null,
+  }
+  const admin = createAdmin({ registry, bans, store, bus, config, queue, runtime })
+
   const server = createWeb({
     config, registry, ledger, decisions, queue, turns, observer: obs,
-    store: new Store(dir), bus: new Bus(), permissions,
+    store, bus, permissions, bans, admin, runtime,
     channel: {
       notify: m => { order.push('message'); sent.push(m) },
       notifyBrief: (text, o) => { order.push('brief'); briefs.push({ text, ...o }) },
@@ -49,7 +62,7 @@ function harness(env = {}, observer = null) {
   })
   return {
     dir, server, owner, viewer, sent, verdicts, queue, ledger, permissions, turns, config,
-    order, briefs, noted,
+    order, briefs, noted, bans, admin, registry,
   }
 }
 
@@ -213,6 +226,95 @@ test('the root path serves the UI without a token', async () => {
   const res = await fetch(base + '/')
   assert.equal(res.status, 200)
   assert.match(await res.text(), /<!doctype html>/i)
+  done(h)
+})
+
+test('admin routes are owner-only and reject bad tokens', async () => {
+  const h = harness(); const base = await listen(h.server)
+  assert.equal((await post(base, '/api/admin/invite', { token: 'bad', name: 'x' })).status, 401)
+  assert.equal((await post(base, '/api/admin/invite', { token: h.viewer.token, name: 'x' })).status, 403)
+  assert.equal((await fetch(base + '/api/admin/state?token=' + h.viewer.token)).status, 403)
+  done(h)
+})
+
+test('an owner can invite and immediately use the new token, with no restart', async () => {
+  const h = harness(); const base = await listen(h.server)
+  const r = await (await post(base, '/api/admin/invite', { token: h.owner.token, name: 'bo' })).json()
+  assert.equal(r.ok, true)
+
+  const bo = h.registry.byName('bo')
+  const state = await (await fetch(base + '/api/state?token=' + bo.token)).json()
+  assert.equal(state.you.name, 'bo')
+  done(h)
+})
+
+test('a removed member is refused on their next request', async () => {
+  const h = harness(); const base = await listen(h.server)
+  const token = h.viewer.token
+  assert.equal((await fetch(base + '/api/state?token=' + token)).status, 200)
+
+  await post(base, '/api/admin/remove', { token: h.owner.token, memberId: h.viewer.id })
+  assert.equal((await fetch(base + '/api/state?token=' + token)).status, 401)
+  done(h)
+})
+
+test('a ban outranks a still-valid token', async () => {
+  const h = harness(); const base = await listen(h.server)
+  // Ban the name only, leaving the member in place, to prove the token check
+  // is not the only gate.
+  h.bans.ban({ name: h.viewer.name })
+  assert.equal((await fetch(base + '/api/state?token=' + h.viewer.token)).status, 401)
+  done(h)
+})
+
+test('renaming the agent handle changes routing live', async () => {
+  const h = harness(); const base = await listen(h.server)
+  let r = await (await post(base, '/msg', { token: h.owner.token, text: '@claude go' })).json()
+  assert.equal(r.addressed, true)
+
+  await post(base, '/api/admin/handles', { token: h.owner.token, handles: ['ada'] })
+
+  r = await (await post(base, '/msg', { token: h.owner.token, text: '@claude go' })).json()
+  assert.equal(r.addressed, false)
+  r = await (await post(base, '/msg', { token: h.owner.token, text: '@ada go' })).json()
+  assert.equal(r.addressed, true)
+  done(h)
+})
+
+test('pausing rejects work with a visible reason and leaves chatter alone', async () => {
+  const h = harness(); const base = await listen(h.server)
+  await post(base, '/api/admin/pause', { token: h.owner.token, paused: true })
+
+  const blocked = await post(base, '/msg', { token: h.owner.token, text: '@claude go' })
+  assert.equal(blocked.status, 429)
+  assert.equal((await blocked.json()).reason, 'paused')
+
+  const chat = await post(base, '/msg', { token: h.owner.token, text: 'still talking' })
+  assert.equal(chat.status, 200)
+  done(h)
+})
+
+test('muting a member stops them addressing the agent without demoting them', async () => {
+  const h = harness(); const base = await listen(h.server)
+  const bo = h.registry.add(createMember({ name: 'bo', role: 'member' }))
+  await post(base, '/api/admin/mute', { token: h.owner.token, memberId: bo.id, muted: true })
+
+  const r = await (await post(base, '/msg', { token: bo.token, text: '@claude go' })).json()
+  assert.equal(r.addressed, false)
+  assert.equal(r.reason, 'muted')
+  assert.equal(h.registry.byId(bo.id).role, 'member')
+  done(h)
+})
+
+test('admin state lists members with join URLs, bans and current settings', async () => {
+  const h = harness(); const base = await listen(h.server)
+  await post(base, '/api/admin/ban', { token: h.owner.token, name: 'mallory', reason: 'spam' })
+  const s = await (await fetch(base + '/api/admin/state?token=' + h.owner.token)).json()
+  assert.equal(s.ok, true)
+  assert.ok(s.members.every(m => m.joinUrl.includes('token=')))
+  assert.equal(s.bans[0].name, 'mallory')
+  assert.deepEqual(s.handles, ['claude'])
+  assert.ok(s.commands.includes('rotate'))
   done(h)
 })
 

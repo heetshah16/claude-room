@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { loadConfig } from '../src/config.mjs'
+import { loadConfig, advertiseHost } from '../src/config.mjs'
 
 test('defaults are safe', () => {
   const c = loadConfig({})
@@ -48,4 +48,27 @@ test('observer settings read from env, and notes need an explicit zero to silenc
   assert.equal(c.observer.debounceMs, 900)
   assert.equal(c.observer.notes, false)
   assert.equal(loadConfig({ ROOM_OBSERVER: '1' }).observer.notes, true)
+})
+
+test('a bind address that is not a real destination is not advertised', () => {
+  const ifaces = {
+    Ethernet: [{ family: 'IPv4', internal: false, address: '192.168.1.72' }],
+    Tailscale: [{ family: 'IPv4', internal: false, address: '100.120.156.59' }],
+    Loopback: [{ family: 'IPv4', internal: true, address: '127.0.0.1' }],
+  }
+  // Bound to everything: prefer the tailnet address over the LAN one.
+  assert.equal(advertiseHost('0.0.0.0', ifaces), '100.120.156.59')
+  // An explicit bind address is already a destination.
+  assert.equal(advertiseHost('192.168.1.72', ifaces), '192.168.1.72')
+  assert.equal(advertiseHost('127.0.0.1', ifaces), '127.0.0.1')
+})
+
+test('with no tailnet, a LAN address is advertised; with nothing, loopback', () => {
+  const lanOnly = { Eth: [{ family: 'IPv4', internal: false, address: '10.0.0.5' }] }
+  assert.equal(advertiseHost('0.0.0.0', lanOnly), '10.0.0.5')
+  assert.equal(advertiseHost('0.0.0.0', {}), '127.0.0.1')
+})
+
+test('ROOM_ADVERTISE overrides detection', () => {
+  assert.equal(loadConfig({ ROOM_ADVERTISE: 'room.tailnet.ts.net' }).advertise, 'room.tailnet.ts.net')
 })

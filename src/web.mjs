@@ -21,14 +21,32 @@ const readBody = req =>
   })
 
 export function createWeb(deps) {
-  const { config, registry, ledger, decisions, queue, store, bus, channel, permissions, turns, observer } = deps
+  const {
+    config, registry, ledger, decisions, queue, store, bus, channel,
+    permissions, turns, observer, bans, admin, runtime,
+  } = deps
+
+  // Address seen per member, so a ban can cover the device as well as the name.
+  // On a tailnet these are stable per machine. Held in `runtime` rather than
+  // locally because the admin layer needs to read it when issuing a ban.
+  const addrOf = req =>
+    String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim() ||
+    req.socket?.remoteAddress ||
+    ''
   const uploadDir = join(config.stateDir, 'uploads')
   mkdirSync(uploadDir, { recursive: true })
 
   // Gate on member identity, never on who can reach the port. Anyone able to
   // put text in front of Claude is a prompt-injection path.
-  const memberFrom = (req, url, body) =>
-    registry.byToken(body?.token ?? url.searchParams.get('token') ?? req.headers['x-room-token'])
+  const memberFrom = (req, url, body) => {
+    const m = registry.byToken(body?.token ?? url.searchParams.get('token') ?? req.headers['x-room-token'])
+    if (!m) return null
+    // A ban outranks a valid token: the token may still be in someone's
+    // bookmark bar long after they were removed.
+    if (bans?.isBanned({ name: m.name, addr: addrOf(req) })) return null
+    runtime.noteAddr(m.id, addrOf(req))
+    return m
+  }
 
   function drain() {
     const turn = queue.beginTurn()
@@ -157,7 +175,8 @@ export function createWeb(deps) {
           connection: 'keep-alive',
         })
         res.write(': connected\n\n')
-        bus.subscribe(res)
+        // Tag the subscription so a removal or ban can cut this stream at once.
+        bus.subscribe(res, member.id)
         bus.publish('presence', {
           members: registry.all().map(m => ({ id: m.id, name: m.name, role: m.role })),
           listeners: bus.count(),
@@ -169,10 +188,17 @@ export function createWeb(deps) {
         const member = memberFrom(req, url, null)
         if (!member) return json(res, 401, { error: 'bad token' })
         return json(res, 200, {
-          you: { id: member.id, name: member.name, role: member.role, canApprove: mayApprove(member) },
+          you: {
+            id: member.id, name: member.name, role: member.role,
+            canApprove: mayApprove(member), muted: !!member.muted,
+          },
           room: config.roomName,
           payerMode: config.payerMode,
-          members: registry.all().map(m => ({ id: m.id, name: m.name, role: m.role })),
+          handles: config.handles,
+          paused: !!config.paused,
+          members: registry.all().map(m => ({
+            id: m.id, name: m.name, role: m.role, muted: !!m.muted,
+          })),
           messages: store.recent(200),
           ledger: {
             ...Object.fromEntries(registry.all().map(m => [m.id, ledger.totalsFor(m.id)])),
@@ -209,7 +235,11 @@ export function createWeb(deps) {
         const member = memberFrom(req, url, body)
         if (!member) return json(res, 401, { error: 'bad token' })
 
-        const r = queue.submit(member, String(body.text ?? ''), { force: body.force === true })
+        const r = queue.submit(member, String(body.text ?? ''), {
+          force: body.force === true,
+          handles: config.handles,
+          paused: config.paused,
+        })
         if (!r.ok) {
           bus.publish('rejected', { memberId: member.id, name: member.name, reason: r.reason })
           return json(res, 429, { ok: false, reason: r.reason })
@@ -236,6 +266,42 @@ export function createWeb(deps) {
         if (r.message) broadcastMessage(r.message)
         if (r.message?.addressed) drain()
         return json(res, 200, { ok: true, path: dest })
+      }
+
+      // Owner-only. Every command mutates the running room and persists.
+      if (req.method === 'POST' && path.startsWith('/api/admin/')) {
+        let body = {}
+        try {
+          body = JSON.parse((await readBody(req)).toString('utf8') || '{}')
+        } catch {
+          return json(res, 400, { ok: false, reason: 'bad-json' })
+        }
+        const member = memberFrom(req, url, body)
+        if (!member) return json(res, 401, { ok: false, reason: 'bad-token' })
+        if (member.role !== 'owner') return json(res, 403, { ok: false, reason: 'owner-only' })
+
+        const action = path.slice('/api/admin/'.length)
+        const result = admin.run(action, { ...body, by: member.name })
+        return json(res, result.ok ? 200 : 400, result)
+      }
+
+      if (req.method === 'GET' && path === '/api/admin/state') {
+        const member = memberFrom(req, url, null)
+        if (!member) return json(res, 401, { ok: false, reason: 'bad-token' })
+        if (member.role !== 'owner') return json(res, 403, { ok: false, reason: 'owner-only' })
+        return json(res, 200, {
+          ok: true,
+          members: registry.all().map(m => ({
+            ...admin.publicMember(m),
+            joinUrl: runtime.joinUrl(m.token),
+            lastAddr: runtime.lastAddrOf(m.id),
+          })),
+          bans: bans.all(),
+          handles: config.handles,
+          paused: !!config.paused,
+          budgets: config.budgets,
+          commands: admin.names,
+        })
       }
 
       if (req.method === 'POST' && path === '/verdict') {

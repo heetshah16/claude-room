@@ -33,3 +33,14 @@ test('the client never assigns untrusted values through innerHTML', () => {
   const script = html.slice(html.indexOf('<script>'))
   assert.ok(!/\.innerHTML\s*=/.test(script))
 })
+
+test('the admin panel exists in the document but starts hidden', () => {
+  const html = renderUI(loadConfig({}))
+  assert.ok(html.includes('id="admin"'))
+  assert.match(html, /id="admin" hidden/)
+})
+
+test('the composer no longer hardcodes @claude, since the handle is renameable', () => {
+  const html = renderUI(loadConfig({}))
+  assert.ok(!html.includes('Prefix @claude'))
+})

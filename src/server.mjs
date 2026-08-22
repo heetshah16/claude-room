@@ -18,6 +18,7 @@ import { PermissionBroker } from './permissions.mjs'
 import { createMember } from './identity.mjs'
 import { Observer } from './observer.mjs'
 import { makeRunner } from './run-model.mjs'
+import { createAdmin } from './admin.mjs'
 
 const log = s => process.stderr.write(`room: ${s}\n`)
 
@@ -27,19 +28,32 @@ const OBSERVER_ID = 'observer'
 
 const config = loadConfig(process.env)
 const store = new Store(config.stateDir)
-const { registry, ledger, decisions, turns } = store.load()
+const { registry, ledger, decisions, turns, bans, runtime: savedRuntime } = store.load()
+
+// Admin changes to the agent handle or the pause flag outlive a restart.
+if (savedRuntime?.handles?.length) config.handles = savedRuntime.handles
+if (typeof savedRuntime?.paused === 'boolean') config.paused = savedRuntime.paused
 
 // Bootstrap an owner on first run, otherwise the room is unreachable.
 if (!registry.all().length) {
   const owner = registry.add(createMember({ name: process.env.ROOM_OWNER || 'owner', role: 'owner' }))
   store.saveRegistry(registry)
   log(`created owner "${owner.name}"`)
-  log(`join: http://${config.host}:${config.port}/?token=${owner.token}`)
+  log(`join: http://${config.advertise}:${config.port}/?token=${owner.token}`)
 }
 
 const bus = new Bus()
 const permissions = new PermissionBroker()
 const queue = new Queue({ config, ledger, decisions })
+
+const addrs = new Map()
+const runtime = {
+  joinUrl: token => `http://${config.advertise}:${config.port}/?token=${token}`,
+  noteAddr: (id, addr) => addrs.set(id, addr),
+  lastAddrOf: id => addrs.get(id) ?? null,
+}
+
+const admin = createAdmin({ registry, bans, store, bus, config, queue, runtime })
 
 const channel = createChannel({
   config,
@@ -109,9 +123,15 @@ if (config.observer.on) {
   log(`observer on (${config.observer.model}), notes ${config.observer.notes ? 'on' : 'off'}`)
 }
 
-const web = createWeb({ config, registry, ledger, decisions, queue, store, bus, channel, permissions, turns, observer })
+const web = createWeb({
+  config, registry, ledger, decisions, queue, store, bus, channel,
+  permissions, turns, observer, bans, admin, runtime,
+})
 
 web.listen(config.port, config.host, () => {
+  // Report the port actually bound, not the one requested — with ROOM_PORT=0
+  // the OS chooses, and callers need to know which.
+  config.port = web.address().port
   log(`listening on http://${config.host}:${config.port} (${registry.all().length} member(s))`)
   if (config.host === '127.0.0.1') log('bound to loopback — set ROOM_HOST to your Tailscale address to let teammates in')
 })

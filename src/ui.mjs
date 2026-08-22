@@ -101,6 +101,19 @@ export function renderUI(config) {
   #brief .line { font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; }
   #brief .head { color: var(--accent); }
   #brief .stale { color: var(--warn); font-size: 11px; }
+  #admin .row {
+    display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+    padding: 4px 0; border-bottom: 1px solid var(--line);
+  }
+  #admin .who { flex: 1; min-width: 7ch; font-size: 12px; }
+  #admin .tag { font: 10px/1 var(--mono); color: var(--dim); }
+  #admin select, #admin input {
+    font: 11px/1 var(--mono); padding: 2px 4px; background: var(--bg);
+    color: var(--ink); border: 1px solid var(--line); border-radius: 4px;
+  }
+  #admin input.wide { width: 100%; }
+  #admin .danger { color: var(--bad); border-color: var(--bad); }
+  #admin .bar { display: flex; gap: 4px; flex-wrap: wrap; margin: 6px 0; }
   .note.reject { color: var(--bad); border-color: var(--bad); }
   table { width: 100%; border-collapse: collapse; font: 12px/1.5 var(--mono); }
   td { padding: 2px 0; }
@@ -154,6 +167,7 @@ export function renderUI(config) {
     <div id="log"></div>
     <aside>
       <h2>Room state</h2><div id="brief"><span class="note">observer off</span></div>
+      <h2 id="adminHead" hidden>Admin</h2><div id="admin" hidden></div>
       <h2>Members</h2><div id="members"></div>
       <h2>Approvals</h2><div id="approvals"><span class="note">none pending</span></div>
       <h2>Cost by member</h2><table id="cost"></table>
@@ -163,7 +177,7 @@ export function renderUI(config) {
     </aside>
   </main>
   <form id="composer">
-    <textarea id="text" rows="2" placeholder="Message the room. Prefix @claude to address the agent."></textarea>
+    <textarea id="text" rows="2" placeholder="Message the room. Mention the agent by @handle to address it."></textarea>
     <label class="toggle"><input type="checkbox" id="force"> to Claude</label>
     <button type="button" id="attach">Attach</button>
     <input type="file" id="file" hidden>
@@ -360,6 +374,129 @@ export function renderUI(config) {
     }
   }
 
+  // ---- admin panel: owners only -------------------------------------------
+  function adminCall(action, body) {
+    return fetch('/api/admin/' + action, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(Object.assign({ token: token }, body || {}))
+    }).then(function (r) { return r.json(); }).then(function (r) {
+      if (!r.ok) addNote('reject', 'admin: ' + r.reason);
+      loadAdmin();
+      return r;
+    });
+  }
+
+  function btn(label, cls, fn) {
+    var b = el('button', 'small' + (cls ? ' ' + cls : ''), label);
+    b.onclick = fn;
+    return b;
+  }
+
+  function memberRow(m) {
+    var row = el('div', 'row');
+    var who = el('span', 'who', m.name);
+    row.appendChild(who);
+    row.appendChild(el('span', 'tag', (m.canApprove ? 'approver ' : '') + (m.muted ? 'muted' : '')));
+
+    var sel = document.createElement('select');
+    ['owner', 'member', 'viewer'].forEach(function (r) {
+      var o = document.createElement('option');
+      o.value = r; o.textContent = r; o.selected = m.role === r;
+      sel.appendChild(o);
+    });
+    sel.onchange = function () { adminCall('role', { memberId: m.id, role: sel.value }); };
+    row.appendChild(sel);
+
+    row.appendChild(btn(m.muted ? 'unmute' : 'mute', null, function () {
+      adminCall('mute', { memberId: m.id, muted: !m.muted });
+    }));
+    row.appendChild(btn(m.canApprove ? 'unapprove' : 'approve', null, function () {
+      adminCall('approve', { memberId: m.id, canApprove: !m.canApprove });
+    }));
+    row.appendChild(btn('copy link', null, function () {
+      navigator.clipboard && navigator.clipboard.writeText(m.joinUrl);
+    }));
+    row.appendChild(btn('new link', null, function () {
+      adminCall('rotate', { memberId: m.id });
+    }));
+    row.appendChild(btn('remove', 'danger', function () {
+      if (confirm('Remove ' + m.name + '? Their link stops working immediately.')) {
+        adminCall('remove', { memberId: m.id });
+      }
+    }));
+    row.appendChild(btn('ban', 'danger', function () {
+      if (confirm('Ban ' + m.name + '? They cannot be re-invited under that name.')) {
+        adminCall('ban', { memberId: m.id, reason: '' });
+      }
+    }));
+    return row;
+  }
+
+  function renderAdmin(s) {
+    var box = $('admin');
+    box.textContent = '';
+
+    var bar = el('div', 'bar');
+    bar.appendChild(btn(s.paused ? 'resume room' : 'pause room', s.paused ? 'danger' : null, function () {
+      adminCall('pause', { paused: !s.paused });
+    }));
+    bar.appendChild(btn('clear queue', null, function () { adminCall('clearQueue', {}); }));
+    box.appendChild(bar);
+
+    var handleRow = el('div', 'row');
+    handleRow.appendChild(el('span', 'who', 'agent @'));
+    var hi = document.createElement('input');
+    hi.className = 'wide'; hi.value = s.handles.join(',');
+    hi.onkeydown = function (e) {
+      if (e.key === 'Enter') adminCall('handles', { handles: hi.value });
+    };
+    handleRow.appendChild(hi);
+    handleRow.appendChild(btn('set', null, function () { adminCall('handles', { handles: hi.value }); }));
+    box.appendChild(handleRow);
+
+    var inviteRow = el('div', 'row');
+    inviteRow.appendChild(el('span', 'who', 'invite'));
+    var ni = document.createElement('input');
+    ni.placeholder = 'name';
+    var rs = document.createElement('select');
+    ['member', 'viewer', 'owner'].forEach(function (r) {
+      var o = document.createElement('option'); o.value = r; o.textContent = r; rs.appendChild(o);
+    });
+    inviteRow.appendChild(ni);
+    inviteRow.appendChild(rs);
+    inviteRow.appendChild(btn('add', null, function () {
+      if (!ni.value.trim()) return;
+      adminCall('invite', { name: ni.value.trim(), role: rs.value }).then(function (r) {
+        if (r.ok) { ni.value = ''; addNote('', 'invite link for ' + r.member.name + ': ' + r.joinUrl); }
+      });
+    }));
+    box.appendChild(inviteRow);
+
+    s.members.forEach(function (m) { box.appendChild(memberRow(m)); });
+
+    if (s.bans.length) {
+      box.appendChild(el('div', 'tag', 'banned:'));
+      s.bans.forEach(function (b) {
+        var r = el('div', 'row');
+        r.appendChild(el('span', 'who', b.name || b.addr));
+        r.appendChild(btn('unban', null, function () { adminCall('unban', { key: b.name || b.addr }); }));
+        box.appendChild(r);
+      });
+    }
+  }
+
+  function loadAdmin() {
+    if (!me || me.role !== 'owner') return;
+    fetch('/api/admin/state?token=' + encodeURIComponent(token))
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (s) {
+        if (!s || !s.ok) return;
+        $('admin').hidden = false;
+        $('adminHead').hidden = false;
+        renderAdmin(s);
+      });
+  }
+
   function renderDecisions(list) {
     var box = $('decisions');
     box.textContent = '';
@@ -422,6 +559,13 @@ export function renderUI(config) {
     });
     es.addEventListener('presence', function (e) { renderMembers(JSON.parse(e.data).members); });
     es.addEventListener('brief', function (e) { renderBriefPanel(JSON.parse(e.data)); });
+    es.addEventListener('admin', function (e) {
+      var d = JSON.parse(e.data);
+      addNote('', 'admin: ' + d.action + (d.name ? ' ' + d.name : '') +
+        (d.handles ? ' → @' + d.handles.join(', @') : '') +
+        (typeof d.paused === 'boolean' ? (d.paused ? ' (paused)' : ' (resumed)') : ''));
+      load();
+    });
     es.addEventListener('decision', function (e) { load(); });
     es.addEventListener('turn', function (e) {
       var d = JSON.parse(e.data);
@@ -478,6 +622,9 @@ export function renderUI(config) {
         renderCost(s.members, s.ledger);
         renderDecisions(s.decisions);
         renderBriefPanel(s.brief);
+        $('state').textContent = s.paused ? 'paused' : s.busy ? 'claude working' : 'idle';
+        if (s.paused) $('state').className = 'pill off';
+        loadAdmin();
         approvals = s.pendingApprovals || [];
         renderApprovals();
         (s.turns || []).forEach(function (t) {

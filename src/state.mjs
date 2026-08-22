@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync, appendFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { Registry } from './identity.mjs'
+import { Registry, Bans } from './identity.mjs'
 import { Ledger } from './ledger.mjs'
 import { Decisions } from './decisions.mjs'
 import { TurnLog } from './turns.mjs'
@@ -20,6 +20,8 @@ export class Store {
       ledger: join(dir, 'ledger.json'),
       decisions: join(dir, 'decisions.json'),
       turns: join(dir, 'turns.json'),
+      bans: join(dir, 'bans.json'),
+      runtime: join(dir, 'runtime.json'),
       payer: join(dir, 'current-payer'),
     }
   }
@@ -38,6 +40,10 @@ export class Store {
       ledger: Ledger.fromJSON(this.#readJSON(this.paths.ledger, {})),
       decisions: Decisions.fromJSON(this.#readJSON(this.paths.decisions, [])),
       turns: TurnLog.fromJSON(this.#readJSON(this.paths.turns, [])),
+      bans: Bans.fromJSON(this.#readJSON(this.paths.bans, [])),
+      // Admin changes that must outlive a restart: the agent's handle and
+      // whether the room is paused.
+      runtime: this.#readJSON(this.paths.runtime, null),
     }
   }
 
@@ -78,6 +84,14 @@ export class Store {
    */
   saveTurns(t) {
     writeFileSync(this.paths.turns, JSON.stringify(t.recent(200)))
+  }
+
+  saveBans(b) {
+    writeFileSync(this.paths.bans, JSON.stringify(b.toJSON(), null, 2))
+  }
+
+  saveRuntime(r) {
+    writeFileSync(this.paths.runtime, JSON.stringify(r, null, 2))
   }
 
   writePayer(ref) {

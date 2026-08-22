@@ -43,7 +43,7 @@ export class Queue {
    * @returns {{ok:boolean, reason:string, message:import('./types.mjs').RoomMessage|null, conflicts:object[]}}
    */
   submit(member, text, opts = {}) {
-    const c = classify(text, member, opts)
+    const c = classify(text, member, { ...opts, handles: opts.handles ?? this.config.handles })
     const message = {
       id: randomUUID(),
       memberId: member.id,
@@ -52,12 +52,17 @@ export class Queue {
       content: c.content,
       ts: this.now(),
       addressed: c.addressed,
+      handle: c.handle,
       kind: 'chat',
       attachment: opts.attachment,
     }
 
     // Chatter is accepted into the room but never costs a token.
     if (!c.addressed) return { ok: true, reason: c.reason, message, conflicts: [] }
+
+    // A paused room still carries conversation; it just stops taking work.
+    const paused = opts.paused ?? this.config.paused
+    if (paused) return { ok: false, reason: 'paused', message: null, conflicts: [] }
 
     // Rejections are visible, never silent — a dropped message the sender
     // believes landed is the worst failure this system can have.
@@ -74,6 +79,13 @@ export class Queue {
 
   pending() {
     return [...this.#pending]
+  }
+
+  /** Drop everything waiting. Returns how many were discarded. */
+  clear() {
+    const n = this.#pending.length
+    this.#pending = []
+    return n
   }
 
   busy() {

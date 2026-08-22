@@ -1,5 +1,29 @@
-import { homedir } from 'node:os'
+import { homedir, networkInterfaces } from 'node:os'
 import { join } from 'node:path'
+
+/**
+ * The address to put in a join URL.
+ *
+ * `0.0.0.0` is a bind address, not somewhere anyone can browse to, so handing
+ * it out in an invite link produces a link that works for nobody. Prefer the
+ * tailnet address (Tailscale hands out 100.64.0.0/10), then a LAN address,
+ * then loopback.
+ */
+export function advertiseHost(bind, ifaces = networkInterfaces()) {
+  if (bind && bind !== '0.0.0.0' && bind !== '::') return bind
+
+  const v4 = Object.values(ifaces)
+    .flat()
+    .filter(i => i && i.family === 'IPv4' && !i.internal)
+    .map(i => i.address)
+
+  // 100.64.0.0/10 — the CGNAT range Tailscale uses.
+  const tailnet = v4.find(a => {
+    const [x, y] = a.split('.').map(Number)
+    return x === 100 && y >= 64 && y <= 127
+  })
+  return tailnet ?? v4[0] ?? '127.0.0.1'
+}
 
 const int = (v, d) => (v != null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : d)
 const bool = v => v === '1' || v === 'true'
@@ -17,7 +41,17 @@ export function loadConfig(env = process.env) {
     roomName: env.ROOM_NAME || 'room',
     port: int(env.ROOM_PORT, 8787),
     host: env.ROOM_HOST || '127.0.0.1',
+    // What goes in an invite link. Override when the room sits behind a proxy
+    // or a Tailscale MagicDNS name you would rather hand out.
+    advertise: env.ROOM_ADVERTISE || advertiseHost(env.ROOM_HOST || '127.0.0.1'),
     stateDir: env.ROOM_STATE_DIR || join(homedir(), '.claude', 'channels', 'room'),
+    // The agent's @handle(s). Mutable at runtime via the admin API, and
+    // persisted, so renaming the agent does not need a restart.
+    handles: (env.ROOM_HANDLES || 'claude')
+      .split(',')
+      .map(h => h.trim().replace(/^@/, '').toLowerCase())
+      .filter(Boolean),
+    paused: bool(env.ROOM_PAUSED),
     payerMode: oneOf(env.ROOM_PAYER_MODE, ['host', 'rotate'], 'host'),
     permissionRelay: bool(env.ROOM_PERMISSION_RELAY),
     splitMode: oneOf(env.ROOM_SPLIT_MODE, ['equal', 'weighted'], 'equal'),
