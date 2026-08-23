@@ -369,9 +369,10 @@ export function renderUI(config) {
     b.text.split('\n').forEach(function (l) {
       box.appendChild(el('div', 'line' + (l.indexOf(' ') === 0 ? '' : ' head'), l));
     });
-    if (b.stale || b.ageS > 30) {
-      box.appendChild(el('div', 'stale', b.stale ? 'catching up…' : b.ageS + 's old'));
-    }
+    var notes = [];
+    if (b.pending > 0) notes.push(b.pending + ' new message' + (b.pending === 1 ? '' : 's') + ' not yet summarised');
+    if (b.ageS > 30) notes.push('built ' + b.ageS + 's ago');
+    if (notes.length) box.appendChild(el('div', 'stale', notes.join(' · ')));
   }
 
   // ---- admin panel: owners only -------------------------------------------

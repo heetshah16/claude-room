@@ -185,10 +185,20 @@ ${events}`
     }
   }
 
-  /** What to inject alongside a member's message. Never waits for a cycle. */
+  /**
+   * What to inject alongside a member's message. Never waits for a cycle.
+   *
+   * Reports two separate facts rather than one muddled one. A single `stale`
+   * flag conflated "this brief is old" with "things have happened since it was
+   * built", which produced the nonsense pairing stale="true" age_s="0" on a
+   * brief that was one second old with two messages behind it. Both were true;
+   * together they told the model nothing it could act on.
+   */
   briefForInjection() {
-    const text = renderBrief(this.#brief)
-    const ageS = briefAge(this.#brief, this.now())
-    return { text, stale: this.#buffer.length > 0, ageS }
+    return {
+      text: renderBrief(this.#brief),
+      ageS: briefAge(this.#brief, this.now()),
+      pending: this.#buffer.length,
+    }
   }
 }

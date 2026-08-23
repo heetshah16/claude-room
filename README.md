@@ -145,7 +145,7 @@ When someone addresses Claude, that brief is delivered as **its own channel even
 immediately before their message**:
 
 ```
-<channel source="room" kind="brief" stale="false" age_s="3">
+<channel source="room" kind="brief" age_s="3" pending="0">
 forks:
   - 14:10 → consolidate TTL vs add cache layer [live: consolidate TTL]
 reversals:
@@ -160,7 +160,8 @@ The member's message is **byte-identical** — not even wrapped. The brief is a 
 event, tagged so the agent knows it is machine-written and not something a person said.
 
 It runs on a debounce and is **never on the critical path**. If a cycle is in flight when
-someone addresses Claude, whatever brief exists is injected with `stale="true"` and its age.
+someone addresses Claude, whatever brief exists is injected with its `age_s` and a `pending`
+count of messages it does not yet reflect.
 If the observer is broken, over budget, or off, no brief is injected and the room behaves
 exactly as it does without one. Every failure degrades to "no observer".
 
@@ -332,7 +333,7 @@ text in front of an agent with your filesystem.
 npm test
 ```
 
-213 tests, no network and no Claude Code required. The pure modules — router, ledger,
+215 tests, no network and no Claude Code required. The pure modules — router, ledger,
 identity, decisions, queue, turns, brief, observer, admin — carry the load-bearing logic and are
 tested directly. The observer takes `runModel` as an injected seam, so its whole cycle is
 exercised without spawning a subprocess or spending a token.

@@ -372,7 +372,7 @@ test('closing a turn stamps usage and cache ratio onto it', async () => {
 })
 
 test('the brief is sent as its own event immediately before the message', async () => {
-  const h = harness({}, { brief: () => ({ text: 'forks:\n  - a vs b', stale: false, ageS: 2 }) })
+  const h = harness({}, { brief: () => ({ text: 'forks:\n  - a vs b', ageS: 2, pending: 0 }) })
   const base = await listen(h.server)
   await post(base, '/msg', { token: h.owner.token, text: '@claude go' })
 
@@ -382,12 +382,12 @@ test('the brief is sent as its own event immediately before the message', async 
   // The member's words are untouched — not even a wrapper.
   assert.equal(h.sent[0][0].content, '@claude go')
   assert.ok(h.briefs[0].text.includes('a vs b'))
-  assert.equal(h.briefs[0].stale, false)
+  assert.equal(h.briefs[0].pending, 0)
   done(h)
 })
 
 test('no brief event is emitted when the observer has nothing yet', async () => {
-  const h = harness({}, { brief: () => ({ text: '', stale: false, ageS: 0 }) })
+  const h = harness({}, { brief: () => ({ text: '', ageS: 0, pending: 0 }) })
   const base = await listen(h.server)
   await post(base, '/msg', { token: h.owner.token, text: '@claude go' })
   assert.equal(h.briefs.length, 0)
@@ -395,17 +395,17 @@ test('no brief event is emitted when the observer has nothing yet', async () => 
   done(h)
 })
 
-test('a stale brief is injected rather than waited for', async () => {
-  const h = harness({}, { brief: () => ({ text: 'threads:\n  - x', stale: true, ageS: 37 }) })
+test('a brief with unsummarised messages behind it is injected rather than waited for', async () => {
+  const h = harness({}, { brief: () => ({ text: 'threads:\n  - x', ageS: 37, pending: 4 }) })
   const base = await listen(h.server)
   await post(base, '/msg', { token: h.owner.token, text: '@claude go' })
-  assert.equal(h.briefs[0].stale, true)
+  assert.equal(h.briefs[0].pending, 4)
   assert.equal(h.briefs[0].ageS, 37)
   done(h)
 })
 
 test('the observer is fed chatter as well as addressed messages', async () => {
-  const h = harness({}, { brief: () => ({ text: '', stale: false, ageS: 0 }) })
+  const h = harness({}, { brief: () => ({ text: '', ageS: 0, pending: 0 }) })
   const base = await listen(h.server)
   await post(base, '/msg', { token: h.owner.token, text: 'just chatting' })
   await post(base, '/msg', { token: h.owner.token, text: '@claude go' })
@@ -415,7 +415,7 @@ test('the observer is fed chatter as well as addressed messages', async () => {
 })
 
 test('a closed turn is fed to the observer with its tools and reply', async () => {
-  const h = harness({}, { brief: () => ({ text: '', stale: false, ageS: 0 }) })
+  const h = harness({}, { brief: () => ({ text: '', ageS: 0, pending: 0 }) })
   const base = await listen(h.server)
   await post(base, '/msg', { token: h.owner.token, text: '@claude find the TTL' })
   await post(base, '/hook/PreToolUse', { prompt_id: 'p1', tool_name: 'Grep', tool_input: { pattern: 'TTL' } })
@@ -444,7 +444,7 @@ test('observer spend appears in the ledger payload even though it is not a membe
 })
 
 test('state exposes the brief when an observer is attached, and null when not', async () => {
-  const withObs = harness({}, { brief: () => ({ text: 'threads:\n  - x', stale: false, ageS: 1 }) })
+  const withObs = harness({}, { brief: () => ({ text: 'threads:\n  - x', ageS: 1, pending: 0 }) })
   let base = await listen(withObs.server)
   let s = await (await fetch(base + '/api/state?token=' + withObs.owner.token)).json()
   assert.equal(s.brief.on, true)

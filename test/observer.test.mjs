@@ -221,14 +221,28 @@ test('the pacing defaults are chosen for per-cycle cost, not per-token', () => {
   assert.equal(c.observer.minIntervalMs, 60_000)
 })
 
-test('injection reports staleness when events are waiting to be summarised', async () => {
+test('injection counts unsummarised events rather than flagging staleness', async () => {
   const o = new Observer({ config: cfg(), runModel: ok({ forks: [{ at: 'x' }] }) })
   o.note({ kind: 'message', text: 'a' })
   await o.flush()
-  assert.equal(o.briefForInjection().stale, false)
+  assert.equal(o.briefForInjection().pending, 0)
+
   o.note({ kind: 'message', text: 'b' })
-  assert.equal(o.briefForInjection().stale, true)
+  o.note({ kind: 'message', text: 'c' })
+  assert.equal(o.briefForInjection().pending, 2)
   assert.ok(o.briefForInjection().text.includes('forks:'))
+})
+
+test('a fresh brief can still be missing messages - age and pending are independent', async () => {
+  let t = 1000
+  const o = new Observer({ config: cfg(), now: () => t, runModel: ok({ forks: [{ at: 'x' }] }) })
+  o.note({ kind: 'message', text: 'a' })
+  await o.flush()
+  o.note({ kind: 'message', text: 'b' })
+
+  const b = o.briefForInjection()
+  assert.equal(b.ageS, 0)      // built this instant
+  assert.equal(b.pending, 1)   // and already behind by one
 })
 
 test('injection yields empty text before any brief exists', () => {

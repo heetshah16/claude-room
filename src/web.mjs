@@ -58,7 +58,7 @@ export function createWeb(deps) {
     // are delivered in order as one turn, so the agent sees the room's state
     // and then the message, with the message untouched.
     const brief = observer?.briefForInjection?.()
-    if (brief?.text) channel.notifyBrief(brief.text, { stale: brief.stale, ageS: brief.ageS })
+    if (brief?.text) channel.notifyBrief(brief.text, { ageS: brief.ageS, pending: brief.pending })
 
     channel.notify(turn.messages)
     // msgIds let the browser link each message to the turn it caused, without

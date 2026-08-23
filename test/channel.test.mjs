@@ -59,9 +59,9 @@ test('an empty batch produces no notification', () => {
 })
 
 test('a brief notification is tagged as machine-generated and attributed to nobody', () => {
-  const nt = buildBriefNotification('forks:\n  - a vs b', { stale: false, ageS: 3, roomName: 'r' })
+  const nt = buildBriefNotification('forks:\n  - a vs b', { ageS: 3, pending: 0, roomName: 'r' })
   assert.equal(nt.params.meta.kind, 'brief')
-  assert.equal(nt.params.meta.stale, 'false')
+  assert.equal(nt.params.meta.pending, '0')
   assert.equal(nt.params.meta.age_s, '3')
   assert.equal(nt.params.meta.user, undefined)
   assert.equal(nt.params.meta.member_id, undefined)
@@ -69,16 +69,31 @@ test('a brief notification is tagged as machine-generated and attributed to nobo
 })
 
 test('an empty or blank brief produces no notification', () => {
-  const opts = { stale: false, ageS: 0, roomName: 'r' }
+  const opts = { ageS: 0, pending: 0, roomName: 'r' }
   assert.equal(buildBriefNotification('', opts), null)
   assert.equal(buildBriefNotification('   \n ', opts), null)
   assert.equal(buildBriefNotification(null, opts), null)
 })
 
-test('a stale brief says so', () => {
-  const nt = buildBriefNotification('x', { stale: true, ageS: 41, roomName: 'r' })
-  assert.equal(nt.params.meta.stale, 'true')
-  assert.equal(nt.params.meta.age_s, '41')
+test('age and pending are reported separately, not conflated into one flag', () => {
+  // The case that produced the nonsense pairing stale="true" age_s="0": a brand
+  // new brief that is already missing messages. Both facts, stated separately.
+  const fresh = buildBriefNotification('x', { ageS: 0, pending: 3, roomName: 'r' })
+  assert.equal(fresh.params.meta.age_s, '0')
+  assert.equal(fresh.params.meta.pending, '3')
+
+  // And the opposite: an old brief that nothing has happened since.
+  const old = buildBriefNotification('x', { ageS: 240, pending: 0, roomName: 'r' })
+  assert.equal(old.params.meta.age_s, '240')
+  assert.equal(old.params.meta.pending, '0')
+
+  assert.equal('stale' in fresh.params.meta, false)
+})
+
+test('the agent is told what pending means', () => {
+  const ch = createChannel({ config: { roomName: 'r', permissionRelay: false }, onReply() {}, onDecision() {} })
+  const i = ch.mcp._instructions ?? ''
+  if (i) assert.match(i, /pending is how many room events have happened since/)
 })
 
 test('the agent is told a brief is not from a person', () => {

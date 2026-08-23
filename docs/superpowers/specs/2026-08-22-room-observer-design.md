@@ -73,7 +73,7 @@ happen), and closed turns with their tool calls and outcomes.
 At drain time, when a brief exists, the room emits two channel notifications in order:
 
 ```
-<channel source="room" kind="brief" stale="false" age_s="3">…</channel>
+<channel source="room" kind="brief" age_s="3" pending="0">…</channel>
 <channel source="room" user="bo" member_id="…">and add a cache layer to auth</channel>
 ```
 
@@ -103,7 +103,7 @@ fraction of a cent.
 
 | Situation | Behaviour |
 |---|---|
-| Cycle in flight when someone addresses Claude | Inject the current brief with `stale="true"` and `age_s`. Never wait. |
+| Cycle in flight when someone addresses Claude | Inject the current brief with its `age_s` and `pending` count. Never wait. |
 | Model call fails or times out | Keep the previous brief, log to stderr, retry next debounce. |
 | Output is not valid JSON | Discard, keep the previous brief. Never inject unparsed text. |
 | Over budget | Pause cycles. Room unaffected. |
@@ -197,3 +197,23 @@ could not tell a fresh proposal from a contradiction of something the team had s
 single most valuable signal it produces. Open decisions are now passed in the prompt under
 SETTLED DECISIONS. Separately, `/api/state` built its ledger payload from registry members
 only, so the observer's own spend was invisible in the cost table; it now has an explicit row.
+
+---
+
+## 14. Addendum — age and pending, 2026-08-23
+
+The original design carried a single `stale` boolean. Running the full context trace showed
+it emitting `stale="true" age_s="0"` — a brief built that instant, already marked stale. Both
+halves were true: `stale` was set from "events are buffered and unsummarised", while `age_s`
+measured time since the cycle. Together they read as a contradiction, and gave the model
+nothing it could weigh.
+
+Replaced with two independent attributes:
+
+- `age_s` — seconds since the brief was built.
+- `pending` — how many room events have happened since and are not reflected in it.
+
+A one-second-old brief missing three messages is now `age_s="1" pending="3"`, which is exactly
+what it is. The channel instructions tell the agent to prefer the messages over the brief
+where they disagree and `pending` is above zero. The browser panel reads the same two values
+("2 new messages not yet summarised · built 45s ago") instead of the old "catching up…".
