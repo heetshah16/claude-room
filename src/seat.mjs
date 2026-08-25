@@ -1,7 +1,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
-import { sanitizeMeta, buildNotification } from './channel.mjs'
+import { sanitizeMeta, buildNotification, buildBriefNotification } from './channel.mjs'
 
 // channel.mjs IS the room, embedded in the host's own session. This is the
 // mirror image: a thin client that lives inside every OTHER seat's session
@@ -20,17 +20,6 @@ function buildMirrorNotification(text, from) {
       // impossible - the receiving agent can see this is context, never a
       // request, without having to parse the words to tell.
       meta: sanitizeMeta({ kind: 'mirror', from }),
-    },
-  }
-}
-
-function buildBriefNotification(text, ageS, pending) {
-  if (!text || !String(text).trim()) return null
-  return {
-    method: 'notifications/claude/channel',
-    params: {
-      content: String(text),
-      meta: sanitizeMeta({ kind: 'brief', age_s: ageS ?? 0, pending: pending ?? 0 }),
     },
   }
 }
@@ -57,7 +46,11 @@ export function seatNotification(ev) {
     case 'mirror':
       return buildMirrorNotification(data.text, data.from)
     case 'brief':
-      return buildBriefNotification(data.text, data.ageS, data.pending)
+      // Reuses channel.mjs's builder instead of a local copy of the same
+      // shape - a hand-maintained duplicate is exactly how this drifted
+      // last time (channel.mjs's version carries `room` in meta; a local
+      // copy here quietly didn't).
+      return buildBriefNotification(data.text, { ageS: data.ageS, pending: data.pending, roomName: data.room })
     case 'seed':
       return buildSeedNotification(data.text)
     default:
@@ -77,13 +70,53 @@ A block tagged kind="brief" is a machine-written summary of the room, not from a
 
 Your transcript output does NOT reach the room. The room_reply tool is the ONLY way anything you say reaches the people and other seats here - not your prose, not your reasoning, nothing else.`
 
+const FEED_EVENTS = new Set(['turn', 'mirror', 'brief', 'seed'])
+
+/**
+ * Reads Server-Sent Events by hand off a fetch Response's streaming body.
+ * Frames are separated by a blank line; only the `event:`/`data:` lines
+ * matter here, so a bare `: comment` keep-alive (the room writes one on
+ * connect) has neither and is silently skipped. `onFrame` fires once per
+ * complete frame; this returns when the stream ends.
+ */
+async function readFrames(body, onFrame) {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) return
+    buf += decoder.decode(value, { stream: true })
+    let idx
+    while ((idx = buf.indexOf('\n\n')) !== -1) {
+      const frame = buf.slice(0, idx)
+      buf = buf.slice(idx + 2)
+      let event = null
+      let data = null
+      for (const line of frame.split('\n')) {
+        if (line.startsWith('event: ')) event = line.slice('event: '.length)
+        else if (line.startsWith('data: ')) data = line.slice('data: '.length)
+      }
+      if (event !== null && data !== null) onFrame(event, data)
+    }
+  }
+}
+
 /**
  * Builds one seat: an MCP server that speaks claude/channel to its own
  * Claude Code session, backed by an HTTP+SSE connection out to the room.
- * EventSourceImpl/fetchImpl are injectable so nothing here needs a real
- * socket to be constructed - only connect() opens one.
+ * fetchImpl is injectable so nothing here needs a real socket to be
+ * constructed - only connect() opens one.
+ *
+ * The feed is read by hand over fetch's streaming body rather than the
+ * global EventSource: Node 22 only exposes EventSource behind
+ * --experimental-eventsource, so `EventSourceImpl = EventSource` as a
+ * default parameter throws before this function even starts running,
+ * failing every real seat with a ReferenceError that names nothing useful.
+ * fetch is stable with no flags, so it is the only transport the default
+ * path may depend on.
  */
-export function createSeat({ roomUrl, token, handle, fetchImpl = fetch, EventSourceImpl = EventSource }) {
+export function createSeat({ roomUrl, token, handle, fetchImpl = fetch }) {
   const mcp = new Server(
     { name: `seat:${handle}`, version: '0.1.0' },
     {
@@ -128,7 +161,7 @@ export function createSeat({ roomUrl, token, handle, fetchImpl = fetch, EventSou
     }
   })
 
-  let source = null
+  let abortCtrl = null
   let backoffMs = 500
   let reconnectTimer = null
   let stopped = false
@@ -138,35 +171,41 @@ export function createSeat({ roomUrl, token, handle, fetchImpl = fetch, EventSou
     if (nt) void mcp.notification(nt)
   }
 
-  function openFeed() {
+  function scheduleReconnect() {
     if (stopped) return
-    source = new EventSourceImpl(`${roomUrl}/seat/events?token=${encodeURIComponent(token)}`)
+    // A dropped feed is not a fatal error for a seat on someone's laptop -
+    // wifi blips, sleep/wake, a room restart. Reconnect with backoff instead
+    // of leaving the seat silently deaf.
+    reconnectTimer = setTimeout(openFeed, backoffMs)
+    backoffMs = Math.min(backoffMs * 2, 30_000)
+  }
 
-    source.addEventListener('open', () => {
+  async function openFeed() {
+    if (stopped) return
+    abortCtrl = new AbortController()
+    try {
+      const res = await fetchImpl(`${roomUrl}/seat/events?token=${encodeURIComponent(token)}`, {
+        signal: abortCtrl.signal,
+      })
+      if (!res.ok || !res.body) throw new Error(`seat feed failed: ${res.status}`)
       backoffMs = 500 // reset once the feed is actually live again
-    })
-
-    for (const event of ['turn', 'mirror', 'brief', 'seed']) {
-      source.addEventListener(event, msgEvent => {
+      await readFrames(res.body, (event, raw) => {
+        if (!FEED_EVENTS.has(event)) return
         let data
         try {
-          data = JSON.parse(msgEvent.data)
+          data = JSON.parse(raw)
         } catch {
           return // malformed frame; drop rather than crash the seat
         }
         emit({ event, data })
       })
+      // readFrames returns once the stream ends - that is a drop too, same
+      // as a network error or a non-OK response below.
+    } catch {
+      // Aborted by stop(), a network error, or a bad response - every case
+      // lands here and is handled the same way: try to reconnect.
     }
-
-    // A dropped feed is not a fatal error for a seat on someone's laptop -
-    // wifi blips, sleep/wake, a room restart. Reconnect with backoff instead
-    // of leaving the seat silently deaf.
-    source.addEventListener('error', () => {
-      if (stopped) return
-      source?.close()
-      reconnectTimer = setTimeout(openFeed, backoffMs)
-      backoffMs = Math.min(backoffMs * 2, 30_000)
-    })
+    scheduleReconnect()
   }
 
   return {
@@ -184,12 +223,12 @@ export function createSeat({ roomUrl, token, handle, fetchImpl = fetch, EventSou
         if (body?.seed?.text) emit({ event: 'seed', data: { text: body.seed.text } })
       }
 
-      openFeed()
+      openFeed() // runs for the seat's whole lifetime; not awaited
     },
     stop() {
       stopped = true
       if (reconnectTimer) clearTimeout(reconnectTimer)
-      source?.close()
+      abortCtrl?.abort()
     },
   }
 }
