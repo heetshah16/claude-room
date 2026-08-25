@@ -55,4 +55,8 @@ test('online() reports handle, owner and uptime without leaking the connection',
   assert.equal(row.handle, 'ana-agent')
   assert.equal(row.ownerId, 'u-ana')
   assert.ok(row.joinedAt)
+  // That array is JSON-serialised straight to browsers: a raw HTTP
+  // connection object on a row would throw on circular references or leak
+  // internals to every viewer.
+  assert.ok(!('conn' in row), 'expected conn to be stripped from the online() row')
 })

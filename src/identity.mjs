@@ -1,11 +1,11 @@
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 
+export const ROLES = ['owner', 'member', 'viewer']
+
 /**
  * @param {{name:string, role?:import('./types.mjs').Role, canApprove?:boolean, payerRef?:string}} spec
  * @returns {import('./types.mjs').Member}
  */
-export const ROLES = ['owner', 'member', 'viewer']
-
 export function createMember({ name, role = 'member', canApprove = false, payerRef }) {
   return {
     id: randomUUID(),

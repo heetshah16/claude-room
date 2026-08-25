@@ -605,7 +605,10 @@ export function renderUI(config) {
     members.forEach(function (m) { byId[m.id] = m; });
     seats.forEach(function (s) {
       var owner = byId[s.ownerId];
-      var u = ledger[s.memberId] || {};
+      // Cost is always attributed to the seat's owner (see /seat/hook/* in
+      // src/web.mjs), never to the agent's own member id - nothing ever
+      // credits that id, so keying off it here always shows 0.
+      var u = ledger[s.ownerId] || {};
       var spent = (u.input || 0) + (u.output || 0) + (u.cacheRead || 0) + (u.cacheCreate || 0);
       var r = el('div', 'row');
       var dot = el('span', 'seat-dot');
