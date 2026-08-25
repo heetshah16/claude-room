@@ -4,16 +4,30 @@ import { ownsSeat } from './identity.mjs'
 
 const INFLIGHT = '__inflight__'
 
+// The destination every non-agent handle shares: the local MCP session this
+// room was spawned from. Agent seats get their own destination (their
+// handle); everything else — including a renamed classic handle — funnels
+// here, because there is only ever one local channel to notify.
+export const LOCAL_DEST = '__local__'
+
 /**
  * The serialization point. An agent takes actions on a filesystem, so two
- * concurrent turns cannot be merged the way two edits to a document can —
- * "refactor auth" and "revert auth" have no reconciliation. Exactly one turn
- * runs at a time; everything else stacks visibly in the queue.
+ * concurrent turns to the SAME destination cannot be merged the way two edits
+ * to a document can — "refactor auth" and "revert auth" have no
+ * reconciliation. Exactly one turn per destination runs at a time; everything
+ * else for that destination stacks visibly in the queue.
+ *
+ * Concurrency is per-destination, not global: N agent seats each draw on a
+ * different person's account and must be able to run their own turn without
+ * waiting on — or being wedged by — anyone else's. A turn also always targets
+ * exactly one destination; draining never merges messages addressed to
+ * different seats (or a seat and the local channel) into one batch, which
+ * would hand one person's message to another person's account.
  */
 export class Queue {
   #pending = []
-  #busy = false
-  #inflight = null
+  #busy = new Set() // destinations with a turn currently in flight
+  #inflight = new Map() // destination -> the turn currently in flight for it
   #byPrompt = new Map()
   #recent = new Map()
   #rotation = 0
@@ -40,6 +54,12 @@ export class Queue {
     if (!cap) return true
     const u = this.ledger.totalsFor(memberId)
     return u.input + u.output + u.cacheRead + u.cacheCreate < cap
+  }
+
+  /** Where a handle's turn belongs: the agent seat it names, or the one local channel. */
+  #destinationOf(handle) {
+    const agent = this.registry?.byHandle(handle)
+    return agent ? agent.handle : LOCAL_DEST
   }
 
   /**
@@ -101,8 +121,9 @@ export class Queue {
     return n
   }
 
-  busy() {
-    return this.#busy
+  /** With no destination, whether ANYTHING is in flight anywhere in the room. */
+  busy(dest) {
+    return dest === undefined ? this.#busy.size > 0 : this.#busy.has(dest)
   }
 
   selectPayer(messages) {
@@ -113,33 +134,60 @@ export class Queue {
   }
 
   /**
-   * Drains everything queued into a single turn. Claude Code batches concurrent
-   * channel events anyway; draining together keeps attribution honest.
+   * Starts a turn for exactly one destination: the oldest pending message
+   * whose destination is not already busy. Every other pending message for
+   * that SAME destination rides along in the same batch (Claude Code batches
+   * concurrent channel events anyway, so draining a destination's own
+   * messages together keeps attribution honest); messages for every other
+   * destination are left queued untouched.
+   *
+   * Scanning past a busy destination to find the next free one — rather than
+   * only ever looking at the oldest message — is what stops one wedged seat
+   * from freezing every other seat's ability to start its own turn.
    */
   beginTurn() {
-    if (this.#busy || !this.#pending.length) return null
-    const messages = this.#pending
-    this.#pending = []
-    this.#busy = true
+    let dest = null
+    for (const m of this.#pending) {
+      const d = this.#destinationOf(m.handle)
+      if (!this.#busy.has(d)) {
+        dest = d
+        break
+      }
+    }
+    if (dest === null) return null
+
+    const group = []
+    const rest = []
+    for (const m of this.#pending) {
+      if (this.#destinationOf(m.handle) === dest) group.push(m)
+      else rest.push(m)
+    }
+    this.#pending = rest
 
     const weights = new Map()
-    for (const m of messages) {
+    for (const m of group) {
       weights.set(m.memberId, (weights.get(m.memberId) ?? 0) + (m.text?.length ?? 0))
     }
     const participants = [...weights].map(([memberId, weight]) => ({ memberId, weight }))
 
-    // Stash under a fixed key too: the Stop hook learns the prompt_id only after
-    // the turn has already started, so there is no id to key on at this point.
-    this.#byPrompt.set(INFLIGHT, participants)
+    this.#busy.add(dest)
+    const turn = { dest, messages: group, participants, payer: this.selectPayer(group) }
+    this.#inflight.set(dest, turn)
 
-    this.#inflight = { messages, participants, payer: this.selectPayer(messages) }
-    return this.#inflight
+    // Stash under a fixed key too, but only for the local channel: the Stop
+    // hook learns the prompt_id only after the turn has already started, so
+    // there is no id to key on yet. Seat hooks never rely on this fallback —
+    // they always carry their own participants — so it needs no per-seat form.
+    if (dest === LOCAL_DEST) this.#byPrompt.set(INFLIGHT, participants)
+
+    return turn
   }
 
-  endTurn(promptId) {
-    if (promptId && this.#inflight) this.#byPrompt.set(promptId, this.#inflight.participants)
-    this.#busy = false
-    this.#inflight = null
+  endTurn(dest, promptId) {
+    const turn = this.#inflight.get(dest)
+    if (promptId && turn) this.#byPrompt.set(promptId, turn.participants)
+    this.#busy.delete(dest)
+    this.#inflight.delete(dest)
   }
 
   participantsOf(promptId) {

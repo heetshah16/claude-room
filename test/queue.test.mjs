@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { Queue } from '../src/queue.mjs'
+import { Queue, LOCAL_DEST } from '../src/queue.mjs'
 import { Ledger } from '../src/ledger.mjs'
 import { loadConfig } from '../src/config.mjs'
 import { Decisions } from '../src/decisions.mjs'
@@ -90,7 +90,7 @@ test('only one turn runs at a time', () => {
   assert.equal(q.busy(), true)
   q.submit(ana, '@claude two')
   assert.equal(q.beginTurn(), null)
-  q.endTurn('p1')
+  q.endTurn(LOCAL_DEST, 'p1')
   assert.equal(q.busy(), false)
   assert.equal(q.beginTurn().messages.length, 1)
 })
@@ -110,7 +110,7 @@ test('participants are recoverable by promptId after the turn ends', () => {
   const q = mk()
   q.submit(ana, '@claude one')
   q.beginTurn()
-  q.endTurn('p1')
+  q.endTurn(LOCAL_DEST, 'p1')
   assert.deepEqual(q.participantsOf('p1').map(p => p.memberId), ['a'])
 })
 

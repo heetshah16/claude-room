@@ -63,6 +63,16 @@ export class Seats {
   }
 
   /**
+   * Looks up a seat by its connection-local id. Returns the live record
+   * (conn included) or null. `online()` strips `conn` for anything handed to
+   * a browser; this is the one lookup the room itself uses to still have a
+   * socket to deliver a turn or mirror to.
+   */
+  byId(seatId) {
+    return this.#seats.get(seatId) ?? null
+  }
+
+  /**
    * All currently online seats. Returns plain rows without the conn object so the
    * seat list can be serialised straight to browsers over JSON without leaking
    * internals or causing circular references.

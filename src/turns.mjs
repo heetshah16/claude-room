@@ -3,6 +3,11 @@ import { cacheRatio } from './ledger.mjs'
 
 const MAX_ACTIVITY = 500
 
+// Same idea as Queue's LOCAL_DEST: every caller that does not name a
+// destination (every classic, pre-seats caller) gets this one, so a single
+// implicit destination behaves exactly as the old single-`#open` design did.
+const DEFAULT_DEST = '__local__'
+
 /**
  * What the agent actually did, grouped by turn.
  *
@@ -13,17 +18,23 @@ const MAX_ACTIVITY = 500
  * A turn opens before Claude Code has told anyone its prompt_id — the id only
  * arrives on the first hook — so turns are keyed by their own id and the
  * prompt_id is bound as an alias when it shows up.
+ *
+ * Several turns can be open at once — one per destination (the local channel,
+ * or an agent seat) — so "open" is tracked per destination rather than as one
+ * global field. Without that, seat A's Stop hook would bind to and close
+ * whichever turn happened to be open most recently, seat B's included.
  */
 export class TurnLog {
   #turns = []
-  #open = null
+  #openByDest = new Map()
   #byId = new Map()
   #byMsg = new Map()
 
-  open({ messages = [], participants = [] } = {}) {
+  open({ messages = [], participants = [], dest = DEFAULT_DEST } = {}) {
     const turn = {
       id: randomUUID(),
       promptId: null,
+      dest,
       msgIds: messages.map(m => m.id),
       preview: messages.map(m => `${m.name}: ${m.text}`).join('\n').slice(0, 300),
       participants,
@@ -37,48 +48,47 @@ export class TurnLog {
     this.#turns.push(turn)
     this.#byId.set(turn.id, turn)
     for (const id of turn.msgIds) this.#byMsg.set(id, turn.id)
-    this.#open = turn
+    this.#openByDest.set(dest, turn)
     return turn
   }
 
-  /** The first hook carrying a prompt_id names the open turn. */
-  bindPrompt(promptId) {
-    if (!promptId || !this.#open || this.#open.promptId) return this.#open
-    this.#open.promptId = promptId
-    this.#byId.set(promptId, this.#open)
-    return this.#open
+  /** The first hook carrying a prompt_id names its destination's open turn. */
+  bindPrompt(promptId, dest = DEFAULT_DEST) {
+    const turn = this.#openByDest.get(dest) ?? null
+    if (!promptId || !turn || turn.promptId) return turn
+    turn.promptId = promptId
+    this.#byId.set(promptId, turn)
+    return turn
   }
 
-  activity(evt, promptId) {
-    this.bindPrompt(promptId)
-    const turn = this.#open
+  activity(evt, promptId, dest = DEFAULT_DEST) {
+    const turn = this.bindPrompt(promptId, dest)
     if (!turn) return null
     if (turn.activity.length < MAX_ACTIVITY) turn.activity.push({ ...evt, ts: evt.ts ?? Date.now() })
     return turn
   }
 
-  reply(text, to) {
-    const turn = this.#open
+  reply(text, to, dest = DEFAULT_DEST) {
+    const turn = this.#openByDest.get(dest) ?? null
     if (!turn) return null
     turn.replies.push({ text, to, ts: Date.now() })
     return turn
   }
 
-  close(promptId, usage) {
-    this.bindPrompt(promptId)
-    const turn = this.#open
+  close(promptId, usage, dest = DEFAULT_DEST) {
+    const turn = this.bindPrompt(promptId, dest)
     if (!turn) return null
     turn.endedAt = Date.now()
     if (usage) {
       turn.usage = usage
       turn.ratio = cacheRatio(usage)
     }
-    this.#open = null
+    this.#openByDest.delete(dest)
     return turn
   }
 
-  openTurn() {
-    return this.#open
+  openTurn(dest = DEFAULT_DEST) {
+    return this.#openByDest.get(dest) ?? null
   }
 
   get(id) {

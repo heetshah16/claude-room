@@ -22,9 +22,12 @@ import { TurnLog } from '../../src/turns.mjs'
 
 export function harness(env = {}, observer = null) {
   const dir = mkdtempSync(join(tmpdir(), 'roomweb-'))
-  // 'ana-agent' is a configured handle alongside 'claude' so a plain @mention
-  // routes to the seat the same way any other handle does.
-  const config = loadConfig({ ROOM_STATE_DIR: dir, ROOM_HANDLES: 'claude,ana-agent', ...env })
+  // 'ana-agent' and 'heet-agent' are configured handles alongside 'claude' so
+  // a plain @mention routes to either seat the same way any other handle
+  // does. Two seats, owned by two different members, is what the
+  // cross-account tests need: proof that a turn addressed to one seat is
+  // never mixed with, or delivered to, the other.
+  const config = loadConfig({ ROOM_STATE_DIR: dir, ROOM_HANDLES: 'claude,ana-agent,heet-agent', ...env })
   const turns = new TurnLog()
   const order = []
   const briefs = []
@@ -34,6 +37,7 @@ export function harness(env = {}, observer = null) {
   const viewer = registry.add(createMember({ name: 'obs', role: 'viewer' }))
   const ana = registry.add(createMember({ name: 'ana', role: 'member' }))
   const agent = registry.add(createAgentMember({ name: 'ana-agent', handle: 'ana-agent', ownerId: ana.id }))
+  const heetAgent = registry.add(createAgentMember({ name: 'heet-agent', handle: 'heet-agent', ownerId: owner.id }))
   const ledger = new Ledger()
   const decisions = new Decisions()
   const seats = new Seats()
@@ -72,10 +76,11 @@ export function harness(env = {}, observer = null) {
   })
 
   return {
-    dir, server, owner, viewer, ana, agent, seats, registry, ledger, queue,
+    dir, server, owner, viewer, ana, agent, heetAgent, seats, registry, ledger, queue,
     permissions, turns, config, sent, verdicts, order, briefs, noted, bans, admin,
     // Convenience accessors the seat-protocol tests read directly.
     agentToken: agent.token, anaToken: ana.token, anaId: ana.id,
+    heetAgentToken: heetAgent.token,
   }
 }
 
@@ -86,6 +91,20 @@ export const post = (base, path, body) =>
   fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
 
 export const done = h => { h.server.close(); rmSync(h.dir, { recursive: true, force: true }) }
+
+/**
+ * Polls until `fn()` is truthy. `res.on('close')` on an aborted fetch fires
+ * asynchronously server-side, not the instant the client aborts — tests that
+ * need to observe the seat actually going offline poll for it rather than
+ * assuming a fixed delay is enough.
+ */
+export async function waitUntil(fn, { timeoutMs = 2000, intervalMs = 10 } = {}) {
+  const start = Date.now()
+  while (!fn()) {
+    if (Date.now() - start > timeoutMs) throw new Error('waitUntil: condition never became true')
+    await new Promise(r => setTimeout(r, intervalMs))
+  }
+}
 
 /**
  * Opens a seat's SSE feed and hands back a tiny async reader: `.next()`

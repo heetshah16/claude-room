@@ -6,6 +6,7 @@ import { parseUsageLine, sumUsage, cacheRatio } from './ledger.mjs'
 import { mayApprove, isAgent } from './identity.mjs'
 import { fanOut } from './fanout.mjs'
 import { buildSeed } from './seed.mjs'
+import { LOCAL_DEST } from './queue.mjs'
 import { renderUI } from './ui.mjs'
 
 const json = (res, code, body) => {
@@ -50,40 +51,58 @@ export function createWeb(deps) {
     return m
   }
 
-  // seatId -> the seat's live SSE response. Kept here, not on the Seat record
-  // itself, so `seats.online()` can keep stripping `conn` for browsers while
-  // this module still has a socket to write turns and mirrors to.
-  const seatConns = new Map()
-
-  function sendToSeat(seatId, kind, payload) {
-    const conn = seatConns.get(seatId)
-    if (!conn) return
-    // fanOut hands back a bare messages array for 'turn'/'addressed' mirrors
-    // and an already-shaped {text} object for reply/digest mirrors; normalise
-    // the former so every seat event is `{...}`, never a raw array.
-    const data = Array.isArray(payload) ? { messages: payload } : payload
-    try {
-      conn.write(`event: ${kind}\ndata: ${JSON.stringify(data)}\n\n`)
-    } catch {
-      // Dead socket; its own close handler retires the seat.
-    }
-  }
-
+  // `Seats.online()` strips `conn` deliberately (it goes straight to
+  // browsers as JSON), so delivery goes through `seats.byId`, the one lookup
+  // that still has a live socket. There is no connection map of our own here
+  // — the Seat record is the single place that knows whether a seat is
+  // reachable, exactly the invariant a seat's liveness depends on.
   function deliverToSeats(event) {
-    for (const d of fanOut(event, seats.online())) sendToSeat(d.seatId, d.kind, d.payload)
+    for (const d of fanOut(event, seats.online())) {
+      const seat = seats.byId(d.seatId)
+      if (!seat?.conn) continue
+      // fanOut hands back a bare messages array for 'turn'/'addressed'
+      // mirrors and an already-shaped {text} object for reply/digest
+      // mirrors; normalise the former so every seat event is `{...}`, never
+      // a raw array.
+      const data = Array.isArray(d.payload) ? { messages: d.payload } : d.payload
+      try {
+        seat.conn.write(`event: ${d.kind}\ndata: ${JSON.stringify(data)}\n\n`)
+      } catch {
+        // Dead socket; its own close handler retires the seat.
+      }
+    }
   }
 
   function drain() {
     const turn = queue.beginTurn()
     if (!turn) return
     if (config.payerMode === 'rotate') store.writePayer(turn.payer)
-    const logged = turns.open({ messages: turn.messages, participants: turn.participants })
 
-    // A turn addressed to a live agent seat belongs to that seat's own
-    // account — deliver it over the seat's own feed instead of the local MCP
-    // channel, so nothing but the seat's owner can ever drive it.
+    // A turn targets exactly one destination — never merge messages meant
+    // for two different seats (or a seat and the local channel) into one
+    // batch, which would hand one person's message to another person's
+    // account. `queue.beginTurn()` already guarantees `turn.messages` all
+    // share `turn.dest`; this just resolves what that destination is.
     const agent = registry.byHandle(turn.messages[0]?.handle)
+
+    if (agent && !seats.byHandle(agent.handle)) {
+      // The seat went offline between submit and drain — Queue.submit's own
+      // online gate can still lose this race. Fail visibly: end this
+      // destination's turn and tell the room, rather than leave it wedged
+      // busy with the message gone and nowhere to deliver it.
+      queue.endTurn(turn.dest)
+      for (const m of turn.messages) {
+        bus.publish('rejected', { memberId: m.memberId, name: m.name, reason: 'seat-offline' })
+      }
+      return
+    }
+
+    const logged = turns.open({ messages: turn.messages, participants: turn.participants, dest: turn.dest })
+
     if (agent) {
+      // A turn addressed to a live agent seat belongs to that seat's own
+      // account — deliver it over the seat's own feed instead of the local
+      // MCP channel, so nothing but the seat's owner can ever drive it.
       deliverToSeats({ type: 'addressed', handle: agent.handle, messages: turn.messages })
     } else {
       // The brief goes first, as its own event. Channel events queued together
@@ -146,25 +165,28 @@ export function createWeb(deps) {
     return usages.length ? sumUsage(usages) : null
   }
 
-  function emitActivity(evt, promptId) {
-    const turn = turns.activity(evt, promptId)
+  function emitActivity(evt, promptId, dest = LOCAL_DEST) {
+    const turn = turns.activity(evt, promptId, dest)
     bus.publish('activity', { ...evt, turnId: turn?.id ?? null })
   }
 
-  // `participantsOverride` lets a seat's hooks reuse this whole pipeline while
-  // attributing cost to the seat's owner instead of the queue's own
-  // participants, which only ever describes the local host's turn.
-  function handleHook(event, p, participantsOverride) {
+  // `ctx.dest` scopes this whole pipeline to one destination's turn, so seat
+  // A's hooks can never bind, close, or end seat B's (or the local channel's)
+  // in-flight turn. `ctx.participants` lets a seat's hooks attribute cost to
+  // the seat's owner instead of the queue's own participants, which only
+  // ever describes the local host's turn.
+  function handleHook(event, p, ctx = {}) {
+    const dest = ctx.dest ?? LOCAL_DEST
     if (event === 'PreToolUse') {
-      emitActivity({ kind: 'tool-start', tool: p.tool_name, input: p.tool_input, ts: Date.now() }, p.prompt_id)
+      emitActivity({ kind: 'tool-start', tool: p.tool_name, input: p.tool_input, ts: Date.now() }, p.prompt_id, dest)
     } else if (event === 'PostToolUse') {
-      emitActivity({ kind: 'tool-end', tool: p.tool_name, ts: Date.now() }, p.prompt_id)
+      emitActivity({ kind: 'tool-end', tool: p.tool_name, ts: Date.now() }, p.prompt_id, dest)
     } else if (event === 'Notification') {
-      emitActivity({ kind: 'notification', type: p.notification_type, ts: Date.now() }, p.prompt_id)
+      emitActivity({ kind: 'notification', type: p.notification_type, ts: Date.now() }, p.prompt_id, dest)
     } else if (event === 'SessionStart') {
       bus.publish('activity', { kind: 'session-start', ts: Date.now(), turnId: null })
     } else if (event === 'Stop') {
-      const participants = participantsOverride ?? queue.participantsOf(p.prompt_id) ?? queue.participantsOf('__inflight__') ?? []
+      const participants = ctx.participants ?? queue.participantsOf(p.prompt_id) ?? queue.participantsOf('__inflight__') ?? []
       const usage = usageFromTranscript(p.transcript_path)
       if (usage) {
         ledger.record(p.prompt_id, usage, participants, config.splitMode)
@@ -176,7 +198,7 @@ export function createWeb(deps) {
           totals: Object.fromEntries(registry.all().map(m => [m.id, ledger.totalsFor(m.id)])),
         })
       }
-      const closed = turns.close(p.prompt_id, usage)
+      const closed = turns.close(p.prompt_id, usage, dest)
       store.saveTurns(turns)
       if (closed) {
         observer?.note?.({
@@ -186,7 +208,7 @@ export function createWeb(deps) {
           reply: closed.replies.map(r => r.text).join(' ').slice(0, 300),
         })
       }
-      queue.endTurn(p.prompt_id)
+      queue.endTurn(dest, p.prompt_id)
       bus.publish('turn', { started: false, turnId: closed?.id ?? null, summary: closed ? slimTurn(closed) : null })
       drain()
     }
@@ -371,16 +393,18 @@ export function createWeb(deps) {
         // browser token from driving one.
         if (!isAgent(member)) return json(res, 403, { error: 'not-an-agent' })
 
-        const r = seats.join(member, null)
-        if (!r.ok) return json(res, 409, { error: r.reason })
-
+        // A seat is online exactly while its event feed is open — that is
+        // the only fact Seats tracks liveness by, and /seat/events is the
+        // only route with a socket to back it. This handshake just checks
+        // the token and hands back a seed; `seatId` here is a correlation id
+        // for this call only, not a live registration.
         const seed = buildSeed({
           brief: observer?.briefForInjection?.()?.text ?? '',
           decisions: decisions.open(),
           messages: store.recent(200),
           limit: 50,
         })
-        return json(res, 200, { seatId: r.seatId, seed })
+        return json(res, 200, { seatId: randomUUID(), seed })
       }
 
       if (req.method === 'GET' && path === '/seat/events') {
@@ -388,20 +412,12 @@ export function createWeb(deps) {
         if (!member) return json(res, 401, { error: 'bad token' })
         if (!isAgent(member)) return json(res, 403, { error: 'not-an-agent' })
 
-        // The seat may already be registered from /seat/join (joined without
-        // a live connection yet); attach this socket to that same seat rather
-        // than fail it as a handle clash. byHandle hands back the live
-        // record, not a copy, so this mutation is visible everywhere.
-        let seat = seats.byHandle(member.handle)
-        let seatId
-        if (seat) {
-          seat.conn = res
-          seatId = seat.seatId
-        } else {
-          const r = seats.join(member, res)
-          if (!r.ok) return json(res, 409, { error: r.reason })
-          seatId = r.seatId
-        }
+        // The one place a seat becomes reachable: Seats.join's own
+        // handle-taken guard refuses a second feed for a handle that
+        // already has one open, so at most one connection ever owns a seat.
+        const r = seats.join(member, res)
+        if (!r.ok) return json(res, 409, { error: r.reason })
+        const seatId = r.seatId
 
         res.writeHead(200, {
           'content-type': 'text/event-stream',
@@ -409,12 +425,14 @@ export function createWeb(deps) {
           connection: 'keep-alive',
         })
         res.write(': connected\n\n')
-        seatConns.set(seatId, res)
         // Liveness is the connection: once it drops, the seat is offline and
-        // its handle is free again.
+        // its handle is free again. Fenced on identity — if this seat was
+        // ever re-registered under a different connection (e.g. a refused
+        // duplicate that somehow still reached here, or a rejoin after a
+        // prior leave), this close must not retire a seat it no longer owns.
         res.on('close', () => {
-          seatConns.delete(seatId)
-          seats.leave(seatId)
+          const current = seats.byId(seatId)
+          if (current?.conn === res) seats.leave(seatId)
         })
         return
       }
@@ -458,9 +476,17 @@ export function createWeb(deps) {
         }
         try {
           const member = memberFrom(req, url, payload)
-          // Cost lands on the human who owns the seat, never on the agent
-          // member — that is the entire point of per-seat authentication.
-          if (member && isAgent(member)) handleHook(event, payload, [{ memberId: member.ownerId, weight: 1 }])
+          if (member && isAgent(member)) {
+            handleHook(event, payload, {
+              // Scoped to this seat's own destination so its Stop can never
+              // bind to or end a different seat's (or the local channel's)
+              // in-flight turn.
+              dest: member.handle,
+              // Cost lands on the human who owns the seat, never on the
+              // agent member — that is the entire point of per-seat auth.
+              participants: [{ memberId: member.ownerId, weight: 1 }],
+            })
+          }
         } catch {
           // The activity feed may degrade; the room must not.
         }
