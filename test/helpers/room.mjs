@@ -107,20 +107,25 @@ export async function waitUntil(fn, { timeoutMs = 2000, intervalMs = 10 } = {}) 
 }
 
 /**
- * Opens a seat's SSE feed and hands back a tiny async reader: `.next()`
- * resolves to the next `{event, data}` frame, `.close()` tears the
- * connection down. The room's own connect comment (`: connected`) is a
- * frame with no `event:`/`data:` lines and is swallowed rather than handed
- * to the caller.
+ * Opens an SSE endpoint and hands back a tiny async reader: `.next()`
+ * resolves to the next `{event, data}` frame, `.until(pred)` resolves to the
+ * next frame matching `pred` (skipping — not losing — anything before it,
+ * for a shared bus feed that also carries unrelated events), `.close()`
+ * tears the connection down. A comment-only frame (the room's own
+ * `: connected` line, or an SSE keep-alive) has no `event:`/`data:` lines
+ * and is swallowed rather than handed to the caller.
  */
-export async function openSeatFeed(base, token) {
+async function openSSE(url) {
   const ctrl = new AbortController()
-  const res = await fetch(`${base}/seat/events?token=${token}`, { signal: ctrl.signal })
+  // Awaited before returning, same as the original openSeatFeed: a caller
+  // that awaits this is guaranteed the server has already processed the
+  // request (e.g. Seats.join has already run) before doing anything else.
+  const res = await fetch(url, { signal: ctrl.signal })
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buf = ''
   const pending = []
-  let waiting = null
+  let waiting = null // {resolve, match}
 
   function parseFrame(frame) {
     let event = null
@@ -137,6 +142,16 @@ export async function openSeatFeed(base, token) {
     }
   }
 
+  function deliver(evt) {
+    if (waiting && (!waiting.match || waiting.match(evt))) {
+      const w = waiting
+      waiting = null
+      w.resolve(evt)
+    } else {
+      pending.push(evt)
+    }
+  }
+
   ;(async () => {
     try {
       for (;;) {
@@ -148,14 +163,7 @@ export async function openSeatFeed(base, token) {
           const frame = buf.slice(0, idx)
           buf = buf.slice(idx + 2)
           const evt = parseFrame(frame)
-          if (!evt) continue
-          if (waiting) {
-            const w = waiting
-            waiting = null
-            w.resolve(evt)
-          } else {
-            pending.push(evt)
-          }
+          if (evt) deliver(evt)
         }
       }
     } catch {
@@ -167,13 +175,24 @@ export async function openSeatFeed(base, token) {
   return {
     next() {
       if (pending.length) return Promise.resolve(pending.shift())
-      return new Promise(resolve => { waiting = { resolve } })
+      return new Promise(resolve => { waiting = { resolve, match: null } })
+    },
+    until(match) {
+      const i = pending.findIndex(match)
+      if (i !== -1) return Promise.resolve(pending.splice(i, 1)[0])
+      return new Promise(resolve => { waiting = { resolve, match } })
     },
     close() {
       ctrl.abort()
     },
   }
 }
+
+/** Opens a seat's own SSE feed — see `openSSE`. */
+export const openSeatFeed = (base, token) => openSSE(`${base}/seat/events?token=${token}`)
+
+/** Opens the room-wide browser SSE feed (every published bus event) — see `openSSE`. */
+export const openEventsFeed = (base, token) => openSSE(`${base}/events?token=${token}`)
 
 /**
  * Writes a one-line fake assistant transcript, the same shape a Stop hook

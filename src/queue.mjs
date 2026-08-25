@@ -190,6 +190,16 @@ export class Queue {
     this.#inflight.delete(dest)
   }
 
+  /**
+   * The turn currently in flight for a destination, or null. Lets a caller
+   * that needs to abandon a destination (a seat dropping mid-turn, say) read
+   * its messages/participants for a visible rejection before endTurn wipes
+   * the record.
+   */
+  inflightFor(dest) {
+    return this.#inflight.get(dest) ?? null
+  }
+
   participantsOf(promptId) {
     return this.#byPrompt.get(promptId) ?? null
   }

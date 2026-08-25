@@ -94,7 +94,11 @@ export function createWeb(deps) {
       for (const m of turn.messages) {
         bus.publish('rejected', { memberId: m.memberId, name: m.name, reason: 'seat-offline' })
       }
-      return
+      // A rejected destination must not stall whatever else is ready. Without
+      // this, a second, perfectly reachable destination queued behind the
+      // same drain() call would sit untouched until some unrelated /msg or
+      // Stop happened to trigger draining again.
+      return drain()
     }
 
     const logged = turns.open({ messages: turn.messages, participants: turn.participants, dest: turn.dest })
@@ -121,6 +125,24 @@ export function createWeb(deps) {
       msgIds: logged.msgIds,
       participants: turn.participants,
     })
+  }
+
+  // A destination's turn ends without ever hearing back — a seat's feed
+  // dropping mid-turn, most likely. Same wedge class as an unreachable
+  // destination at drain time (busy stuck true forever, work silently
+  // stuck), just discovered later: end the queue's turn, close the open
+  // TurnLog entry so it does not linger forever, and publish both a visible
+  // rejection and a turn-ended event so the room sees what happened.
+  function abandonTurn(dest, reason) {
+    const turn = queue.inflightFor(dest)
+    if (!turn) return // nothing was actually in flight for this destination
+    queue.endTurn(dest)
+    for (const m of turn.messages) {
+      bus.publish('rejected', { memberId: m.memberId, name: m.name, reason })
+    }
+    const closed = turns.close(null, null, dest)
+    store.saveTurns(turns)
+    bus.publish('turn', { started: false, turnId: closed?.id ?? null, summary: closed ? slimTurn(closed) : null })
   }
 
   const slimTurn = t => ({
@@ -269,7 +291,14 @@ export function createWeb(deps) {
           busy: queue.busy(),
           pendingApprovals: mayApprove(member) ? permissions.pending() : [],
           turns: turns.recent(50).map(slimTurn),
+          // openTurnId is kept exactly as before — the local channel's own
+          // open turn, or null — so an existing browser build's single-turn
+          // assumption keeps working. openTurnIds is every turn open right
+          // now across every destination (local plus any live seats), which
+          // is the only way `busy` (true the instant any seat is working)
+          // has anything for the UI to link a "working" indicator to.
           openTurnId: turns.openTurn()?.id ?? null,
+          openTurnIds: turns.openTurns().map(t => t.id),
           brief: observer ? { ...observer.briefForInjection(), on: observer.enabled(), paused: observer.paused() } : null,
         })
       }
@@ -432,7 +461,21 @@ export function createWeb(deps) {
         // prior leave), this close must not retire a seat it no longer owns.
         res.on('close', () => {
           const current = seats.byId(seatId)
-          if (current?.conn === res) seats.leave(seatId)
+          if (current?.conn === res) {
+            seats.leave(seatId)
+            // A seat can drop mid-turn, not just between messages. Leaving
+            // the seat alone frees its handle to reconnect, but the turn
+            // itself was left dangling — same wedge as the never-reachable
+            // case (busy stuck true forever), just discovered here instead
+            // of at drain time. Guarded like every other hook-triggered side
+            // effect: an event-emitter callback has no request to catch a
+            // throw, so an I/O failure here must not crash the process.
+            try {
+              abandonTurn(member.handle, 'seat-disconnected')
+            } catch {
+              // The activity feed may degrade; the room must not.
+            }
+          }
         })
         return
       }

@@ -91,6 +91,16 @@ export class TurnLog {
     return this.#openByDest.get(dest) ?? null
   }
 
+  /**
+   * Every turn currently open, across every destination. `openTurn()` only
+   * ever answers for one destination (the local channel by default); a room
+   * with live seats can have several turns open at once, and a browser
+   * watching the whole room needs to see all of them, not just the local one.
+   */
+  openTurns() {
+    return [...this.#openByDest.values()]
+  }
+
   get(id) {
     return this.#byId.get(id) ?? null
   }
