@@ -87,10 +87,13 @@ function turnDigestDeliveries(event, seats) {
  * @returns {string} Summary of tools used and outcome
  */
 export function digestOf(turn) {
-  // Collect tool names and primary arguments, without output.
+  // Collect distinct tool names and primary arguments, without output.
+  // Preserve first-seen order; repeated tools appear once only.
+  const seenTools = new Set()
   const tools = []
   for (const act of turn.activity || []) {
-    if (act.kind === 'tool-start') {
+    if (act.kind === 'tool-start' && !seenTools.has(act.tool)) {
+      seenTools.add(act.tool)
       const arg = act.input?.file_path || act.input?.command ||
                   act.input?.pattern || act.input?.path || ''
       const suffix = arg ? ` ${arg}` : ''

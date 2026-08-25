@@ -66,3 +66,22 @@ test('a digest names tools and outcome but never carries tool output', () => {
   assert.match(d, /Read/)
   assert.ok(!d.includes('THE ENTIRE FILE CONTENTS'))
 })
+
+test('a digest deduplicates tool names, preserving first-seen order', () => {
+  const d = digestOf({
+    preview: 'scan and fix',
+    activity: [
+      { kind: 'tool-start', tool: 'Read', input: { file_path: 'a.js' } },
+      { kind: 'tool-start', tool: 'Grep', input: { pattern: 'TODO' } },
+      { kind: 'tool-start', tool: 'Read', input: { file_path: 'b.js' } },
+      { kind: 'tool-start', tool: 'Edit', input: { file_path: 'a.js' } },
+      { kind: 'tool-start', tool: 'Read', input: { file_path: 'c.js' } },
+    ],
+    replies: [{ text: 'fixed' }],
+  })
+  // Should see distinct tools: Read, Grep, Edit (in that order)
+  assert.match(d, /Read.*Grep.*Edit/)
+  // Should not have 'Read' three times
+  const readCount = (d.match(/Read/g) || []).length
+  assert.equal(readCount, 1)
+})
