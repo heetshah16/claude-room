@@ -1,10 +1,14 @@
 /**
  * The room's browser client. One self-contained document: no CDN, no external
  * font, no build step — a tailnet has no reason to reach the public internet
- * just to render a chat box.
+ * just to render a chat room.
  *
  * Every server-supplied string is written with textContent, never innerHTML.
  * Message text, member names and permission previews are all untrusted input.
+ *
+ * ⚠ This whole file is one template literal. Inside the client script a single
+ * backslash-n becomes a REAL line break and breaks the entire page. Always
+ * double-escape. `test/ui.test.mjs` parses the emitted script to catch it.
  */
 
 const esc = s =>
@@ -25,163 +29,359 @@ export function renderUI(config) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${room} · claude-room</title>
 <style>
+  /* Soft UI Evolution: subtle depth, measured contrast, no neumorphic mush. */
   :root {
-    --bg: #fbfbfa; --panel: #fff; --ink: #1a1a18; --dim: #6b6b66;
-    --line: #e4e4e0; --accent: #b8552b; --ok: #2f7d4f; --warn: #a8641a; --bad: #a33;
-    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --bg:        #f6f6fb;
+    --panel:     #ffffff;
+    --panel-2:   #fbfbfe;
+    --ink:       #1e1b33;
+    --ink-2:     #4b4a63;
+    --dim:       #6b7280;
+    --line:      #e4e4ef;
+    --line-2:    #eeeef6;
+    --primary:   #5b5bd6;
+    --primary-w: #eeeefc;
+    --accent:    #047857;
+    --accent-w:  #e7f6f0;
+    --warn:      #b45309;
+    --warn-w:    #fdf4e7;
+    --bad:       #dc2626;
+    --bad-w:     #fdecec;
+
+    --sp1: 4px; --sp2: 8px; --sp3: 12px; --sp4: 16px; --sp5: 24px; --sp6: 32px;
+    --r1: 6px; --r2: 10px; --r3: 14px;
+    --shadow-1: 0 1px 2px rgba(24,24,50,.05), 0 1px 3px rgba(24,24,50,.04);
+    --shadow-2: 0 2px 4px rgba(24,24,50,.05), 0 6px 16px rgba(24,24,50,.07);
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+    --t: 180ms cubic-bezier(.4,0,.2,1);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #17171a; --panel: #1f1f23; --ink: #ececea; --dim: #9a9a94;
-      --line: #33333a; --accent: #e08a5c; --ok: #7fc99b; --warn: #e0b06a; --bad: #e08b8b;
+      --bg:        #131318;
+      --panel:     #1b1b22;
+      --panel-2:   #21212a;
+      --ink:       #e9e9f2;
+      --ink-2:     #c3c3d2;
+      --dim:       #8e8ea3;
+      --line:      #2c2c37;
+      --line-2:    #26262f;
+      --primary:   #8b8bf0;
+      --primary-w: #23233a;
+      --accent:    #34d399;
+      --accent-w:  #17322a;
+      --warn:      #fbbf24;
+      --warn-w:    #33290f;
+      --bad:       #f87171;
+      --bad-w:     #3a1f1f;
+      --shadow-1: 0 1px 2px rgba(0,0,0,.4);
+      --shadow-2: 0 2px 6px rgba(0,0,0,.45), 0 8px 24px rgba(0,0,0,.35);
     }
   }
+
   * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
-    font: 14px/1.55 system-ui, -apple-system, Segoe UI, sans-serif;
-    height: 100vh; display: flex; flex-direction: column;
+    font: 15px/1.55 var(--sans);
+    height: 100dvh; display: flex; flex-direction: column;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
   }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  }
+
+  button, input, textarea, select { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  :focus-visible {
+    outline: 2px solid var(--primary); outline-offset: 2px; border-radius: var(--r1);
+  }
+
+  /* ---------- header ---------- */
   header {
-    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-    padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+    display: flex; align-items: center; gap: var(--sp3);
+    padding: var(--sp3) var(--sp4);
+    background: var(--panel); border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
   }
-  header h1 { font-size: 15px; margin: 0; font-weight: 650; }
-  .pill {
-    font: 11px/1 var(--mono); padding: 4px 8px; border-radius: 999px;
-    border: 1px solid var(--line); color: var(--dim); white-space: nowrap;
+  .brand { display: flex; align-items: center; gap: var(--sp2); margin-right: auto; min-width: 0; }
+  .brand .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); flex: none; }
+  .brand h1 {
+    margin: 0; font-size: 15px; font-weight: 650; letter-spacing: -.01em;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .pill.live { color: var(--ok); border-color: var(--ok); }
-  .pill.busy { color: var(--warn); border-color: var(--warn); }
-  .pill.off  { color: var(--bad); border-color: var(--bad); }
-  main { flex: 1; display: grid; grid-template-columns: 1fr 320px; min-height: 0; }
-  @media (max-width: 820px) { main { grid-template-columns: 1fr; } aside { display: none; } }
-  #log { overflow-y: auto; padding: 14px 16px; }
+  .brand .sub { font: 11px/1 var(--mono); color: var(--dim); }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    font: 11px/1 var(--mono); padding: 6px 9px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--dim); background: var(--panel-2);
+    white-space: nowrap; transition: color var(--t), border-color var(--t);
+  }
+  .chip.ok   { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); background: var(--accent-w); }
+  .chip.busy { color: var(--warn);   border-color: color-mix(in srgb, var(--warn) 40%, var(--line));   background: var(--warn-w); }
+  .chip.off  { color: var(--bad);    border-color: color-mix(in srgb, var(--bad) 40%, var(--line));    background: var(--bad-w); }
+  .chip .pulse { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .chip.busy .pulse { animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+
+  .avatar {
+    width: 26px; height: 26px; border-radius: 50%; flex: none;
+    display: grid; place-items: center;
+    font: 600 11px/1 var(--sans); color: #fff; letter-spacing: .02em;
+  }
+  .avatar.sm { width: 20px; height: 20px; font-size: 9px; }
+
+  /* ---------- layout ---------- */
+  main { flex: 1; display: grid; grid-template-columns: minmax(0,1fr) 340px; min-height: 0; }
+  #log { overflow-y: auto; overscroll-behavior: contain; padding: var(--sp5) var(--sp5) var(--sp4); }
+  .stream { max-width: 780px; margin: 0 auto; }
+
   aside {
     border-left: 1px solid var(--line); background: var(--panel);
-    overflow-y: auto; padding: 12px 14px;
+    overflow-y: auto; padding: var(--sp4); display: flex; flex-direction: column; gap: var(--sp2);
   }
-  aside h2 {
-    font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
-    color: var(--dim); margin: 16px 0 6px; font-weight: 600;
+  .card {
+    border: 1px solid var(--line); border-radius: var(--r2);
+    background: var(--panel-2); overflow: hidden;
   }
-  aside h2:first-child { margin-top: 0; }
-  .msg { margin-bottom: 10px; }
-  .msg.has-detail > div:first-child { cursor: pointer; }
-  .msg.has-detail > div:first-child:hover .disclose { color: var(--accent); }
-  .disclose { font: 11px/1 var(--mono); color: var(--dim); margin-left: 6px; }
-  .detail {
-    margin: 6px 0 0 10px; padding: 8px 10px; border-left: 2px solid var(--accent);
-    background: var(--panel); border-radius: 0 6px 6px 0;
+  .card > summary, .card > .card-h {
+    display: flex; align-items: center; gap: var(--sp2);
+    padding: 10px var(--sp3); cursor: pointer; list-style: none;
+    font: 600 11px/1 var(--sans); text-transform: uppercase; letter-spacing: .07em;
+    color: var(--dim); user-select: none;
   }
-  .detail .step {
-    font: 12px/1.5 var(--mono); display: flex; gap: 8px; align-items: baseline;
+  .card > summary::-webkit-details-marker { display: none; }
+  .card > summary:hover { color: var(--ink-2); }
+  .card > summary .count {
+    margin-left: auto; font: 10px/1 var(--mono); background: var(--line-2);
+    padding: 3px 6px; border-radius: 999px; color: var(--dim);
   }
-  .detail .step .tool { color: var(--accent); min-width: 8ch; }
-  .detail .step .arg {
-    color: var(--dim); white-space: pre-wrap; word-break: break-all; flex: 1;
+  .card .body { padding: 0 var(--sp3) var(--sp3); }
+  .card .chev { transition: transform var(--t); flex: none; }
+  details[open] > summary .chev { transform: rotate(90deg); }
+
+  /* ---------- messages ---------- */
+  .msg { display: flex; gap: var(--sp3); padding: var(--sp2) 0; }
+  .msg + .msg.same { padding-top: 0; }
+  .msg.same .avatar { visibility: hidden; height: 0; }
+  .msg .col { min-width: 0; flex: 1; }
+  .msg .who { display: flex; align-items: baseline; gap: var(--sp2); }
+  .msg .who b { font-weight: 620; font-size: 14px; }
+  .msg .when { font: 10px/1 var(--mono); color: var(--dim); }
+  .msg .body {
+    white-space: pre-wrap; word-break: break-word; color: var(--ink-2);
+    margin-top: 2px;
   }
-  .detail .step .dur { color: var(--dim); font-size: 11px; }
-  .detail .summary {
-    font: 11px/1.5 var(--mono); color: var(--dim);
-    margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line);
+  .msg.addressed .col {
+    border-left: 2px solid var(--primary); padding-left: var(--sp3); margin-left: -1px;
   }
-  .detail .running { color: var(--warn); }
-  .who { font-weight: 650; }
-  .who.claude { color: var(--accent); }
-  .meta { font: 11px/1 var(--mono); color: var(--dim); margin-left: 6px; }
-  .body { white-space: pre-wrap; word-break: break-word; }
-  .queued { border-left: 2px solid var(--warn); padding-left: 8px; }
+  .tag {
+    font: 10px/1 var(--mono); padding: 3px 6px; border-radius: 999px;
+    background: var(--primary-w); color: var(--primary); border: 1px solid transparent;
+  }
+  .msg.reply .body { color: var(--ink); }
+  .msg.reply .who b { color: var(--primary); }
+
   .note {
-    font: 12px/1.5 var(--mono); color: var(--dim);
-    border-left: 2px solid var(--line); padding-left: 8px; margin-bottom: 6px;
+    display: flex; gap: var(--sp2); align-items: flex-start;
+    border-radius: var(--r2); padding: 10px var(--sp3); margin: var(--sp2) 0;
+    font-size: 13px; background: var(--panel); border: 1px solid var(--line);
+    color: var(--ink-2);
   }
-  .note.conflict { color: var(--warn); border-color: var(--warn); }
-  .note.observer { color: var(--accent); border-color: var(--accent); }
-  #brief .line { font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; }
-  #brief .head { color: var(--accent); }
-  #brief .stale { color: var(--warn); font-size: 11px; }
-  #admin .row {
-    display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
-    padding: 4px 0; border-bottom: 1px solid var(--line);
+  .note svg { flex: none; margin-top: 2px; }
+  .note.warn { background: var(--warn-w); border-color: color-mix(in srgb, var(--warn) 35%, var(--line)); color: var(--warn); }
+  .note.bad  { background: var(--bad-w);  border-color: color-mix(in srgb, var(--bad) 35%, var(--line));  color: var(--bad); }
+  .note.obs  { background: var(--primary-w); border-color: color-mix(in srgb, var(--primary) 30%, var(--line)); color: var(--primary); }
+
+  /* ---------- turn detail ---------- */
+  .disclose {
+    display: inline-flex; align-items: center; gap: 5px; margin-top: 6px;
+    font: 11px/1 var(--mono); color: var(--dim); background: none; border: 0; padding: 4px 0;
+    transition: color var(--t);
   }
-  #admin .who { flex: 1; min-width: 7ch; font-size: 12px; }
-  #admin .tag { font: 10px/1 var(--mono); color: var(--dim); }
-  #admin select, #admin input {
-    font: 11px/1 var(--mono); padding: 2px 4px; background: var(--bg);
-    color: var(--ink); border: 1px solid var(--line); border-radius: 4px;
+  .disclose:hover { color: var(--primary); }
+  .detail {
+    margin-top: var(--sp2); border: 1px solid var(--line); border-radius: var(--r2);
+    background: var(--panel); box-shadow: var(--shadow-1); overflow: hidden;
   }
-  #admin input.wide { width: 100%; }
-  #admin .danger { color: var(--bad); border-color: var(--bad); }
-  #admin .bar { display: flex; gap: 4px; flex-wrap: wrap; margin: 6px 0; }
-  .note.reject { color: var(--bad); border-color: var(--bad); }
-  table { width: 100%; border-collapse: collapse; font: 12px/1.5 var(--mono); }
-  td { padding: 2px 0; }
-  td.num { text-align: right; color: var(--dim); }
-  .approval {
-    border: 1px solid var(--warn); border-radius: 6px; padding: 8px; margin-bottom: 8px;
+  .step {
+    display: grid; grid-template-columns: 74px 1fr auto; gap: var(--sp3);
+    align-items: baseline; padding: 7px var(--sp3);
+    font: 12px/1.5 var(--mono); border-bottom: 1px solid var(--line-2);
   }
-  .approval pre {
-    font: 11px/1.4 var(--mono); background: var(--bg); padding: 6px;
-    border-radius: 4px; overflow-x: auto; margin: 6px 0; max-height: 140px;
+  .step:last-child { border-bottom: 0; }
+  .step .tool { color: var(--primary); font-weight: 600; }
+  .step .tool.end { color: var(--accent); }
+  .step .arg { color: var(--dim); white-space: pre-wrap; word-break: break-all; }
+  .step .dur { color: var(--dim); font-size: 10px; }
+  .detail .foot {
+    padding: 8px var(--sp3); font: 11px/1.4 var(--mono); color: var(--dim);
+    background: var(--panel-2); border-top: 1px solid var(--line-2);
   }
-  form { display: flex; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--line); background: var(--panel); }
-  textarea {
-    flex: 1; resize: none; font: inherit; padding: 8px 10px; border-radius: 6px;
-    border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+  .detail .foot.running { color: var(--warn); }
+
+  /* ---------- sidebar bits ---------- */
+  .row { display: flex; align-items: center; gap: var(--sp2); padding: 6px 0; font-size: 13px; }
+  .row + .row { border-top: 1px solid var(--line-2); }
+  .row .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meta { font: 10px/1 var(--mono); color: var(--dim); }
+  .bar { height: 4px; border-radius: 999px; background: var(--line-2); overflow: hidden; margin-top: 4px; }
+  .bar i { display: block; height: 100%; background: var(--primary); border-radius: 999px; transition: width 400ms var(--t); }
+  .brief-line { font: 12px/1.6 var(--mono); white-space: pre-wrap; word-break: break-word; color: var(--ink-2); }
+  .brief-line.head { color: var(--primary); font-weight: 600; margin-top: 6px; }
+  .empty { font-size: 12px; color: var(--dim); font-style: italic; padding: 4px 0; }
+
+  .btn {
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink-2);
+    border-radius: var(--r1); padding: 5px 10px; font: 500 12px/1.3 var(--sans);
+    transition: background var(--t), border-color var(--t), color var(--t);
   }
-  button {
-    font: inherit; padding: 8px 14px; border-radius: 6px; cursor: pointer;
-    border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+  .btn:hover { background: var(--panel-2); border-color: var(--dim); color: var(--ink); }
+  .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 35%, var(--line)); }
+  .btn.danger:hover { background: var(--bad-w); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .field {
+    border: 1px solid var(--line); background: var(--panel); border-radius: var(--r1);
+    padding: 5px 8px; font: 12px/1.4 var(--mono); min-width: 0; width: 100%;
   }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  button.small { padding: 3px 9px; font-size: 12px; }
-  label.toggle { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--dim); }
-  #banner {
-    display: none; padding: 8px 16px; background: var(--bad); color: #fff; font-size: 13px;
+  select.field { font-family: var(--sans); }
+
+  .approval { border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--line)); background: var(--warn-w); border-radius: var(--r2); padding: var(--sp3); margin-bottom: var(--sp2); }
+  .approval h4 { margin: 0 0 4px; font-size: 13px; color: var(--warn); }
+  .approval pre { font: 11px/1.45 var(--mono); background: var(--panel); border-radius: var(--r1); padding: 8px; margin: 8px 0; overflow-x: auto; max-height: 130px; color: var(--ink-2); }
+  .approval .acts { display: flex; gap: var(--sp2); }
+
+  /* ---------- composer ---------- */
+  form#composer {
+    border-top: 1px solid var(--line); background: var(--panel); padding: var(--sp3) var(--sp4);
   }
-  #gate { padding: 40px 16px; text-align: center; }
-  #gate input { font: inherit; padding: 8px; width: min(420px, 90%); }
+  .composer-inner { max-width: 780px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--sp2); }
+  .composer-box {
+    display: flex; align-items: flex-end; gap: var(--sp2);
+    border: 1px solid var(--line); border-radius: var(--r3); background: var(--panel-2);
+    padding: var(--sp2); transition: border-color var(--t), box-shadow var(--t);
+  }
+  .composer-box:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-w); }
+  #text {
+    flex: 1; border: 0; background: none; resize: none; outline: none;
+    padding: 6px; max-height: 180px; min-height: 24px; font-size: 14px;
+  }
+  .composer-hint { display: flex; align-items: center; gap: var(--sp3); font: 11px/1 var(--mono); color: var(--dim); flex-wrap: wrap; }
+  .toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  .iconbtn {
+    border: 0; background: none; color: var(--dim); padding: 6px; border-radius: var(--r1);
+    display: grid; place-items: center; transition: color var(--t), background var(--t);
+  }
+  .iconbtn:hover { color: var(--primary); background: var(--primary-w); }
+
+  #banner { display: none; padding: 10px var(--sp4); background: var(--bad); color: #fff; font-size: 13px; text-align: center; }
+
+  /* ---------- gate ---------- */
+  #gate { flex: 1; display: grid; place-items: center; padding: var(--sp5); }
+  .gate-card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--r3);
+    box-shadow: var(--shadow-2); padding: var(--sp6); width: min(420px, 100%); text-align: center;
+  }
+  .gate-card h2 { margin: 0 0 4px; font-size: 19px; letter-spacing: -.01em; }
+  .gate-card p { margin: 0 0 var(--sp4); color: var(--dim); font-size: 13px; }
+  .gate-card .field { text-align: center; margin-bottom: var(--sp3); padding: 9px; }
+
+  /* ---------- responsive ---------- */
+  @media (max-width: 940px) {
+    main { grid-template-columns: 1fr; }
+    aside {
+      border-left: 0; border-top: 1px solid var(--line);
+      max-height: 42dvh; position: sticky; bottom: 0;
+    }
+    #log { padding: var(--sp4) var(--sp3); }
+  }
 </style>
 </head>
 <body>
 
-<div id="banner"></div>
+<div id="banner" role="alert"></div>
 
 <div id="gate">
-  <h1>${room}</h1>
-  <p>Paste your join token to enter the room.</p>
-  <p><input id="tok" placeholder="join token" autocomplete="off"></p>
-  <p><button class="primary" id="enter">Enter</button></p>
+  <div class="gate-card">
+    <h2>${room}</h2>
+    <p>Paste your join token to enter the room.</p>
+    <input id="tok" class="field" placeholder="join token" autocomplete="off" aria-label="Join token">
+    <button class="btn primary" id="enter" style="width:100%;padding:9px">Enter room</button>
+  </div>
 </div>
 
 <div id="app" hidden style="display:contents">
   <header>
-    <h1>${room}</h1>
-    <span class="pill" id="me">…</span>
-    <span class="pill" id="conn">connecting</span>
-    <span class="pill" id="state">idle</span>
-    <span class="pill" id="payer"></span>
+    <div class="brand">
+      <span class="dot" id="livedot"></span>
+      <div style="min-width:0">
+        <h1>${room}</h1>
+        <div class="sub" id="mesub">…</div>
+      </div>
+    </div>
+    <span class="chip" id="state"><span class="pulse"></span><span>idle</span></span>
+    <span class="chip" id="queue" hidden></span>
+    <span class="chip" id="conn">connecting</span>
   </header>
+
   <main>
-    <div id="log"></div>
+    <div id="log"><div class="stream" id="stream"></div></div>
     <aside>
-      <h2>Room state</h2><div id="brief"><span class="note">observer off</span></div>
-      <h2 id="adminHead" hidden>Admin</h2><div id="admin" hidden></div>
-      <h2>Members</h2><div id="members"></div>
-      <h2>Approvals</h2><div id="approvals"><span class="note">none pending</span></div>
-      <h2>Cost by member</h2><table id="cost"></table>
-      <h2>Cache ratio</h2><div id="ratio" class="note">no turns yet</div>
-      <h2>Decisions</h2><div id="decisions"></div>
-      <h2>Activity</h2><div id="activity"></div>
+      <details class="card" id="cBrief" open>
+        <summary><span class="chev"></span>Room state<span class="count" id="briefCount"></span></summary>
+        <div class="body" id="brief"></div>
+      </details>
+
+      <details class="card" id="cApprovals">
+        <summary><span class="chev"></span>Approvals<span class="count" id="apprCount">0</span></summary>
+        <div class="body" id="approvals"></div>
+      </details>
+
+      <details class="card" open>
+        <summary><span class="chev"></span>Members<span class="count" id="memCount"></span></summary>
+        <div class="body" id="members"></div>
+      </details>
+
+      <details class="card">
+        <summary><span class="chev"></span>Cost</summary>
+        <div class="body" id="cost"></div>
+      </details>
+
+      <details class="card">
+        <summary><span class="chev"></span>Decisions<span class="count" id="decCount">0</span></summary>
+        <div class="body" id="decisions"></div>
+      </details>
+
+      <details class="card">
+        <summary><span class="chev"></span>Activity</summary>
+        <div class="body" id="activity"></div>
+      </details>
+
+      <details class="card" id="cAdmin" hidden>
+        <summary><span class="chev"></span>Admin</summary>
+        <div class="body" id="admin"></div>
+      </details>
     </aside>
   </main>
+
   <form id="composer">
-    <textarea id="text" rows="2" placeholder="Message the room. Mention the agent by @handle to address it."></textarea>
-    <label class="toggle"><input type="checkbox" id="force"> to Claude</label>
-    <button type="button" id="attach">Attach</button>
-    <input type="file" id="file" hidden>
-    <button type="submit" class="primary">Send</button>
+    <div class="composer-inner">
+      <div class="composer-box">
+        <textarea id="text" rows="1" placeholder="Message the room…" aria-label="Message"></textarea>
+        <button type="button" class="iconbtn" id="attach" title="Attach a file" aria-label="Attach a file"></button>
+        <input type="file" id="file" hidden>
+        <button type="submit" class="btn primary" id="send">Send</button>
+      </div>
+      <div class="composer-hint">
+        <label class="toggle"><input type="checkbox" id="force"> send to agent</label>
+        <span id="hint"></span>
+      </div>
+    </div>
   </form>
 </div>
 
@@ -190,93 +390,145 @@ export function renderUI(config) {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
   var token = new URL(location.href).searchParams.get('token') || localStorage.getItem('roomToken') || '';
-  var me = null;
-  var es = null;
+  var me = null, es = null, state = null;
+
+  // ---- tiny SVG icon set (no emoji: they render inconsistently and read as
+  // decoration to screen readers) ----
+  var PATHS = {
+    chevron: 'M9 18l6-6-6-6',
+    send: 'M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z',
+    clip: 'M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48',
+    info: 'M12 16v-4M12 8h.01M22 12a10 10 0 11-20 0 10 10 0 0120 0z',
+    warn: 'M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4M12 17h.01',
+    eye: 'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8zM12 15a3 3 0 100-6 3 3 0 000 6z',
+    bolt: 'M13 2L3 14h9l-1 8 10-12h-9l1-8z'
+  };
+  function icon(name, size) {
+    var s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('fill', 'none');
+    s.setAttribute('stroke', 'currentColor'); s.setAttribute('stroke-width', '2');
+    s.setAttribute('stroke-linecap', 'round'); s.setAttribute('stroke-linejoin', 'round');
+    s.setAttribute('width', size || 14); s.setAttribute('height', size || 14);
+    s.setAttribute('aria-hidden', 'true');
+    var p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', PATHS[name] || PATHS.info);
+    s.appendChild(p);
+    return s;
+  }
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
     if (cls) e.className = cls;
-    if (text != null) e.textContent = text;   // textContent only: all of this is untrusted
+    if (text != null) e.textContent = text;   // untrusted: textContent only
     return e;
   }
 
+  // Stable colour per name so people are recognisable at a glance.
+  function hue(name) {
+    var h = 0;
+    for (var i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
+    return h;
+  }
+  function avatar(name, small) {
+    var a = el('div', 'avatar' + (small ? ' sm' : ''), (name || '?').slice(0, 2).toLowerCase());
+    a.style.background = 'hsl(' + hue(name || '?') + ' 52% 46%)';
+    a.title = name || '';
+    return a;
+  }
+
+  function num(v) {
+    v = Math.round(v || 0);
+    if (v >= 1000000) return (v / 1000000).toFixed(1) + 'M';
+    if (v >= 1000) return (v / 1000).toFixed(1) + 'k';
+    return String(v);
+  }
+  function clock(ts) { return new Date(ts || Date.now()).toTimeString().slice(0, 5); }
+
+  // ---------------- message stream ----------------
+  var msgTurn = {}, nodes = {}, openDetails = {}, lastAuthor = null;
+
   function atBottom() {
     var l = $('log');
-    return l.scrollHeight - l.scrollTop - l.clientHeight < 60;
+    return l.scrollHeight - l.scrollTop - l.clientHeight < 80;
   }
   function scroll() { var l = $('log'); l.scrollTop = l.scrollHeight; }
 
-  // msgId -> turnId, and the DOM node for each message, so a turn that starts
-  // after a message was already rendered can still make it expandable.
-  var msgTurn = {};
-  var nodes = {};
-  var openDetails = {};   // turnId -> detail element currently expanded
-
   function addMessage(m) {
     var stick = atBottom();
-    var wrap = el('div', 'msg' + (m.addressed ? ' queued' : ''));
-    var head = el('div');
-    var whoClass = 'who' + (m.kind === 'reply' || m.kind === 'system' ? ' claude' : '');
-    var who = el('span', whoClass, m.name || 'unknown');
-    head.appendChild(who);
-    var bits = new Date(m.ts || Date.now()).toTimeString().slice(0, 5);
-    if (m.addressed) bits += ' · to claude';
-    if (m.attachment) bits += ' · ' + m.attachment.name;
-    head.appendChild(el('span', 'meta', bits));
-    var disclose = el('span', 'disclose', '');
-    head.appendChild(disclose);
-    wrap.appendChild(head);
-    wrap.appendChild(el('div', 'body', m.text || ''));
-    $('log').appendChild(wrap);
-    nodes[m.id] = wrap;
+    var same = lastAuthor === m.name && m.kind !== 'system';
+    lastAuthor = m.kind === 'system' ? null : m.name;
 
+    var wrap = el('div', 'msg' + (m.addressed ? ' addressed' : '') +
+      (m.kind === 'reply' ? ' reply' : '') + (same ? ' same' : ''));
+    wrap.appendChild(avatar(m.name || '?'));
+
+    var col = el('div', 'col');
+    if (!same) {
+      var who = el('div', 'who');
+      who.appendChild(el('b', null, m.name || 'unknown'));
+      who.appendChild(el('span', 'when', clock(m.ts)));
+      if (m.addressed) who.appendChild(el('span', 'tag', 'to agent'));
+      if (m.attachment) who.appendChild(el('span', 'when', m.attachment.name));
+      col.appendChild(who);
+    }
+    col.appendChild(el('div', 'body', m.text || ''));
+
+    var d = el('button', 'disclose');
+    d.type = 'button';
+    d.appendChild(icon('chevron', 12));
+    d.appendChild(el('span', null, 'what the agent did'));
+    d.hidden = true;
+    d.onclick = function () { toggleDetail(m.id, col, d); };
+    col.appendChild(d);
+
+    wrap.appendChild(col);
+    $('stream').appendChild(wrap);
+    nodes[m.id] = { wrap: wrap, col: col, disc: d };
     if (m.turnId) msgTurn[m.id] = m.turnId;
-    head.onclick = function () { toggleDetail(m.id, wrap, disclose); };
     markExpandable(m.id);
-
     if (stick) scroll();
   }
 
-  function markExpandable(msgId) {
-    var wrap = nodes[msgId];
-    if (!wrap || !msgTurn[msgId]) return;
-    wrap.className += wrap.className.indexOf('has-detail') === -1 ? ' has-detail' : '';
-    var d = wrap.querySelector('.disclose');
-    if (d && !d.textContent) d.textContent = '▸ what claude did';
+  function markExpandable(id) {
+    var n = nodes[id];
+    if (n && msgTurn[id]) n.disc.hidden = false;
   }
 
-  function toggleDetail(msgId, wrap, disclose) {
+  function addNote(kind, text, iconName) {
+    var stick = atBottom();
+    var n = el('div', 'note' + (kind ? ' ' + kind : ''));
+    n.appendChild(icon(iconName || 'info', 14));
+    n.appendChild(el('span', null, text));
+    if (kind === 'bad') n.setAttribute('role', 'alert');
+    $('stream').appendChild(n);
+    lastAuthor = null;
+    if (stick) scroll();
+  }
+
+  function toggleDetail(msgId, col, disc) {
     var turnId = msgTurn[msgId];
     if (!turnId) return;
-    var existing = wrap.querySelector('.detail');
-    if (existing) {
-      existing.remove();
-      delete openDetails[turnId];
-      disclose.textContent = '▸ what claude did';
-      return;
-    }
-    disclose.textContent = '▾ what claude did';
+    var open = col.querySelector('.detail');
+    if (open) { open.remove(); delete openDetails[turnId]; return; }
     var box = el('div', 'detail');
-    box.appendChild(el('div', 'step', 'loading…'));
-    wrap.appendChild(box);
+    box.appendChild(el('div', 'foot', 'loading…'));
+    col.appendChild(box);
     openDetails[turnId] = box;
     fetch('/api/turn?id=' + encodeURIComponent(turnId) + '&token=' + encodeURIComponent(token))
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (t) { if (t) renderDetail(box, t); else box.textContent = 'no detail recorded'; });
   }
 
-  function stepRow(a, prevTs) {
+  function stepRow(a, prev) {
     var row = el('div', 'step');
-    var mark = a.kind === 'tool-start' ? '→' : a.kind === 'tool-end' ? '✓' : '·';
-    row.appendChild(el('span', 'tool', mark + ' ' + (a.tool || a.type || a.kind)));
+    var t = el('span', 'tool' + (a.kind === 'tool-end' ? ' end' : ''), a.tool || a.type || a.kind);
+    row.appendChild(t);
+    var v = '';
     if (a.input) {
-      var v = a.input.file_path || a.input.command || a.input.pattern || a.input.path ||
-        JSON.stringify(a.input);
-      row.appendChild(el('span', 'arg', String(v).slice(0, 300)));
-    } else {
-      row.appendChild(el('span', 'arg', ''));
+      v = a.input.file_path || a.input.command || a.input.pattern || a.input.path || JSON.stringify(a.input);
     }
-    if (prevTs && a.ts) row.appendChild(el('span', 'dur', '+' + Math.max(0, a.ts - prevTs) + 'ms'));
+    row.appendChild(el('span', 'arg', String(v).slice(0, 300)));
+    row.appendChild(el('span', 'dur', prev && a.ts ? '+' + Math.max(0, a.ts - prev) + 'ms' : ''));
     return row;
   }
 
@@ -284,250 +536,140 @@ export function renderUI(config) {
     box.textContent = '';
     if (!t.activity.length) box.appendChild(el('div', 'step', 'no tool calls recorded'));
     var prev = null;
-    t.activity.forEach(function (a) {
-      box.appendChild(stepRow(a, prev));
-      prev = a.ts;
-    });
+    t.activity.forEach(function (a) { box.appendChild(stepRow(a, prev)); prev = a.ts; });
     t.replies.forEach(function (r) {
-      box.appendChild(el('div', 'step', '💬 ' + r.text.slice(0, 400)));
+      var row = el('div', 'step');
+      row.appendChild(el('span', 'tool end', 'reply'));
+      row.appendChild(el('span', 'arg', r.text.slice(0, 400)));
+      row.appendChild(el('span', 'dur', ''));
+      box.appendChild(row);
     });
-    var sum;
-    if (t.usage) {
-      sum = 'turn used ' + num(t.usage.input + t.usage.output + t.usage.cacheRead + t.usage.cacheCreate) +
-        ' tokens · ' + Math.round((t.ratio || 0) * 100) + '% cached' +
-        (t.endedAt ? ' · ' + ((t.endedAt - t.startedAt) / 1000).toFixed(1) + 's' : '');
-    } else {
-      sum = 'still running…';
-    }
-    var s = el('div', 'summary' + (t.usage ? '' : ' running'), sum);
-    box.appendChild(s);
+    var txt = t.usage
+      ? num(t.usage.input + t.usage.output + t.usage.cacheRead + t.usage.cacheCreate) + ' tokens · ' +
+        Math.round((t.ratio || 0) * 100) + '% cached' +
+        (t.endedAt ? ' · ' + ((t.endedAt - t.startedAt) / 1000).toFixed(1) + 's' : '')
+      : 'still running…';
+    box.appendChild(el('div', 'foot' + (t.usage ? '' : ' running'), txt));
   }
 
-  /** Live-append into any detail pane that is open for the running turn. */
   function liveAppend(a) {
     var box = a.turnId && openDetails[a.turnId];
     if (!box) return;
-    var placeholder = box.querySelector('.summary');
+    var foot = box.querySelector('.foot');
     var row = stepRow(a, null);
-    if (placeholder) box.insertBefore(row, placeholder); else box.appendChild(row);
+    if (foot) box.insertBefore(row, foot); else box.appendChild(row);
   }
 
-  function addNote(cls, text) {
-    var stick = atBottom();
-    $('log').appendChild(el('div', 'note ' + cls, text));
-    if (stick) scroll();
+  // ---------------- sidebar ----------------
+  function renderMembers(members) {
+    var box = $('members'); box.textContent = '';
+    $('memCount').textContent = members.length;
+    members.forEach(function (m) {
+      var r = el('div', 'row');
+      r.appendChild(avatar(m.name, true));
+      r.appendChild(el('span', 'grow', m.name));
+      var bits = [m.role];
+      if (m.muted) bits.push('muted');
+      r.appendChild(el('span', 'meta', bits.join(' · ')));
+      box.appendChild(r);
+    });
+  }
+
+  function renderCost(members, totals) {
+    var box = $('cost'); box.textContent = '';
+    var rows = members.map(function (m) {
+      var u = totals[m.id] || {};
+      return { name: m.name, v: (u.input || 0) + (u.output || 0) + (u.cacheRead || 0) + (u.cacheCreate || 0) };
+    });
+    var o = totals.observer;
+    if (o && (o.input + o.output) > 0) rows.push({ name: 'observer', v: o.input + o.output });
+    var max = Math.max.apply(null, rows.map(function (r) { return r.v; }).concat([1]));
+    rows.forEach(function (r) {
+      var wrap = el('div', 'row');
+      var col = el('div', 'grow');
+      var head = el('div', 'row');
+      head.style.padding = '0';
+      head.style.border = '0';
+      head.appendChild(el('span', 'grow', r.name));
+      head.appendChild(el('span', 'meta', num(r.v)));
+      col.appendChild(head);
+      var bar = el('div', 'bar');
+      var fill = el('i');
+      fill.style.width = Math.round((r.v / max) * 100) + '%';
+      if (r.name === 'observer') fill.style.background = 'var(--accent)';
+      bar.appendChild(fill);
+      col.appendChild(bar);
+      wrap.appendChild(col);
+      box.appendChild(wrap);
+    });
+    if (!rows.length) box.appendChild(el('div', 'empty', 'nothing spent yet'));
+  }
+
+  function renderBriefPanel(b) {
+    var box = $('brief'); box.textContent = '';
+    $('briefCount').textContent = '';
+    if (!b || !b.on) { box.appendChild(el('div', 'empty', 'observer off')); return; }
+    if (b.paused) box.appendChild(el('div', 'empty', 'observer paused — over budget'));
+    if (!b.text) { box.appendChild(el('div', 'empty', 'nothing summarised yet')); return; }
+    // Double-escaped: a single-escaped newline here would become a real line
+    // break inside the emitted script and break the whole page.
+    b.text.split('\\n').forEach(function (l) {
+      box.appendChild(el('div', 'brief-line' + (l.indexOf(' ') === 0 ? '' : ' head'), l));
+    });
+    var notes = [];
+    if (b.pending > 0) notes.push(b.pending + ' new not yet summarised');
+    if (b.ageS > 30) notes.push('built ' + b.ageS + 's ago');
+    if (notes.length) $('briefCount').textContent = notes.join(' · ');
+  }
+
+  function renderDecisions(list) {
+    var box = $('decisions'); box.textContent = '';
+    $('decCount').textContent = list.length;
+    if (!list.length) { box.appendChild(el('div', 'empty', 'none recorded')); return; }
+    list.forEach(function (d) {
+      var r = el('div', 'row');
+      r.appendChild(el('span', 'grow', d.text));
+      r.title = d.text;
+      box.appendChild(r);
+    });
   }
 
   function addActivity(a) {
     var box = $('activity');
-    var line = a.kind === 'tool-start' ? '→ ' + (a.tool || 'tool')
-      : a.kind === 'tool-end' ? '✓ ' + (a.tool || 'tool')
-      : a.kind === 'notification' ? '! ' + (a.type || 'notice')
+    var label = a.kind === 'tool-start' ? (a.tool || 'tool')
+      : a.kind === 'tool-end' ? (a.tool || 'tool') + ' done'
+      : a.kind === 'notification' ? (a.type || 'notice')
       : a.kind === 'session-start' ? 'session started' : a.kind;
-    box.insertBefore(el('div', 'note', line), box.firstChild);
+    var r = el('div', 'row');
+    r.appendChild(icon(a.kind === 'tool-start' ? 'bolt' : 'info', 12));
+    r.appendChild(el('span', 'grow', label));
+    box.insertBefore(r, box.firstChild);
     while (box.childNodes.length > 40) box.removeChild(box.lastChild);
   }
 
-  function num(v) {
-    v = Math.round(v || 0);
-    return v >= 1000000 ? (v / 1000000).toFixed(1) + 'M'
-      : v >= 1000 ? (v / 1000).toFixed(1) + 'k' : String(v);
-  }
-
-  function costRow(t, name, u) {
-    u = u || { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 };
-    var row = el('tr');
-    row.appendChild(el('td', null, name));
-    row.appendChild(el('td', 'num', num(u.input + u.output + u.cacheRead + u.cacheCreate)));
-    t.appendChild(row);
-  }
-
-  function renderCost(members, totals) {
-    var t = $('cost');
-    t.textContent = '';
-    members.forEach(function (m) { costRow(t, m.name, totals[m.id]); });
-    var obs = totals.observer;
-    // The observer spends but is not a member, so it gets its own row.
-    if (obs && (obs.input + obs.output) > 0) costRow(t, 'observer', obs);
-  }
-
-  function renderMembers(members) {
-    var box = $('members');
-    box.textContent = '';
-    members.forEach(function (m) {
-      box.appendChild(el('div', 'note', m.name + ' · ' + m.role));
-    });
-  }
-
-  function renderBriefPanel(b) {
-    var box = $('brief');
-    box.textContent = '';
-    if (!b || !b.on) { box.appendChild(el('span', 'note', 'observer off')); return; }
-    if (b.paused) { box.appendChild(el('span', 'note', 'observer paused — over budget')); }
-    if (!b.text) { box.appendChild(el('span', 'note', 'nothing summarised yet')); return; }
-    // Section headers are the lines the renderer emits without indentation.
-    b.text.split('\n').forEach(function (l) {
-      box.appendChild(el('div', 'line' + (l.indexOf(' ') === 0 ? '' : ' head'), l));
-    });
-    var notes = [];
-    if (b.pending > 0) notes.push(b.pending + ' new message' + (b.pending === 1 ? '' : 's') + ' not yet summarised');
-    if (b.ageS > 30) notes.push('built ' + b.ageS + 's ago');
-    if (notes.length) box.appendChild(el('div', 'stale', notes.join(' · ')));
-  }
-
-  // ---- admin panel: owners only -------------------------------------------
-  function adminCall(action, body) {
-    return fetch('/api/admin/' + action, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(Object.assign({ token: token }, body || {}))
-    }).then(function (r) { return r.json(); }).then(function (r) {
-      if (!r.ok) addNote('reject', 'admin: ' + r.reason);
-      loadAdmin();
-      return r;
-    });
-  }
-
-  function btn(label, cls, fn) {
-    var b = el('button', 'small' + (cls ? ' ' + cls : ''), label);
-    b.onclick = fn;
-    return b;
-  }
-
-  function memberRow(m) {
-    var row = el('div', 'row');
-    var who = el('span', 'who', m.name);
-    row.appendChild(who);
-    row.appendChild(el('span', 'tag', (m.canApprove ? 'approver ' : '') + (m.muted ? 'muted' : '')));
-
-    var sel = document.createElement('select');
-    ['owner', 'member', 'viewer'].forEach(function (r) {
-      var o = document.createElement('option');
-      o.value = r; o.textContent = r; o.selected = m.role === r;
-      sel.appendChild(o);
-    });
-    sel.onchange = function () { adminCall('role', { memberId: m.id, role: sel.value }); };
-    row.appendChild(sel);
-
-    row.appendChild(btn(m.muted ? 'unmute' : 'mute', null, function () {
-      adminCall('mute', { memberId: m.id, muted: !m.muted });
-    }));
-    row.appendChild(btn(m.canApprove ? 'unapprove' : 'approve', null, function () {
-      adminCall('approve', { memberId: m.id, canApprove: !m.canApprove });
-    }));
-    row.appendChild(btn('copy link', null, function () {
-      navigator.clipboard && navigator.clipboard.writeText(m.joinUrl);
-    }));
-    row.appendChild(btn('new link', null, function () {
-      adminCall('rotate', { memberId: m.id });
-    }));
-    row.appendChild(btn('remove', 'danger', function () {
-      if (confirm('Remove ' + m.name + '? Their link stops working immediately.')) {
-        adminCall('remove', { memberId: m.id });
-      }
-    }));
-    row.appendChild(btn('ban', 'danger', function () {
-      if (confirm('Ban ' + m.name + '? They cannot be re-invited under that name.')) {
-        adminCall('ban', { memberId: m.id, reason: '' });
-      }
-    }));
-    return row;
-  }
-
-  function renderAdmin(s) {
-    var box = $('admin');
-    box.textContent = '';
-
-    var bar = el('div', 'bar');
-    bar.appendChild(btn(s.paused ? 'resume room' : 'pause room', s.paused ? 'danger' : null, function () {
-      adminCall('pause', { paused: !s.paused });
-    }));
-    bar.appendChild(btn('clear queue', null, function () { adminCall('clearQueue', {}); }));
-    box.appendChild(bar);
-
-    var handleRow = el('div', 'row');
-    handleRow.appendChild(el('span', 'who', 'agent @'));
-    var hi = document.createElement('input');
-    hi.className = 'wide'; hi.value = s.handles.join(',');
-    hi.onkeydown = function (e) {
-      if (e.key === 'Enter') adminCall('handles', { handles: hi.value });
-    };
-    handleRow.appendChild(hi);
-    handleRow.appendChild(btn('set', null, function () { adminCall('handles', { handles: hi.value }); }));
-    box.appendChild(handleRow);
-
-    var inviteRow = el('div', 'row');
-    inviteRow.appendChild(el('span', 'who', 'invite'));
-    var ni = document.createElement('input');
-    ni.placeholder = 'name';
-    var rs = document.createElement('select');
-    ['member', 'viewer', 'owner'].forEach(function (r) {
-      var o = document.createElement('option'); o.value = r; o.textContent = r; rs.appendChild(o);
-    });
-    inviteRow.appendChild(ni);
-    inviteRow.appendChild(rs);
-    inviteRow.appendChild(btn('add', null, function () {
-      if (!ni.value.trim()) return;
-      adminCall('invite', { name: ni.value.trim(), role: rs.value }).then(function (r) {
-        if (r.ok) { ni.value = ''; addNote('', 'invite link for ' + r.member.name + ': ' + r.joinUrl); }
-      });
-    }));
-    box.appendChild(inviteRow);
-
-    s.members.forEach(function (m) { box.appendChild(memberRow(m)); });
-
-    if (s.bans.length) {
-      box.appendChild(el('div', 'tag', 'banned:'));
-      s.bans.forEach(function (b) {
-        var r = el('div', 'row');
-        r.appendChild(el('span', 'who', b.name || b.addr));
-        r.appendChild(btn('unban', null, function () { adminCall('unban', { key: b.name || b.addr }); }));
-        box.appendChild(r);
-      });
-    }
-  }
-
-  function loadAdmin() {
-    if (!me || me.role !== 'owner') return;
-    fetch('/api/admin/state?token=' + encodeURIComponent(token))
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (s) {
-        if (!s || !s.ok) return;
-        $('admin').hidden = false;
-        $('adminHead').hidden = false;
-        renderAdmin(s);
-      });
-  }
-
-  function renderDecisions(list) {
-    var box = $('decisions');
-    box.textContent = '';
-    if (!list.length) { box.appendChild(el('span', 'note', 'none recorded')); return; }
-    list.forEach(function (d) { box.appendChild(el('div', 'note', d.text)); });
-  }
-
+  // ---------------- approvals ----------------
   var approvals = [];
   function renderApprovals() {
-    var box = $('approvals');
-    box.textContent = '';
-    if (!me || !me.canApprove || !approvals.length) {
-      box.appendChild(el('span', 'note', me && me.canApprove ? 'none pending' : 'not an approver'));
-      return;
-    }
+    var box = $('approvals'); box.textContent = '';
+    $('apprCount').textContent = approvals.length;
+    if (!me || !me.canApprove) { box.appendChild(el('div', 'empty', 'you are not an approver')); return; }
+    if (!approvals.length) { box.appendChild(el('div', 'empty', 'nothing pending')); return; }
+    $('cApprovals').open = true;
     approvals.forEach(function (a) {
-      var card = el('div', 'approval');
-      card.appendChild(el('div', null, 'Claude wants ' + a.tool_name));
-      card.appendChild(el('div', 'note', a.description || ''));
-      var pre = el('pre', null, a.input_preview || '');
-      card.appendChild(pre);
-      ['allow', 'deny'].forEach(function (behavior) {
-        var b = el('button', 'small', behavior);
-        b.onclick = function () { verdict(a.request_id, behavior); };
-        card.appendChild(b);
-      });
-      box.appendChild(card);
+      var c = el('div', 'approval');
+      c.appendChild(el('h4', null, 'Agent wants to run ' + a.tool_name));
+      c.appendChild(el('div', 'meta', a.description || ''));
+      if (a.input_preview) c.appendChild(el('pre', null, a.input_preview));
+      var acts = el('div', 'acts');
+      var yes = el('button', 'btn primary', 'Allow');
+      yes.onclick = function () { verdict(a.request_id, 'allow'); };
+      var no = el('button', 'btn danger', 'Deny');
+      no.onclick = function () { verdict(a.request_id, 'deny'); };
+      acts.appendChild(yes); acts.appendChild(no);
+      c.appendChild(acts);
+      box.appendChild(c);
     });
   }
-
   function verdict(id, behavior) {
     fetch('/verdict', {
       method: 'POST', headers: { 'content-type': 'application/json' },
@@ -538,94 +680,200 @@ export function renderUI(config) {
     });
   }
 
+  // ---------------- admin ----------------
+  function adminCall(action, body) {
+    return fetch('/api/admin/' + action, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(Object.assign({ token: token }, body || {}))
+    }).then(function (r) { return r.json(); }).then(function (r) {
+      if (!r.ok) addNote('bad', 'admin: ' + r.reason, 'warn');
+      loadAdmin();
+      return r;
+    });
+  }
+  function mkBtn(label, cls, fn) {
+    var b = el('button', 'btn' + (cls ? ' ' + cls : ''), label);
+    b.type = 'button'; b.onclick = fn;
+    return b;
+  }
+  function renderAdmin(s) {
+    var box = $('admin'); box.textContent = '';
+
+    var bar = el('div', 'row');
+    bar.appendChild(mkBtn(s.paused ? 'Resume room' : 'Pause room', s.paused ? 'danger' : '', function () {
+      adminCall('pause', { paused: !s.paused });
+    }));
+    bar.appendChild(mkBtn('Clear queue', '', function () { adminCall('clearQueue', {}); }));
+    box.appendChild(bar);
+
+    var hr = el('div', 'row');
+    hr.appendChild(el('span', 'meta', 'agent @'));
+    var hi = el('input', 'field');
+    hi.value = s.handles.join(',');
+    hi.setAttribute('aria-label', 'Agent handles');
+    hr.appendChild(hi);
+    hr.appendChild(mkBtn('Set', '', function () { adminCall('handles', { handles: hi.value }); }));
+    box.appendChild(hr);
+
+    var ir = el('div', 'row');
+    var ni = el('input', 'field'); ni.placeholder = 'new member'; ni.setAttribute('aria-label', 'New member name');
+    var rs = el('select', 'field');
+    ['member', 'viewer', 'owner'].forEach(function (r) {
+      var o = el('option', null, r); o.value = r; rs.appendChild(o);
+    });
+    ir.appendChild(ni); ir.appendChild(rs);
+    ir.appendChild(mkBtn('Invite', 'primary', function () {
+      if (!ni.value.trim()) return;
+      adminCall('invite', { name: ni.value.trim(), role: rs.value }).then(function (r) {
+        if (r.ok) { ni.value = ''; addNote('', 'invite link for ' + r.member.name + ': ' + r.joinUrl, 'info'); }
+      });
+    }));
+    box.appendChild(ir);
+
+    s.members.forEach(function (m) {
+      var r = el('div', 'row');
+      r.appendChild(avatar(m.name, true));
+      r.appendChild(el('span', 'grow', m.name));
+
+      var sel = el('select', 'field');
+      sel.style.width = 'auto';
+      ['owner', 'member', 'viewer'].forEach(function (role) {
+        var o = el('option', null, role); o.value = role; o.selected = m.role === role; sel.appendChild(o);
+      });
+      sel.onchange = function () { adminCall('role', { memberId: m.id, role: sel.value }); };
+      r.appendChild(sel);
+
+      r.appendChild(mkBtn(m.muted ? 'unmute' : 'mute', '', function () {
+        adminCall('mute', { memberId: m.id, muted: !m.muted });
+      }));
+      r.appendChild(mkBtn('link', '', function () {
+        if (navigator.clipboard) navigator.clipboard.writeText(m.joinUrl);
+        addNote('', 'copied ' + m.name + "'s join link", 'info');
+      }));
+      r.appendChild(mkBtn('remove', 'danger', function () {
+        if (confirm('Remove ' + m.name + '? Their link stops working immediately.')) {
+          adminCall('remove', { memberId: m.id });
+        }
+      }));
+      box.appendChild(r);
+    });
+
+    if (s.bans.length) {
+      box.appendChild(el('div', 'meta', 'banned'));
+      s.bans.forEach(function (b) {
+        var r = el('div', 'row');
+        r.appendChild(el('span', 'grow', b.name || b.addr));
+        r.appendChild(mkBtn('unban', '', function () { adminCall('unban', { key: b.name || b.addr }); }));
+        box.appendChild(r);
+      });
+    }
+  }
+  function loadAdmin() {
+    if (!me || me.role !== 'owner') return;
+    fetch('/api/admin/state?token=' + encodeURIComponent(token))
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (s) { if (s && s.ok) { $('cAdmin').hidden = false; renderAdmin(s); } });
+  }
+
+  // ---------------- header ----------------
+  function setState(s) {
+    var pill = $('state'), label = pill.lastChild;
+    if (s.paused) { pill.className = 'chip off'; label.textContent = 'paused'; }
+    else if (s.busy) { pill.className = 'chip busy'; label.textContent = 'agent working'; }
+    else { pill.className = 'chip'; label.textContent = 'idle'; }
+    var q = $('queue');
+    if (s.pending > 0) { q.hidden = false; q.textContent = s.pending + ' queued'; } else { q.hidden = true; }
+  }
+
+  function setHint(s) {
+    var h = s.handles.map(function (x) { return '@' + x; }).join(' or ');
+    var can = me.role !== 'viewer' && !me.muted;
+    $('hint').textContent = can
+      ? 'mention ' + h + ' to reach the agent — anything else stays in the room'
+      : (me.muted ? 'you are muted — you can chat, but not address the agent'
+                  : 'you are a viewer — you can chat, but not address the agent');
+    $('force').disabled = !can;
+  }
+
+  // ---------------- live ----------------
   function banner(text) {
     var b = $('banner');
     if (!text) { b.style.display = 'none'; return; }
-    b.textContent = text;
-    b.style.display = 'block';
+    b.textContent = text; b.style.display = 'block';
   }
 
   function connect() {
     es = new EventSource('/events?token=' + encodeURIComponent(token));
-    es.onopen = function () { $('conn').textContent = 'live'; $('conn').className = 'pill live'; banner(''); };
+    es.onopen = function () {
+      $('conn').className = 'chip ok'; $('conn').textContent = 'live';
+      $('livedot').style.background = 'var(--accent)';
+      banner('');
+    };
     es.onerror = function () {
-      $('conn').textContent = 'offline'; $('conn').className = 'pill off';
-      banner('Room offline. The Claude Code session may have exited. Retrying…');
+      $('conn').className = 'chip off'; $('conn').textContent = 'offline';
+      $('livedot').style.background = 'var(--bad)';
+      banner('Room offline — the agent session may have exited. Retrying…');
     };
     es.addEventListener('message', function (e) { addMessage(JSON.parse(e.data)); });
     es.addEventListener('activity', function (e) {
-      var a = JSON.parse(e.data);
-      addActivity(a);
-      liveAppend(a);
+      var a = JSON.parse(e.data); addActivity(a); liveAppend(a);
     });
     es.addEventListener('presence', function (e) { renderMembers(JSON.parse(e.data).members); });
     es.addEventListener('brief', function (e) { renderBriefPanel(JSON.parse(e.data)); });
-    es.addEventListener('admin', function (e) {
-      var d = JSON.parse(e.data);
-      addNote('', 'admin: ' + d.action + (d.name ? ' ' + d.name : '') +
-        (d.handles ? ' → @' + d.handles.join(', @') : '') +
-        (typeof d.paused === 'boolean' ? (d.paused ? ' (paused)' : ' (resumed)') : ''));
-      load();
-    });
-    es.addEventListener('decision', function (e) { load(); });
+    es.addEventListener('decision', function () { load(); });
     es.addEventListener('turn', function (e) {
       var d = JSON.parse(e.data);
-      $('state').textContent = d.started ? 'claude working' : 'idle';
-      $('state').className = 'pill' + (d.started ? ' busy' : '');
-      // A turn starts after its messages were already drawn, so this is where
-      // they become expandable.
       if (d.started && d.msgIds) {
         d.msgIds.forEach(function (id) { msgTurn[id] = d.turnId; markExpandable(id); });
       }
-      if (!d.started && d.summary && openDetails[d.turnId]) {
+      if (!d.started && d.turnId && openDetails[d.turnId]) {
         fetch('/api/turn?id=' + encodeURIComponent(d.turnId) + '&token=' + encodeURIComponent(token))
           .then(function (r) { return r.ok ? r.json() : null; })
           .then(function (t) { if (t) renderDetail(openDetails[d.turnId], t); });
       }
-    });
-    es.addEventListener('cost', function (e) {
-      var d = JSON.parse(e.data);
-      $('ratio').textContent = 'last turn: ' + Math.round(d.ratio * 100) + '% cached';
       load();
     });
+    es.addEventListener('cost', function () { load(); });
     es.addEventListener('conflicts', function (e) {
       JSON.parse(e.data).conflicts.forEach(function (c) {
-        addNote('conflict', 'May contradict an earlier decision: "' + c.decision.text + '"');
+        addNote('warn', 'This may contradict an earlier decision: "' + c.decision.text + '"', 'warn');
       });
     });
     es.addEventListener('rejected', function (e) {
       var d = JSON.parse(e.data);
-      addNote('reject', d.name + ' was rejected: ' + d.reason);
+      addNote('bad', d.name + ' was rejected: ' + d.reason, 'warn');
     });
     es.addEventListener('approval-request', function (e) {
-      approvals.push(JSON.parse(e.data));
-      renderApprovals();
+      approvals.push(JSON.parse(e.data)); renderApprovals();
     });
     es.addEventListener('approval', function (e) {
       var d = JSON.parse(e.data);
       approvals = approvals.filter(function (a) { return a.request_id !== d.request_id; });
       renderApprovals();
-      addNote('', d.by + ' chose ' + d.behavior);
+      addNote('', d.by + ' chose ' + d.behavior, 'info');
+    });
+    es.addEventListener('admin', function (e) {
+      var d = JSON.parse(e.data);
+      var msg = 'admin: ' + d.action + (d.name ? ' ' + d.name : '') +
+        (d.handles ? ' → @' + d.handles.join(', @') : '') +
+        (typeof d.paused === 'boolean' ? (d.paused ? ' (paused)' : ' (resumed)') : '');
+      addNote('', msg, 'info');
+      load();
     });
   }
 
   function load() {
     return fetch('/api/state?token=' + encodeURIComponent(token))
-      .then(function (r) {
-        if (!r.ok) throw new Error('bad token');
-        return r.json();
-      })
+      .then(function (r) { if (!r.ok) throw new Error('bad token'); return r.json(); })
       .then(function (s) {
-        me = s.you;
-        $('me').textContent = s.you.name + ' · ' + s.you.role;
-        $('payer').textContent = s.payerMode === 'rotate' ? 'payer: rotating' : 'payer: host';
+        state = s; me = s.you;
+        $('mesub').textContent = s.you.name + ' · ' + s.you.role + (s.you.canApprove ? ' · approver' : '');
         renderMembers(s.members);
         renderCost(s.members, s.ledger);
         renderDecisions(s.decisions);
         renderBriefPanel(s.brief);
-        $('state').textContent = s.paused ? 'paused' : s.busy ? 'claude working' : 'idle';
-        if (s.paused) $('state').className = 'pill off';
-        loadAdmin();
+        setState(s);
+        setHint(s);
         approvals = s.pendingApprovals || [];
         renderApprovals();
         (s.turns || []).forEach(function (t) {
@@ -640,21 +888,21 @@ export function renderUI(config) {
     $('gate').style.display = 'none';
     $('app').hidden = false;
     load().then(function (s) {
-      $('log').textContent = '';
+      $('stream').textContent = ''; lastAuthor = null;
       s.messages.forEach(addMessage);
       scroll();
       connect();
     }).catch(function () {
-      $('gate').style.display = 'block';
+      $('gate').style.display = 'grid';
       $('app').hidden = true;
       banner('That token was not accepted.');
     });
   }
 
-  $('enter').onclick = function () {
-    token = $('tok').value.trim();
-    if (token) start();
-  };
+  // ---------------- composer ----------------
+  $('attach').appendChild(icon('clip', 16));
+  $('enter').onclick = function () { token = $('tok').value.trim(); if (token) start(); };
+  $('tok').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('enter').click(); });
 
   $('attach').onclick = function () { $('file').click(); };
   $('file').onchange = function (e) {
@@ -664,30 +912,34 @@ export function renderUI(config) {
       '&name=' + encodeURIComponent(f.name) +
       '&text=' + encodeURIComponent($('text').value.trim());
     fetch(q, { method: 'POST', body: f }).then(function () {
-      $('text').value = '';
-      e.target.value = '';
+      $('text').value = ''; e.target.value = ''; autosize();
     });
   };
+
+  function autosize() {
+    var t = $('text');
+    t.style.height = 'auto';
+    t.style.height = Math.min(t.scrollHeight, 180) + 'px';
+  }
+  $('text').addEventListener('input', autosize);
 
   $('composer').onsubmit = function (e) {
     e.preventDefault();
     var text = $('text').value.trim();
     if (!text) return;
-    $('text').value = '';
+    $('text').value = ''; autosize();
     fetch('/msg', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ token: token, text: text, force: $('force').checked })
     }).then(function (r) { return r.json(); }).then(function (r) {
-      if (!r.ok) addNote('reject', 'Not sent: ' + r.reason);
+      if (!r.ok) addNote('bad', 'Not sent: ' + r.reason, 'warn');
     });
   };
-
   $('text').addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      $('composer').requestSubmit();
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('composer').requestSubmit(); }
   });
+
+  document.querySelectorAll('.chev').forEach(function (c) { c.appendChild(icon('chevron', 12)); });
 
   if (token) start();
 })();
