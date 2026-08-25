@@ -21,6 +21,7 @@
  *   room-admin handle <@name>[,<@name>...]      room-admin pause [on|off]
  *   room-admin clear-queue
  *   room-admin budget [--tokens N] [--messages N]
+ *   room-admin seat add <name> --owner <member> [--handle <handle>]
  */
 import { loadConfig } from '../src/config.mjs'
 
@@ -193,6 +194,18 @@ switch (cmd) {
       messagesPerWindow: flag('--messages') ?? undefined,
     })
     console.log(`budgets: ${JSON.stringify(r.budgets)}`)
+    break
+  }
+  case 'seat': {
+    if (argv[1] !== 'add') die('usage: room-admin seat add <name> --owner <member> [--handle <handle>]')
+    const name = argv[2]
+    const ownerName = flag('--owner')
+    if (!name || !ownerName) die('usage: room-admin seat add <name> --owner <member> [--handle <handle>]')
+    const owner = await resolve(ownerName)
+    const handle = (flag('--handle') || name).replace(/^@/, '')
+    const r = await call('/api/admin/invite', { name, kind: 'agent', handle, ownerId: owner.id })
+    console.log(`seat added: ${name} (@${handle}), owned by ${owner.name}`)
+    console.log(`run: node scripts/room-seat.mjs ${handle} --token ${r.token} --repo <path-to-repo>`)
     break
   }
   default:

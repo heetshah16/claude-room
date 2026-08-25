@@ -1,4 +1,4 @@
-import { createMember, ROLES, mayApprove } from './identity.mjs'
+import { createMember, createAgentMember, ROLES, mayApprove, isAgent } from './identity.mjs'
 import { DEFAULT_HANDLES } from './router.mjs'
 
 /**
@@ -32,6 +32,7 @@ function isUnbannableAddr(addr, registry, runtime) {
 const publicMember = m => ({
   id: m.id, name: m.name, role: m.role, canApprove: mayApprove(m), muted: !!m.muted,
   hasPayer: !!m.payerRef,
+  ...(isAgent(m) ? { kind: 'agent', handle: m.handle, ownerId: m.ownerId } : {}),
 })
 
 export function createAdmin({ registry, bans, store, bus, config, queue, runtime }) {
@@ -49,13 +50,31 @@ export function createAdmin({ registry, bans, store, bus, config, queue, runtime
   }
 
   const commands = {
-    invite({ name, role = 'member', canApprove = false, payerRef }) {
+    invite({ name, role = 'member', canApprove = false, payerRef, kind, handle, ownerId }) {
       const clean = String(name ?? '').trim()
       if (!clean) return no('name-required')
-      if (!ROLES.includes(role)) return no('bad-role')
       if (registry.byName(clean)) return no('name-taken')
       if (bans.isBanned({ name: clean })) return no('name-banned')
 
+      // Agent members are created here too, via `kind:'agent'` — this is the
+      // one path that mints an agent identity, so it is also the one place
+      // that can refuse a colliding handle before it exists. Registry.byHandle
+      // does an unindexed linear find with no uniqueness of its own: two
+      // agents sharing a handle would otherwise both be created successfully,
+      // and byHandle would silently return whichever comes first.
+      if (kind === 'agent') {
+        const h = String(handle ?? '').replace(/^@/, '').toLowerCase()
+        if (!h) return no('handle-required')
+        if (registry.byHandle(h)) return no('handle-taken')
+        if (!ownerId || !registry.byId(ownerId)) return no('bad-owner')
+
+        const m = registry.add(createAgentMember({ name: clean, handle: h, ownerId }))
+        persistMembers()
+        rosterChanged()
+        return ok({ member: publicMember(m), token: m.token, joinUrl: runtime.joinUrl(m.token) })
+      }
+
+      if (!ROLES.includes(role)) return no('bad-role')
       const m = registry.add(createMember({ name: clean, role, canApprove, payerRef }))
       persistMembers()
       rosterChanged()

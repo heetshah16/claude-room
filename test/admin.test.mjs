@@ -58,6 +58,40 @@ test('invite refuses duplicate names, empty names, bad roles and banned names', 
   done(h)
 })
 
+test('invite with kind:agent creates an agent member owned by an existing member', () => {
+  const h = harness()
+  const r = h.admin.run('invite', { name: 'ana-agent', kind: 'agent', handle: '@ana-agent', ownerId: h.ana.id })
+  assert.equal(r.ok, true)
+  assert.equal(r.member.kind, 'agent')
+  assert.equal(r.member.handle, 'ana-agent') // stored without the leading @
+  assert.equal(r.member.ownerId, h.ana.id)
+  assert.match(r.joinUrl, /token=/)
+  done(h)
+})
+
+test('invite refuses a handle that already belongs to another agent, even across two invites', () => {
+  const h = harness()
+  const first = h.admin.run('invite', { name: 'a1', kind: 'agent', handle: 'dup', ownerId: h.ana.id })
+  assert.equal(first.ok, true)
+  // Same handle, different name — must be refused at creation time so
+  // Registry.byHandle can never return an ambiguous result.
+  const second = h.admin.run('invite', { name: 'a2', kind: 'agent', handle: 'dup', ownerId: h.owner.id })
+  assert.equal(second.reason, 'handle-taken')
+  assert.equal(h.registry.byHandle('dup').name, 'a1')
+  done(h)
+})
+
+test('invite refuses an agent with no handle or an unknown owner', () => {
+  const h = harness()
+  assert.equal(h.admin.run('invite', { name: 'a1', kind: 'agent', ownerId: h.ana.id }).reason, 'handle-required')
+  assert.equal(h.admin.run('invite', { name: 'a1', kind: 'agent', handle: 'h' }).reason, 'bad-owner')
+  assert.equal(
+    h.admin.run('invite', { name: 'a1', kind: 'agent', handle: 'h', ownerId: 'nope' }).reason,
+    'bad-owner',
+  )
+  done(h)
+})
+
 test('remove revokes the token and cuts the live stream', () => {
   const h = harness()
   const token = h.ana.token
