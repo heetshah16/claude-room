@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createMember, Registry, canAddress, mayApprove } from '../src/identity.mjs'
+import { createMember, Registry, canAddress, mayApprove, createAgentMember, isAgent, ownsSeat } from '../src/identity.mjs'
 
 test('a member gets a long unguessable token', () => {
   const m = createMember({ name: 'heet', role: 'owner' })
@@ -44,4 +44,39 @@ test('round-trips through JSON', () => {
   const back = Registry.fromJSON(JSON.parse(JSON.stringify(r.toJSON())))
   assert.equal(back.byToken(m.token).name, 'ana')
   assert.equal(back.byToken(m.token).canApprove, true)
+})
+
+test('an agent member carries a handle and an owner', () => {
+  const a = createAgentMember({ name: 'ana-agent', handle: 'ana-agent', ownerId: 'u-ana' })
+  assert.equal(isAgent(a), true)
+  assert.equal(a.handle, 'ana-agent')
+  assert.equal(a.ownerId, 'u-ana')
+  assert.ok(a.token.length >= 32)
+})
+
+test('a human member is not an agent', () => {
+  assert.equal(isAgent(createMember({ name: 'ana', role: 'member' })), false)
+})
+
+test('only the owner may address a seat', () => {
+  const agent = createAgentMember({ name: 'ana-agent', handle: 'ana-agent', ownerId: 'u-ana' })
+  assert.equal(ownsSeat({ id: 'u-ana' }, agent), true)
+  assert.equal(ownsSeat({ id: 'u-heet' }, agent), false)
+  assert.equal(ownsSeat(null, agent), false)
+  assert.equal(ownsSeat({ id: 'u-ana' }, null), false)
+})
+
+test('an owner of the room does not thereby own every seat', () => {
+  // Being room owner must not grant use of someone else's account.
+  const agent = createAgentMember({ name: 'ana-agent', handle: 'ana-agent', ownerId: 'u-ana' })
+  assert.equal(ownsSeat({ id: 'u-heet', role: 'owner' }, agent), false)
+})
+
+test('handles are unique and case-insensitive in lookup', () => {
+  const r = new Registry()
+  const a = r.add(createAgentMember({ name: 'ana-agent', handle: 'Ana-Agent', ownerId: 'u1' }))
+  assert.equal(r.byHandle('ana-agent').id, a.id)
+  assert.equal(r.byHandle('ANA-AGENT').id, a.id)
+  assert.equal(r.byHandle('nobody'), null)
+  assert.equal(r.agents().length, 1)
 })

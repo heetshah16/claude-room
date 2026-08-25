@@ -30,6 +30,31 @@ export const canAddress = m =>
 export const mayApprove = m =>
   !!m && (m.role === 'owner' || (m.role === 'member' && m.canApprove === true))
 
+/**
+ * @param {{name:string, handle:string, ownerId:string}} spec
+ * @returns {import('./types.mjs').Member & {kind:'agent', handle:string, ownerId:string}}
+ */
+export function createAgentMember({ name, handle, ownerId }) {
+  return {
+    ...createMember({ name, role: 'member' }),
+    kind: 'agent',
+    handle: String(handle).replace(/^@/, '').toLowerCase(),
+    ownerId,
+  }
+}
+
+export const isAgent = m => m?.kind === 'agent'
+
+/**
+ * Whether `sender` may address `agent`.
+ *
+ * Deliberately NOT satisfied by room ownership. If the room owner could address
+ * every seat, one person's account would serve another person's request, which
+ * is exactly the line this design exists to stay on the right side of.
+ */
+export const ownsSeat = (sender, agent) =>
+  !!sender && !!agent && isAgent(agent) && agent.ownerId === sender.id
+
 /** Constant-time compare so lookup leaks neither length nor prefix by timing. */
 function sameToken(a, b) {
   const x = Buffer.from(String(a))
@@ -113,6 +138,15 @@ export class Registry {
   /** The room must never be left without someone who can administer it. */
   owners() {
     return this.all().filter(m => m.role === 'owner')
+  }
+
+  byHandle(handle) {
+    const want = String(handle ?? '').replace(/^@/, '').toLowerCase()
+    return this.all().find(m => isAgent(m) && m.handle === want) ?? null
+  }
+
+  agents() {
+    return this.all().filter(isAgent)
   }
 
   toJSON() {
