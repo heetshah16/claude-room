@@ -3,6 +3,7 @@
 // untouched by this task) so the two stay drop-in compatible, plus the
 // pieces seat tests need: an agent member, its owner, and an SSE reader for
 // the seat's own feed.
+import { spawn } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -81,6 +82,54 @@ export function harness(env = {}, observer = null) {
     // Convenience accessors the seat-protocol tests read directly.
     agentToken: agent.token, anaToken: ana.token, anaId: ana.id,
     heetAgentToken: heetAgent.token,
+  }
+}
+
+/**
+ * Spawns `src/server.mjs` as a real child process — the shape
+ * test/server.smoke.test.mjs uses to prove the room boots outside a Claude
+ * Code parent (embedded mode) or entirely on its own (`ROOM_STANDALONE=1`).
+ * ROOM_PORT=0 lets the OS pick a free port; this polls stderr for the
+ * "listening on" line to learn which one, and scrapes the bootstrap owner's
+ * join URL for its token so callers can hit authenticated routes without
+ * re-deriving the owner themselves. Later tasks needing a live server should
+ * use this rather than each spawning their own.
+ */
+export async function bootRoom(env = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'roomboot-'))
+  const child = spawn(process.execPath, ['src/server.mjs'], {
+    env: { ...process.env, ROOM_STATE_DIR: dir, ROOM_PORT: '0', ROOM_HOST: '127.0.0.1', ...env },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+
+  let out = ''
+  let err = ''
+  child.stdout.on('data', d => { out += d })
+  child.stderr.on('data', d => { err += d })
+  // The dir is this call's own tmpdir, not the caller's — clean it up
+  // ourselves once the child is actually gone rather than leaving it to
+  // whoever called kill().
+  child.on('exit', () => rmSync(dir, { recursive: true, force: true }))
+
+  let port = null
+  // `.match()?.[1]` is `undefined`, not `null`, on a miss — loop on falsiness,
+  // not on `=== null`, or the poll silently gives up after one try.
+  for (let i = 0; i < 60 && !port; i++) {
+    port = err.match(/listening on http:\/\/[^:]+:(\d+)/)?.[1]
+    if (port) break
+    await new Promise(r => setTimeout(r, 100))
+  }
+  if (!port) throw new Error(`server never came up. stderr:\n${err}`)
+
+  const ownerToken = err.match(/join:.*[?&]token=([^\s&]+)/)?.[1] ?? null
+
+  return {
+    dir,
+    port: Number(port),
+    child,
+    ownerToken,
+    stdout: () => out,
+    stderr: () => err,
   }
 }
 

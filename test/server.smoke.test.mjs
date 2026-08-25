@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { bootRoom } from './helpers/room.mjs'
 
 test('the server boots, serves the UI, and writes nothing to stdout but MCP traffic', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'roomsmoke-'))
@@ -45,4 +46,21 @@ test('the server boots, serves the UI, and writes nothing to stdout but MCP traf
 
   child.kill()
   rmSync(dir, { recursive: true, force: true })
+})
+
+test('the room runs standalone, with no Claude Code parent', async () => {
+  // It used to be an MCP stdio child, which is how it knew a session was alive.
+  // With several seats that no longer holds, so it must stand on its own.
+  const { port, child, stderr } = await bootRoom({ ROOM_STANDALONE: '1' })
+  const res = await fetch(`http://127.0.0.1:${port}/`)
+  assert.equal(res.status, 200)
+  assert.match(stderr(), /listening on/)
+  child.kill()
+})
+
+test('seat liveness is reported in room state', async () => {
+  const { port, ownerToken, child } = await bootRoom({ ROOM_STANDALONE: '1' })
+  const s = await (await fetch(`http://127.0.0.1:${port}/api/state?token=${ownerToken}`)).json()
+  assert.ok(Array.isArray(s.seats))
+  child.kill()
 })

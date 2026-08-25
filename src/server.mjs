@@ -4,13 +4,21 @@
  *
  * Claude Code spawns this as an MCP stdio child, so stdout belongs to the
  * protocol — every log line here goes to stderr. Being a child also means
- * "this process is alive" is the same fact as "the session is alive", which is
- * why the room needs no liveness protocol of its own.
+ * "this process is alive" is the same fact as "the session is alive", which
+ * used to be all the liveness protocol the room needed.
+ *
+ * With several seats, a session coming and going no longer says anything
+ * about whether the room itself should live — seats join and leave the HTTP
+ * server independently of any one of them. ROOM_STANDALONE=1 opts into that:
+ * the room skips the stdio MCP handshake and stays up on the HTTP server
+ * alone. Without it, behaviour is unchanged — a single-session room still
+ * connects over stdio exactly as before.
  */
 import { randomUUID } from 'node:crypto'
 import { loadConfig } from './config.mjs'
 import { Store } from './state.mjs'
 import { Queue } from './queue.mjs'
+import { Seats } from './seats.mjs'
 import { Bus } from './bus.mjs'
 import { createChannel } from './channel.mjs'
 import { createWeb } from './web.mjs'
@@ -21,6 +29,7 @@ import { makeRunner } from './run-model.mjs'
 import { createAdmin } from './admin.mjs'
 
 const log = s => process.stderr.write(`room: ${s}\n`)
+const standalone = process.env.ROOM_STANDALONE === '1'
 
 // Reserved ledger identity so the observer's spend sits beside the humans it
 // serves rather than hiding inside the host's total.
@@ -44,7 +53,8 @@ if (!registry.all().length) {
 
 const bus = new Bus()
 const permissions = new PermissionBroker()
-const queue = new Queue({ config, ledger, decisions })
+const seats = new Seats()
+const queue = new Queue({ config, ledger, decisions, registry, seats })
 
 const addrs = new Map()
 const runtime = {
@@ -137,7 +147,7 @@ if (config.observer.on) {
 
 const web = createWeb({
   config, registry, ledger, decisions, queue, store, bus, channel,
-  permissions, turns, observer, bans, admin, runtime,
+  permissions, turns, observer, bans, admin, runtime, seats,
 })
 
 web.listen(config.port, config.host, () => {
@@ -150,5 +160,13 @@ web.listen(config.port, config.host, () => {
 
 web.on('error', err => log(`http error: ${err.message}`))
 
-await channel.connect()
-log('channel connected')
+// Embedded mode: connect the MCP stdio transport, same as always. Standalone
+// mode has no stdio peer to connect to — the HTTP server above is already
+// listening and keeps the process alive on its own, so there is nothing
+// further to do here.
+if (!standalone) {
+  await channel.connect()
+  log('channel connected')
+} else {
+  log('standalone mode — no MCP stdio peer')
+}

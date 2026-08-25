@@ -6,6 +6,7 @@
   "description": "Multiplayer Claude Code - several humans drive one shared session from their browsers",
   "scripts": {
     "start": "node src/server.mjs",
+    "room": "node src/server.mjs",
     "test": "node --test",
     "admin": "node scripts/room-admin.mjs"
   },

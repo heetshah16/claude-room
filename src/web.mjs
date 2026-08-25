@@ -279,6 +279,12 @@ export function createWeb(deps) {
           members: registry.all().map(m => ({
             id: m.id, name: m.name, role: m.role, muted: !!m.muted,
           })),
+          // Which agent seats are live right now, so the browser can show it.
+          // `online()` already strips the connection object for JSON safety.
+          // Optional like everywhere else `seats` is read — a caller that
+          // never wires seats up (single-session rooms, older harnesses) gets
+          // an empty list rather than a crash.
+          seats: seats?.online() ?? [],
           messages: store.recent(200),
           ledger: {
             ...Object.fromEntries(registry.all().map(m => [m.id, ledger.totalsFor(m.id)])),
