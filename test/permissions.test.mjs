@@ -62,3 +62,20 @@ test('expired requests are swept', () => {
   assert.equal(b.expire(5 * 60 * 1000).length, 1)
   assert.equal(b.pending().length, 0)
 })
+
+test('a pending request records which seat asked', () => {
+  const b = new PermissionBroker()
+  b.open({ request_id: 'abcde', tool_name: 'Bash', description: 'd', input_preview: 'ls' }, 'ana-agent')
+  assert.equal(b.pending()[0].seat, 'ana-agent')
+})
+
+test('two seats can have requests outstanding at once without colliding', () => {
+  const b = new PermissionBroker()
+  b.open({ request_id: 'abcde', tool_name: 'Bash' }, 'ana-agent')
+  b.open({ request_id: 'fghij', tool_name: 'Edit' }, 'heet-agent')
+  assert.equal(b.pending().length, 2)
+  const r = b.resolve('fghij', { role: 'owner' }, 'allow')
+  assert.equal(r.ok, true)
+  assert.equal(r.entry.seat, 'heet-agent')
+  assert.equal(b.pending()[0].seat, 'ana-agent')
+})

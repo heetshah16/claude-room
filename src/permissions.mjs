@@ -20,8 +20,12 @@ export class PermissionBroker {
     this.now = now
   }
 
-  open(req) {
-    const entry = { ...req, openedAt: this.now() }
+  open(req, seatHandle = null) {
+    // seatHandle names which agent seat's session raised the prompt (null for
+    // the single local session), so an approver — and, once wired end to
+    // end, the verdict itself — can tell which of several live agents is
+    // actually asking before allowing a tool call.
+    const entry = { ...req, seat: seatHandle, openedAt: this.now() }
     this.#open.set(req.request_id, entry)
     return entry
   }

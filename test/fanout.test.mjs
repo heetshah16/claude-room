@@ -48,6 +48,17 @@ test('addressing a handle with no live seat yields nothing to deliver', () => {
   assert.deepEqual(fanOut({ type: 'addressed', handle: 'ghost', messages: msgs }, seats), [])
 })
 
+test('a brief is delivered only to the seat about to receive the turn it precedes', () => {
+  const out = fanOut({ type: 'brief', handle: 'ana-agent', text: 'forks:\n - x', ageS: 3, pending: 1 }, seats)
+  assert.deepEqual(out.map(d => d.seatId), ['s1'])
+  assert.equal(out[0].kind, 'brief')
+  assert.equal(out[0].payload.text, 'forks:\n - x')
+})
+
+test('a brief addressed to a handle with no live seat yields nothing to deliver', () => {
+  assert.deepEqual(fanOut({ type: 'brief', handle: 'ghost', text: 'x' }, seats), [])
+})
+
 test('with a single seat there is nothing to mirror', () => {
   const one = [{ seatId: 's1', handle: 'ana-agent' }]
   const out = fanOut({ type: 'addressed', handle: 'ana-agent', messages: msgs }, one)

@@ -1,6 +1,8 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
+import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
 import { sanitizeMeta, buildNotification, buildBriefNotification } from './channel.mjs'
 
 // channel.mjs IS the room, embedded in the host's own session. This is the
@@ -232,3 +234,42 @@ export function createSeat({ roomUrl, token, handle, fetchImpl = fetch }) {
     },
   }
 }
+
+// stdout belongs to the MCP protocol (StdioServerTransport speaks it over
+// process.stdout) - every log line here goes to stderr, same rule as
+// src/server.mjs, and for the same reason: a stray byte on stdout corrupts
+// the transport the whole seat depends on.
+const log = s => process.stderr.write(`seat: ${s}\n`)
+
+function die(msg) {
+  log(msg)
+  process.exit(1)
+}
+
+async function main() {
+  // A seat that starts up and silently does nothing is exactly the failure
+  // this guard exists to close - scripts/room-seat.mjs (Task 9) already
+  // wires `--mcp-config` to spawn this file with all three set, so a
+  // missing one here means the launcher itself is broken, not the room.
+  const roomUrl = process.env.ROOM_URL
+  if (!roomUrl) return die('missing ROOM_URL - the room\'s base URL (e.g. http://127.0.0.1:8787)')
+  const token = process.env.ROOM_SEAT_TOKEN
+  if (!token) return die('missing ROOM_SEAT_TOKEN - the seat token from `room-admin seat add`')
+  const handle = process.env.ROOM_SEAT_HANDLE
+  if (!handle) return die('missing ROOM_SEAT_HANDLE - this seat\'s own @handle')
+
+  const seat = createSeat({ roomUrl, token, handle })
+  try {
+    await seat.connect()
+  } catch (err) {
+    return die(`failed to connect: ${err?.message ?? err}`)
+  }
+  log(`"${handle}" connected to ${roomUrl}`)
+}
+
+// Only run when this file is the process entry point (`node src/seat.mjs`,
+// exactly what --mcp-config spawns) - never on import, which is how every
+// test in this file (and createSeat/seatNotification's callers generally)
+// loads it.
+const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))
+if (isMain) main()

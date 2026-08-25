@@ -1,6 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
+import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { seatNotification, createSeat } from '../src/seat.mjs'
 
 test('a turn event becomes a channel notification with verbatim content', () => {
@@ -86,4 +88,115 @@ test('createSeat constructs and connects on stock Node 22, with no injected tran
   seat.stop()
   await seat.mcp.close()
   await new Promise(resolve => server.close(resolve))
+})
+
+// --- Task 11, item 4: run-as-main entry point ---
+//
+// scripts/room-seat.mjs (Task 9) already wires `--mcp-config` to spawn
+// `node src/seat.mjs` as the seat's own MCP server, but until now that file
+// only ever exported createSeat/seatNotification — invoked directly it did
+// nothing: no top-level code ever called createSeat(...).connect(), so a
+// real seat process launched exactly this way sat there doing nothing,
+// silently. These tests spawn the real file as Claude Code's launcher
+// would, rather than calling a main() function in-process, because the
+// point being tested is the process's own exit code and what lands on its
+// stdout/stderr — a directly-called function has neither.
+
+const SEAT_FILE = fileURLToPath(new URL('../src/seat.mjs', import.meta.url))
+
+/** Spawns `node src/seat.mjs` with a caller-controlled environment (never inherited: a missing var must stay missing). */
+function spawnSeat(env) {
+  const child = spawn(process.execPath, [SEAT_FILE], { env, stdio: ['pipe', 'pipe', 'pipe'] })
+  let stdout = ''
+  let stderr = ''
+  child.stdout.on('data', d => { stdout += d })
+  child.stderr.on('data', d => { stderr += d })
+  return { child, out: () => stdout, err: () => stderr }
+}
+
+function waitExit(child) {
+  return new Promise(resolve => child.on('exit', code => resolve(code)))
+}
+
+test('run as main with no ROOM_URL: exits with a clear message naming it, nothing on stdout', async () => {
+  const { child, out, err } = spawnSeat({ PATH: process.env.PATH })
+  const code = await waitExit(child)
+  assert.notEqual(code, 0)
+  assert.match(err(), /ROOM_URL/)
+  assert.equal(out(), '') // stdout belongs to the MCP protocol; a stray byte there corrupts it
+})
+
+test('run as main with no ROOM_SEAT_TOKEN: exits naming it', async () => {
+  const { child, err } = spawnSeat({ PATH: process.env.PATH, ROOM_URL: 'http://127.0.0.1:1' })
+  const code = await waitExit(child)
+  assert.notEqual(code, 0)
+  assert.match(err(), /ROOM_SEAT_TOKEN/)
+})
+
+test('run as main with no ROOM_SEAT_HANDLE: exits naming it', async () => {
+  const { child, err } = spawnSeat({
+    PATH: process.env.PATH, ROOM_URL: 'http://127.0.0.1:1', ROOM_SEAT_TOKEN: 't',
+  })
+  const code = await waitExit(child)
+  assert.notEqual(code, 0)
+  assert.match(err(), /ROOM_SEAT_HANDLE/)
+})
+
+test('run as main with every variable set: connects for real, logging only to stderr', async () => {
+  // A minimal stand-in room, same shape as the earlier connect test's.
+  const server = createServer((req, res) => {
+    if (req.method === 'POST' && req.url === '/seat/join') {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ seatId: 's1', seed: { text: '' } }))
+      return
+    }
+    if (req.method === 'GET' && req.url.startsWith('/seat/events')) {
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      res.write(': connected\n\n')
+      return
+    }
+    res.writeHead(404)
+    res.end()
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const { port } = server.address()
+
+  const { child, out, err } = spawnSeat({
+    PATH: process.env.PATH,
+    ROOM_URL: `http://127.0.0.1:${port}`,
+    ROOM_SEAT_TOKEN: 't',
+    ROOM_SEAT_HANDLE: 'ana-agent',
+  })
+
+  // Poll stderr rather than sleep a fixed amount, so a slow machine does not flake.
+  for (let i = 0; i < 60 && !/ana-agent/.test(err()); i++) await new Promise(r => setTimeout(r, 100))
+  assert.match(err(), /ana-agent/, `seat never logged its own handle. stderr:\n${err()}`)
+  // Nothing on stdout at any point - it belongs to the MCP protocol, and the
+  // process is deliberately never fed a request, so a silent, listening MCP
+  // server is exactly the expected end state here, not a hang.
+  assert.equal(out(), '')
+
+  child.kill()
+  await new Promise(resolve => server.close(resolve))
+})
+
+test('importing the module does not fire the main guard', async () => {
+  // Real seats launch via scripts/room-seat.mjs, which spawns `node
+  // src/seat.mjs` as a fresh process - process.argv[1] is the file itself.
+  // Every OTHER test in this file imports the same module as a library, not
+  // as that fresh process, and none of them observe a stray exit or a die()
+  // message - which is only possible if the guard stays silent on import.
+  // This spawns a clean process that imports (never runs) the file, with
+  // none of the three env vars set, to prove that explicitly: if the guard
+  // fired on import, this would exit non-zero with a "missing ROOM_URL"
+  // message exactly like the tests above.
+  const child = spawn(process.execPath, [
+    '--input-type=module', '-e',
+    `import(${JSON.stringify(new URL('../src/seat.mjs', import.meta.url).href)}).then(() => process.stderr.write('imported-ok\\n'))`,
+  ], { env: { PATH: process.env.PATH }, stdio: ['pipe', 'pipe', 'pipe'] })
+  let stderr = ''
+  child.stderr.on('data', d => { stderr += d })
+  const code = await waitExit(child)
+  assert.equal(code, 0)
+  assert.match(stderr, /imported-ok/)
 })

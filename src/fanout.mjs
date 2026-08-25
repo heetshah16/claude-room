@@ -18,9 +18,29 @@ export function fanOut(event, seats) {
       return mirrorDeliveries(event, seats)
     case 'turn-digest':
       return turnDigestDeliveries(event, seats)
+    case 'brief':
+      return briefDelivery(event, seats)
     default:
       return []
   }
+}
+
+/**
+ * The observer's brief, injected immediately before the turn it precedes —
+ * the seat mirror of what the local channel already does in web.mjs's
+ * drain(). Goes only to the one seat about to be addressed, never mirrored
+ * to the rest: it re-synchronises that seat's own drifted context, and every
+ * other live seat gets its own copy of the same brief the next time it is
+ * the one being addressed.
+ */
+function briefDelivery(event, seats) {
+  const seat = seats.find(s => s.handle === event.handle)
+  if (!seat) return []
+  return [{
+    seatId: seat.seatId,
+    kind: 'brief',
+    payload: { text: event.text, ageS: event.ageS, pending: event.pending, room: event.room },
+  }]
 }
 
 /**

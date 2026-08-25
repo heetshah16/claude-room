@@ -103,16 +103,30 @@ export function createWeb(deps) {
 
     const logged = turns.open({ messages: turn.messages, participants: turn.participants, dest: turn.dest })
 
+    // The brief goes first, as its own event, for whichever destination is
+    // about to be addressed — local channel or seat alike. Each seat compacts
+    // its own context independently, so two seats' recollections of the same
+    // conversation drift apart and neither knows; the brief is regenerated
+    // from the room's own record, never from any seat's context, so injecting
+    // it immediately before an addressed turn is what re-synchronises them.
+    // Without this, seats drift permanently.
+    const brief = observer?.briefForInjection?.()
+
     if (agent) {
       // A turn addressed to a live agent seat belongs to that seat's own
       // account — deliver it over the seat's own feed instead of the local
       // MCP channel, so nothing but the seat's owner can ever drive it.
+      if (brief?.text) {
+        deliverToSeats({
+          type: 'brief', handle: agent.handle,
+          text: brief.text, ageS: brief.ageS, pending: brief.pending, room: config.roomName,
+        })
+      }
       deliverToSeats({ type: 'addressed', handle: agent.handle, messages: turn.messages })
     } else {
-      // The brief goes first, as its own event. Channel events queued together
-      // are delivered in order as one turn, so the agent sees the room's state
-      // and then the message, with the message untouched.
-      const brief = observer?.briefForInjection?.()
+      // Channel events queued together are delivered in order as one turn, so
+      // the agent sees the room's state and then the message, with the
+      // message untouched.
       if (brief?.text) channel.notifyBrief(brief.text, { ageS: brief.ageS, pending: brief.pending })
       channel.notify(turn.messages)
     }
