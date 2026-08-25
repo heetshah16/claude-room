@@ -135,6 +135,81 @@ flagged in the room — to the humans, for the humans to settle. The room never 
 contradiction itself. An agent quietly picking a side and nobody noticing until review is
 the exact failure being prevented.
 
+## Multiple agents
+
+Everything above is one shared Claude Code session, on the host's account. A room can also
+hold several independent agent sessions at once — a **seat** — each one a separate Claude
+Code process, run by a different person, under that person's own account, addressable by its
+own `@handle`:
+
+```bash
+export ROOM_ADMIN_TOKEN=<owner token>
+node scripts/room-admin.mjs seat add ana-agent --owner ana
+# → seat added: ana-agent (@ana-agent), owned by ana
+#   run: node scripts/room-seat.mjs ana-agent --token <token> --repo <path-to-repo>
+
+node scripts/room-admin.mjs handle @claude,@ana-agent
+```
+
+`seat add` only registers the seat; a handle has to also be added with `handle` (or
+`ROOM_HANDLES`) before `@ana-agent` is recognised as a mention.
+
+### `CLAUDE_CONFIG_DIR` is the whole reason this is legitimate
+
+`scripts/room-seat.mjs` launches `claude` with `CLAUDE_CONFIG_DIR` pointed at a directory of
+the seat owner's own choosing. First run prompts `/login`, right there in their own terminal,
+for their own Anthropic account. Nothing in this codebase reads, copies, or forwards a
+credential from one config directory to another, or from a person's machine to the room's
+host — the room server only ever hands out an opaque, revocable per-seat join token, the same
+kind every other member gets. **No credential is ever copied, forwarded, or stored** by the
+room itself. That isolation is not an implementation detail; it is the property that makes
+letting other people's agents into your room defensible at all.
+
+### Owner-only addressing
+
+Only the member who owns a seat may address it. Anyone else's `@ana-agent` is refused with
+`not-your-seat`; addressing a seat whose connection isn't open is refused with `seat-offline`.
+Both show up as a visible note in the room, exactly the way a rate-limit or budget rejection
+already does — a message someone believes was sent and wasn't is the one failure this design
+cannot allow.
+
+This isn't a permission nicety. `ana-agent` runs under ana's Anthropic account: every message
+it acts on becomes a real turn billed to ana, using ana's own model access. If anyone in the
+room could address it, anyone could get ana's account to serve their request without ana ever
+choosing to. Room ownership doesn't override this either — the room owner has no more claim
+on someone else's seat than any other member does.
+
+### Mirroring multiplies ingestion
+
+Every live seat is echoed a quiet copy of what happens elsewhere in the room — the message
+that addressed one seat, the reply it gave — tagged as a mirror and never carrying a `user`,
+so the receiving agent can tell at a glance it is context, not a request, and is instructed
+not to act on it even if it looks like one. In the browser this renders muted and italic with
+a small "mirror" tag, deliberately quieter than the bold, bordered treatment of a message
+actually addressed to an agent.
+
+The cost consequence: with N seats online, one addressed exchange is ingested by all N of
+them — once as the real turn, N−1 times as mirrored context on every other seat. Each seat's
+share of that lands on its own owner's account, never on the addressee's, so mirroring does
+not concentrate cost onto one person — but the total ingestion, and the total bill across the
+room, both grow with every seat you add.
+
+### A seat on someone else's machine
+
+Running a seat means that person's Claude credentials live on hardware you do not control,
+for as long as their session runs there. Say this plainly, because it is easy to lose in the
+mechanics above: that is their decision to make knowingly, not something to assume on their
+behalf because the isolation is technically sound. The same trust question you'd ask before
+handing someone your laptop while you're logged in applies here.
+
+### Watching it
+
+The **Agents** card in the sidebar lists every seat currently online — handle, owner, a live
+dot, and tokens spent — refreshed as seats come and go. `.superpowers/sdd/2026-08-25-agent-seats/two-seats.mjs`
+boots a standalone room, registers two seats owned by two different people, and prints the
+exact commands to bring each one up in its own terminal, so owner-only addressing, both
+refusal reasons, and mirroring can all be watched end to end.
+
 ## The observer
 
 Off by default. `ROOM_OBSERVER=1` starts a second, **tool-less** agent that watches the room
@@ -333,10 +408,10 @@ text in front of an agent with your filesystem.
 npm test
 ```
 
-215 tests, no network and no Claude Code required. The pure modules — router, ledger,
-identity, decisions, queue, turns, brief, observer, admin — carry the load-bearing logic and are
-tested directly. The observer takes `runModel` as an injected seam, so its whole cycle is
-exercised without spawning a subprocess or spending a token.
+294 tests, no network and no Claude Code required. The pure modules — router, ledger,
+identity, decisions, queue, turns, brief, observer, admin, seats, fanout — carry the
+load-bearing logic and are tested directly. The observer takes `runModel` as an injected seam,
+so its whole cycle is exercised without spawning a subprocess or spending a token.
 
 ## Design notes
 

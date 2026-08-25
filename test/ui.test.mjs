@@ -92,3 +92,15 @@ test('the client script parses for any room name, including hostile ones', () =>
     assert.doesNotThrow(() => new Function(script), `script broke for room name: ${name}`)
   }
 })
+
+test('the seats panel is present', () => {
+  const html = renderUI(loadConfig({}))
+  assert.ok(html.includes('id="seats"'))
+  assert.match(html, /Agents/)
+})
+
+test('the client script still parses with the seats panel added', () => {
+  const html = renderUI(loadConfig({ ROOM_NAME: 'seats' }))
+  const script = html.match(/<script>([\s\S]*?)<\/script>/)[1]
+  assert.doesNotThrow(() => new Function(script))
+})

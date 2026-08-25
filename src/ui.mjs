@@ -185,6 +185,14 @@ export function renderUI(config) {
   .msg.reply .body { color: var(--ink); }
   .msg.reply .who b { color: var(--primary); }
 
+  /* A mirror is another seat's turn or reply, echoed into this room only for
+     awareness - never a request. Deliberately quieter than everything else
+     so a reader never mistakes "context" for "someone is talking to you". */
+  .msg.mirror { opacity: .62; }
+  .msg.mirror .who b { color: var(--dim); font-weight: 500; }
+  .msg.mirror .body { font-style: italic; }
+  .tag.dim { background: var(--line-2); color: var(--dim); }
+
   .note {
     display: flex; gap: var(--sp2); align-items: flex-start;
     border-radius: var(--r2); padding: 10px var(--sp3); margin: var(--sp2) 0;
@@ -228,6 +236,7 @@ export function renderUI(config) {
   .row + .row { border-top: 1px solid var(--line-2); }
   .row .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .meta { font: 10px/1 var(--mono); color: var(--dim); }
+  .seat-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
   .bar { height: 4px; border-radius: 999px; background: var(--line-2); overflow: hidden; margin-top: 4px; }
   .bar i { display: block; height: 100%; background: var(--primary); border-radius: 999px; transition: width 400ms var(--t); }
   .brief-line { font: 12px/1.6 var(--mono); white-space: pre-wrap; word-break: break-word; color: var(--ink-2); }
@@ -347,6 +356,11 @@ export function renderUI(config) {
         <div class="body" id="members"></div>
       </details>
 
+      <details class="card" id="cSeats">
+        <summary><span class="chev"></span>Agents<span class="count" id="seatCount"></span></summary>
+        <div class="body" id="seats"></div>
+      </details>
+
       <details class="card">
         <summary><span class="chev"></span>Cost</summary>
         <div class="body" id="cost"></div>
@@ -459,7 +473,7 @@ export function renderUI(config) {
     lastAuthor = m.kind === 'system' ? null : m.name;
 
     var wrap = el('div', 'msg' + (m.addressed ? ' addressed' : '') +
-      (m.kind === 'reply' ? ' reply' : '') + (same ? ' same' : ''));
+      (m.kind === 'reply' ? ' reply' : '') + (m.kind === 'mirror' ? ' mirror' : '') + (same ? ' same' : ''));
     wrap.appendChild(avatar(m.name || '?'));
 
     var col = el('div', 'col');
@@ -468,6 +482,9 @@ export function renderUI(config) {
       who.appendChild(el('b', null, m.name || 'unknown'));
       who.appendChild(el('span', 'when', clock(m.ts)));
       if (m.addressed) who.appendChild(el('span', 'tag', 'to agent'));
+      // Quiet, not hidden: a mirror is another seat's output echoed here for
+      // awareness, never a request - the tag says so at a glance.
+      if (m.kind === 'mirror') who.appendChild(el('span', 'tag dim', 'mirror'));
       if (m.attachment) who.appendChild(el('span', 'when', m.attachment.name));
       col.appendChild(who);
     }
@@ -571,6 +588,31 @@ export function renderUI(config) {
       var bits = [m.role];
       if (m.muted) bits.push('muted');
       r.appendChild(el('span', 'meta', bits.join(' · ')));
+      box.appendChild(r);
+    });
+  }
+
+  // Each seat is one agent session, bound to exactly one owner's Anthropic
+  // account (CLAUDE_CONFIG_DIR isolation - see README). The seats list only
+  // ever holds seats that are currently online (Seats#online), so presence
+  // in this list already means "reachable"; the dot just makes that visible
+  // without a reader having to know that convention.
+  function renderSeats(seats, members, ledger) {
+    var box = $('seats'); box.textContent = '';
+    $('seatCount').textContent = seats.length;
+    if (!seats.length) { box.appendChild(el('div', 'empty', 'no agents connected')); return; }
+    var byId = {};
+    members.forEach(function (m) { byId[m.id] = m; });
+    seats.forEach(function (s) {
+      var owner = byId[s.ownerId];
+      var u = ledger[s.memberId] || {};
+      var spent = (u.input || 0) + (u.output || 0) + (u.cacheRead || 0) + (u.cacheCreate || 0);
+      var r = el('div', 'row');
+      var dot = el('span', 'seat-dot');
+      dot.title = 'online';
+      r.appendChild(dot);
+      r.appendChild(el('span', 'grow', '@' + s.handle));
+      r.appendChild(el('span', 'meta', (owner ? owner.name : 'unknown owner') + ' · ' + num(spent)));
       box.appendChild(r);
     });
   }
@@ -869,6 +911,7 @@ export function renderUI(config) {
         state = s; me = s.you;
         $('mesub').textContent = s.you.name + ' · ' + s.you.role + (s.you.canApprove ? ' · approver' : '');
         renderMembers(s.members);
+        renderSeats(s.seats || [], s.members, s.ledger);
         renderCost(s.members, s.ledger);
         renderDecisions(s.decisions);
         renderBriefPanel(s.brief);
