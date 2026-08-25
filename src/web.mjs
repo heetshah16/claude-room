@@ -3,7 +3,9 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join, extname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { parseUsageLine, sumUsage, cacheRatio } from './ledger.mjs'
-import { mayApprove } from './identity.mjs'
+import { mayApprove, isAgent } from './identity.mjs'
+import { fanOut } from './fanout.mjs'
+import { buildSeed } from './seed.mjs'
 import { renderUI } from './ui.mjs'
 
 const json = (res, code, body) => {
@@ -23,7 +25,7 @@ const readBody = req =>
 export function createWeb(deps) {
   const {
     config, registry, ledger, decisions, queue, store, bus, channel,
-    permissions, turns, observer, bans, admin, runtime,
+    permissions, turns, observer, bans, admin, runtime, seats,
   } = deps
 
   // Address seen per member, so a ban can cover the device as well as the name.
@@ -48,19 +50,50 @@ export function createWeb(deps) {
     return m
   }
 
+  // seatId -> the seat's live SSE response. Kept here, not on the Seat record
+  // itself, so `seats.online()` can keep stripping `conn` for browsers while
+  // this module still has a socket to write turns and mirrors to.
+  const seatConns = new Map()
+
+  function sendToSeat(seatId, kind, payload) {
+    const conn = seatConns.get(seatId)
+    if (!conn) return
+    // fanOut hands back a bare messages array for 'turn'/'addressed' mirrors
+    // and an already-shaped {text} object for reply/digest mirrors; normalise
+    // the former so every seat event is `{...}`, never a raw array.
+    const data = Array.isArray(payload) ? { messages: payload } : payload
+    try {
+      conn.write(`event: ${kind}\ndata: ${JSON.stringify(data)}\n\n`)
+    } catch {
+      // Dead socket; its own close handler retires the seat.
+    }
+  }
+
+  function deliverToSeats(event) {
+    for (const d of fanOut(event, seats.online())) sendToSeat(d.seatId, d.kind, d.payload)
+  }
+
   function drain() {
     const turn = queue.beginTurn()
     if (!turn) return
     if (config.payerMode === 'rotate') store.writePayer(turn.payer)
     const logged = turns.open({ messages: turn.messages, participants: turn.participants })
 
-    // The brief goes first, as its own event. Channel events queued together
-    // are delivered in order as one turn, so the agent sees the room's state
-    // and then the message, with the message untouched.
-    const brief = observer?.briefForInjection?.()
-    if (brief?.text) channel.notifyBrief(brief.text, { ageS: brief.ageS, pending: brief.pending })
+    // A turn addressed to a live agent seat belongs to that seat's own
+    // account — deliver it over the seat's own feed instead of the local MCP
+    // channel, so nothing but the seat's owner can ever drive it.
+    const agent = registry.byHandle(turn.messages[0]?.handle)
+    if (agent) {
+      deliverToSeats({ type: 'addressed', handle: agent.handle, messages: turn.messages })
+    } else {
+      // The brief goes first, as its own event. Channel events queued together
+      // are delivered in order as one turn, so the agent sees the room's state
+      // and then the message, with the message untouched.
+      const brief = observer?.briefForInjection?.()
+      if (brief?.text) channel.notifyBrief(brief.text, { ageS: brief.ageS, pending: brief.pending })
+      channel.notify(turn.messages)
+    }
 
-    channel.notify(turn.messages)
     // msgIds let the browser link each message to the turn it caused, without
     // rewriting the append-only transcript.
     bus.publish('turn', {
@@ -118,7 +151,10 @@ export function createWeb(deps) {
     bus.publish('activity', { ...evt, turnId: turn?.id ?? null })
   }
 
-  function handleHook(event, p) {
+  // `participantsOverride` lets a seat's hooks reuse this whole pipeline while
+  // attributing cost to the seat's owner instead of the queue's own
+  // participants, which only ever describes the local host's turn.
+  function handleHook(event, p, participantsOverride) {
     if (event === 'PreToolUse') {
       emitActivity({ kind: 'tool-start', tool: p.tool_name, input: p.tool_input, ts: Date.now() }, p.prompt_id)
     } else if (event === 'PostToolUse') {
@@ -128,7 +164,7 @@ export function createWeb(deps) {
     } else if (event === 'SessionStart') {
       bus.publish('activity', { kind: 'session-start', ts: Date.now(), turnId: null })
     } else if (event === 'Stop') {
-      const participants = queue.participantsOf(p.prompt_id) ?? queue.participantsOf('__inflight__') ?? []
+      const participants = participantsOverride ?? queue.participantsOf(p.prompt_id) ?? queue.participantsOf('__inflight__') ?? []
       const usage = usageFromTranscript(p.transcript_path)
       if (usage) {
         ledger.record(p.prompt_id, usage, participants, config.splitMode)
@@ -319,6 +355,116 @@ export function createWeb(deps) {
           bus.publish('approval', { request_id: body.request_id, behavior: body.behavior, by: member.name })
         }
         return json(res, r.ok ? 200 : 403, r)
+      }
+
+      if (req.method === 'POST' && path === '/seat/join') {
+        let body = {}
+        try {
+          body = JSON.parse((await readBody(req)).toString('utf8') || '{}')
+        } catch {
+          return json(res, 400, { error: 'bad json' })
+        }
+        const member = memberFrom(req, url, body)
+        if (!member) return json(res, 401, { error: 'bad token' })
+        // A human token must never claim a seat: a seat is a different
+        // person's Anthropic account, and this is the gate that keeps a
+        // browser token from driving one.
+        if (!isAgent(member)) return json(res, 403, { error: 'not-an-agent' })
+
+        const r = seats.join(member, null)
+        if (!r.ok) return json(res, 409, { error: r.reason })
+
+        const seed = buildSeed({
+          brief: observer?.briefForInjection?.()?.text ?? '',
+          decisions: decisions.open(),
+          messages: store.recent(200),
+          limit: 50,
+        })
+        return json(res, 200, { seatId: r.seatId, seed })
+      }
+
+      if (req.method === 'GET' && path === '/seat/events') {
+        const member = memberFrom(req, url, null)
+        if (!member) return json(res, 401, { error: 'bad token' })
+        if (!isAgent(member)) return json(res, 403, { error: 'not-an-agent' })
+
+        // The seat may already be registered from /seat/join (joined without
+        // a live connection yet); attach this socket to that same seat rather
+        // than fail it as a handle clash. byHandle hands back the live
+        // record, not a copy, so this mutation is visible everywhere.
+        let seat = seats.byHandle(member.handle)
+        let seatId
+        if (seat) {
+          seat.conn = res
+          seatId = seat.seatId
+        } else {
+          const r = seats.join(member, res)
+          if (!r.ok) return json(res, 409, { error: r.reason })
+          seatId = r.seatId
+        }
+
+        res.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-cache',
+          connection: 'keep-alive',
+        })
+        res.write(': connected\n\n')
+        seatConns.set(seatId, res)
+        // Liveness is the connection: once it drops, the seat is offline and
+        // its handle is free again.
+        res.on('close', () => {
+          seatConns.delete(seatId)
+          seats.leave(seatId)
+        })
+        return
+      }
+
+      if (req.method === 'POST' && path === '/seat/reply') {
+        let body = {}
+        try {
+          body = JSON.parse((await readBody(req)).toString('utf8') || '{}')
+        } catch {
+          return json(res, 400, { error: 'bad json' })
+        }
+        const member = memberFrom(req, url, body)
+        if (!member) return json(res, 401, { error: 'bad token' })
+        if (!isAgent(member)) return json(res, 403, { error: 'not-an-agent' })
+
+        const text = String(body.text ?? '')
+        const message = {
+          id: randomUUID(),
+          memberId: member.id,
+          name: member.handle,
+          text,
+          content: text,
+          ts: Date.now(),
+          addressed: false,
+          handle: null,
+          kind: 'reply',
+        }
+        broadcastMessage(message)
+        deliverToSeats({ type: 'reply', fromHandle: member.handle, text })
+        return json(res, 200, { ok: true })
+      }
+
+      if (req.method === 'POST' && path.startsWith('/seat/hook/')) {
+        // Fire and forget, same as /hook/: a hook must never stall a turn.
+        const event = path.slice('/seat/hook/'.length)
+        let payload = {}
+        try {
+          payload = JSON.parse((await readBody(req)).toString('utf8') || '{}')
+        } catch {
+          payload = {}
+        }
+        try {
+          const member = memberFrom(req, url, payload)
+          // Cost lands on the human who owns the seat, never on the agent
+          // member — that is the entire point of per-seat authentication.
+          if (member && isAgent(member)) handleHook(event, payload, [{ memberId: member.ownerId, weight: 1 }])
+        } catch {
+          // The activity feed may degrade; the room must not.
+        }
+        return json(res, 200, { ok: true })
       }
 
       if (req.method === 'POST' && path.startsWith('/hook/')) {
