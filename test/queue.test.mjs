@@ -4,6 +4,8 @@ import { Queue } from '../src/queue.mjs'
 import { Ledger } from '../src/ledger.mjs'
 import { loadConfig } from '../src/config.mjs'
 import { Decisions } from '../src/decisions.mjs'
+import { Registry, createMember, createAgentMember } from '../src/identity.mjs'
+import { Seats } from '../src/seats.mjs'
 
 const mk = (over = {}) =>
   new Queue({
@@ -156,4 +158,41 @@ test('an addressed message that contradicts an open decision carries conflicts',
   })
   const r = q.submit(ana, '@claude add a cache layer to auth, it should not be stateless')
   assert.equal(r.conflicts.length, 1)
+})
+
+function seatedQueue() {
+  const registry = new Registry()
+  const ana = registry.add(createMember({ name: 'ana', role: 'member' }))
+  const heet = registry.add(createMember({ name: 'heet', role: 'owner' }))
+  registry.add(createAgentMember({ name: 'ana-agent', handle: 'ana-agent', ownerId: ana.id }))
+  const seats = new Seats()
+  seats.join(registry.byHandle('ana-agent'), { write() {}, end() {} })
+  const config = loadConfig({ ROOM_HANDLES: 'ana-agent' })
+  return {
+    q: new Queue({ config, ledger: new Ledger(), decisions: new Decisions(), registry, seats }),
+    ana, heet, registry, seats, config,
+  }
+}
+
+test('the seat owner can address their own seat', () => {
+  const { q, ana } = seatedQueue()
+  const r = q.submit(ana, '@ana-agent find the TTL')
+  assert.equal(r.ok, true)
+  assert.equal(r.message.addressed, true)
+  assert.equal(r.message.handle, 'ana-agent')
+})
+
+test('nobody else can address it - not even the room owner', () => {
+  const { q, heet } = seatedQueue()
+  const r = q.submit(heet, '@ana-agent find the TTL')
+  assert.equal(r.ok, false)
+  assert.equal(r.reason, 'not-your-seat')
+})
+
+test('an offline seat is refused visibly rather than queued forever', () => {
+  const { q, ana, seats } = seatedQueue()
+  seats.leave(seats.online()[0].seatId)
+  const r = q.submit(ana, '@ana-agent hello')
+  assert.equal(r.ok, false)
+  assert.equal(r.reason, 'seat-offline')
 })

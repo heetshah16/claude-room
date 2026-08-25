@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { classify } from './router.mjs'
+import { ownsSeat } from './identity.mjs'
 
 const INFLIGHT = '__inflight__'
 
@@ -17,10 +18,12 @@ export class Queue {
   #recent = new Map()
   #rotation = 0
 
-  constructor({ config, ledger, decisions, now = Date.now }) {
+  constructor({ config, ledger, decisions, registry, seats, now = Date.now }) {
     this.config = config
     this.ledger = ledger
     this.decisions = decisions
+    this.registry = registry
+    this.seats = seats
     this.now = now
   }
 
@@ -63,6 +66,16 @@ export class Queue {
     // A paused room still carries conversation; it just stops taking work.
     const paused = opts.paused ?? this.config.paused
     if (paused) return { ok: false, reason: 'paused', message: null, conflicts: [] }
+
+    // A handle that resolves to an agent seat is a different person's Anthropic
+    // account — only its owner may address it, and only while it is listening.
+    // No agent match (single-session rooms, or `registry`/`seats` not wired up)
+    // leaves behaviour exactly as it was before seats existed.
+    const agent = this.registry?.byHandle(c.handle)
+    if (agent) {
+      if (!ownsSeat(member, agent)) return { ok: false, reason: 'not-your-seat', message: null, conflicts: [] }
+      if (!this.seats?.isOnline(c.handle)) return { ok: false, reason: 'seat-offline', message: null, conflicts: [] }
+    }
 
     // Rejections are visible, never silent — a dropped message the sender
     // believes landed is the worst failure this system can have.
