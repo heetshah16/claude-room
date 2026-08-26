@@ -43,6 +43,27 @@ export class Bus {
     }
   }
 
+  /**
+   * A comment frame to every stream, so an idle room does not look like a dead
+   * one. SSE has no protocol-level ping, and nothing in the middle can tell
+   * "quiet" from "gone": undici — which the seat bridge reads its feed with —
+   * aborts a response body after 300s of silence (UND_ERR_BODY_TIMEOUT), and
+   * proxies routinely cut idle connections sooner. A ':' line is ignored by
+   * every SSE parser, so this costs one line and keeps the socket alive.
+   *
+   * Returns how many streams are still live.
+   */
+  keepalive() {
+    for (const entry of [...this.#subs]) {
+      try {
+        entry.res.write(': ping\n\n')
+      } catch {
+        this.#drop(entry)
+      }
+    }
+    return this.#subs.size
+  }
+
   /** Close every live stream belonging to a member. Returns how many. */
   disconnect(memberId) {
     const set = this.#byMember.get(memberId)

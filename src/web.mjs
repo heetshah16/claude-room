@@ -250,7 +250,7 @@ export function createWeb(deps) {
     }
   }
 
-  return createServer(async (req, res) => {
+  const server = createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host ?? 'localhost'}`)
     const path = url.pathname
 
@@ -590,4 +590,23 @@ export function createWeb(deps) {
       return json(res, 500, { error: String(err?.message ?? err) })
     }
   })
+
+  // Both feeds go quiet between turns, and a quiet SSE stream is
+  // indistinguishable from a dead one to everything in the middle. For the
+  // browser that means a reconnect nobody sees; for a seat it means being
+  // retired, refused as `seat-offline`, and reconnected on backoff — every
+  // five minutes, for as long as the room is idle.
+  const heartbeat = setInterval(() => {
+    try {
+      bus.keepalive()
+      seats?.keepalive?.()
+    } catch {
+      // A heartbeat must never take the room down.
+    }
+  }, config.keepaliveMs)
+  // A heartbeat is not a reason to keep the process alive.
+  heartbeat.unref()
+  server.on('close', () => clearInterval(heartbeat))
+
+  return server
 }

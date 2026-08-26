@@ -52,6 +52,11 @@ export function loadConfig(env = process.env) {
       .map(h => h.trim().replace(/^@/, '').toLowerCase())
       .filter(Boolean),
     paused: bool(env.ROOM_PAUSED),
+    // How often to write a comment frame to every open SSE stream. Comfortably
+    // under undici's 300s response-body timeout, which is what actually cut
+    // idle seat feeds, and under the 60s idle cut common in reverse proxies.
+    // Tunable because anything sitting in front of the room may be stricter.
+    keepaliveMs: int(env.ROOM_KEEPALIVE_MS, 25_000),
     payerMode: oneOf(env.ROOM_PAYER_MODE, ['host', 'rotate'], 'host'),
     permissionRelay: bool(env.ROOM_PERMISSION_RELAY),
     splitMode: oneOf(env.ROOM_SPLIT_MODE, ['equal', 'weighted'], 'equal'),

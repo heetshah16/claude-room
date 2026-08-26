@@ -107,6 +107,31 @@ export class Seats {
   }
 
   /**
+   * The same comment frame as Bus.keepalive, for seat feeds.
+   *
+   * A seat is online exactly while its feed is open, so an idle feed being cut
+   * is not a cosmetic problem: undici aborts one after 300s of silence, the
+   * close handler retires the seat, and its owner is refused with
+   * `seat-offline` until the bridge's backoff reconnects it. A quiet room
+   * churned every seat roughly every five minutes.
+   *
+   * A write that throws is left to that connection's own close handler to
+   * retire, exactly as deliverToSeats does — a seat is never retired here.
+   */
+  keepalive() {
+    let live = 0
+    for (const seat of this.#seats.values()) {
+      try {
+        seat.conn?.write(': ping\n\n')
+        live++
+      } catch {
+        // Dead socket; its close handler retires the seat.
+      }
+    }
+    return live
+  }
+
+  /**
    * Updates the last-seen timestamp for a seat. No-op if the seat doesn't exist
    * (safe for racing cleanup). Tracks continuous activity to distinguish live
    * seats from stalled connections.
