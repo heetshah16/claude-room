@@ -4,6 +4,9 @@ import { ownsSeat, addressPolicyOf } from './identity.mjs'
 
 const INFLIGHT = '__inflight__'
 
+// How many finished turns' participant lists to keep for late-arriving hooks.
+const MAX_PROMPT_MEMORY = 500
+
 // The destination every non-agent handle shares: the local MCP session this
 // room was spawned from. Agent seats get their own destination (their
 // handle); everything else — including a renamed classic handle — funnels
@@ -216,7 +219,18 @@ export class Queue {
 
   endTurn(dest, promptId) {
     const turn = this.#inflight.get(dest)
-    if (promptId && turn) this.#byPrompt.set(promptId, turn.participants)
+    if (promptId && turn) {
+      this.#byPrompt.set(promptId, turn.participants)
+      // One entry per turn, never removed, was a leak for the life of the
+      // room. Only the recent ones can still be asked about: a Stop hook
+      // quotes the prompt_id of the turn that just ended, not one from an
+      // hour ago. Map preserves insertion order, so the oldest is first.
+      while (this.#byPrompt.size > MAX_PROMPT_MEMORY) {
+        const oldest = this.#byPrompt.keys().next().value
+        if (oldest === INFLIGHT) break
+        this.#byPrompt.delete(oldest)
+      }
+    }
     this.#busy.delete(dest)
     this.#inflight.delete(dest)
   }

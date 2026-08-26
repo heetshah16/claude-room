@@ -14,7 +14,7 @@
  * alone. Without it, behaviour is unchanged — a single-session room still
  * connects over stdio exactly as before.
  */
-import { randomUUID } from 'node:crypto'
+import { randomUUID, randomBytes } from 'node:crypto'
 import { loadConfig } from './config.mjs'
 import { Store } from './state.mjs'
 import { Queue } from './queue.mjs'
@@ -42,6 +42,15 @@ const { registry, ledger, decisions, turns, bans, runtime: savedRuntime } = stor
 // Admin changes to the agent handle or the pause flag outlive a restart.
 if (savedRuntime?.handles?.length) config.handles = savedRuntime.handles
 if (typeof savedRuntime?.paused === 'boolean') config.paused = savedRuntime.paused
+
+// The room's own hook token. POST /hook/* used to accept anything, because
+// Claude Code's hooks are configured statically and had nowhere to carry a
+// member token — which left Stop (ends the in-flight turn, records ledger
+// usage from a caller-supplied path) and PreToolUse (broadcasts arbitrary
+// activity to every browser) open to anyone who could reach the port.
+// Persisted so it survives a restart and the settings file stays valid.
+config.hookToken = config.hookToken || savedRuntime?.hookToken || randomBytes(24).toString('base64url')
+if (config.hookToken !== savedRuntime?.hookToken) store.saveRuntime({ hookToken: config.hookToken })
 
 // Bootstrap an owner on first run, otherwise the room is unreachable.
 if (!registry.all().length) {
@@ -99,7 +108,13 @@ const channel = createChannel({
 
 if (config.permissionRelay) {
   channel.onPermissionRequest(params => {
-    permissions.open(params)
+    // open() refuses an id that is not the shape Claude Code issues. Announcing
+    // it anyway would put a prompt in front of approvers that resolve() can
+    // never match, so they would click allow and nothing would happen.
+    if (!permissions.open(params)) {
+      log(`ignored a permission request with an unexpected id: ${params?.request_id}`)
+      return
+    }
     bus.publish('approval-request', params)
   })
   // Scoped deliberately: only the local session's prompts reach the room.
@@ -162,6 +177,12 @@ web.listen(config.port, config.host, () => {
   config.port = web.address().port
   log(`listening on http://${config.host}:${config.port} (${registry.all().length} member(s))`)
   if (config.host === '127.0.0.1') log('bound to loopback — set ROOM_HOST to your Tailscale address to let teammates in')
+
+  // Written here rather than at load: with ROOM_PORT=0 the port is not known
+  // until the socket is bound, and a settings file naming the wrong port
+  // produces hooks that silently never arrive.
+  const settingsPath = store.writeHookSettings({ port: config.port, token: config.hookToken })
+  log(`hooks: launch the local session with --settings ${settingsPath}`)
 })
 
 web.on('error', err => log(`http error: ${err.message}`))

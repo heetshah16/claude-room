@@ -28,7 +28,14 @@ export function harness(env = {}, observer = null) {
   // does. Two seats, owned by two different members, is what the
   // cross-account tests need: proof that a turn addressed to one seat is
   // never mixed with, or delivered to, the other.
-  const config = loadConfig({ ROOM_STATE_DIR: dir, ROOM_HANDLES: 'claude,ana-agent,heet-agent', ...env })
+  // POST /hook/* is authenticated like every other route, so the harness needs
+  // a known hook token. Tests reach it via `h.hookToken` / the postHook helper.
+  const config = loadConfig({
+    ROOM_STATE_DIR: dir,
+    ROOM_HANDLES: 'claude,ana-agent,heet-agent',
+    ROOM_HOOK_TOKEN: 'test-hook-token',
+    ...env,
+  })
   const turns = new TurnLog()
   const order = []
   const briefs = []
@@ -78,9 +85,10 @@ export function harness(env = {}, observer = null) {
 
   return {
     dir, server, owner, viewer, ana, agent, heetAgent, seats, registry, ledger, queue,
-    permissions, turns, config, sent, verdicts, order, briefs, noted, bans, admin,
+    permissions, turns, config, sent, verdicts, order, briefs, noted, bans, admin, runtime,
     // Convenience accessors the seat-protocol tests read directly.
     agentToken: agent.token, anaToken: ana.token, anaId: ana.id,
+    hookToken: config.hookToken,
     heetAgentToken: heetAgent.token,
   }
 }
@@ -138,6 +146,16 @@ export const listen = server =>
 
 export const post = (base, path, body) =>
   fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+
+/**
+ * POST to the LOCAL session's hook route, carrying the room's hook token.
+ *
+ * /hook/* is authenticated: it can end the in-flight turn and write to the
+ * ledger, so it is gated like everything else. Real hooks get the token from
+ * the settings file the room generates; tests get it from the harness.
+ */
+export const postHook = (base, h, event, body) =>
+  post(base, `/hook/${event}?token=${encodeURIComponent(h.hookToken)}`, body)
 
 export const done = h => { h.server.close(); rmSync(h.dir, { recursive: true, force: true }) }
 

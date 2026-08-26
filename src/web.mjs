@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join, extname } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, timingSafeEqual } from 'node:crypto'
 import { parseUsageLine, sumUsage, cacheRatio } from './ledger.mjs'
 import { mayApprove, isAgent } from './identity.mjs'
 import { fanOut } from './fanout.mjs'
@@ -9,18 +9,65 @@ import { buildSeed } from './seed.mjs'
 import { LOCAL_DEST } from './queue.mjs'
 import { renderUI } from './ui.mjs'
 
+// A JSON request body is a chat message, a verdict, or a hook payload — none
+// of which is ever close to this. Uploads get their own, larger, limit.
+const MAX_BODY = 1 * 1024 * 1024
+const MAX_UPLOAD = 25 * 1024 * 1024
+
 const json = (res, code, body) => {
   const s = JSON.stringify(body)
   res.writeHead(code, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(s) })
   res.end(s)
 }
 
-const readBody = req =>
+/**
+ * Where a hook may present the room's hook token. A header keeps it out of
+ * access logs; the query string is there because Claude Code's `type: "http"`
+ * hooks send a fixed body shape and a configured URL is the only place a
+ * static settings file can put a secret.
+ */
+const hookTokenFrom = (req, url, body) =>
+  req.headers['x-room-hook-token'] ?? url.searchParams.get('token') ?? body?.room_hook_token ?? ''
+
+/** Constant-time, so a wrong token leaks neither its length nor its prefix. */
+function sameSecret(a, b) {
+  const x = Buffer.from(String(a ?? ''))
+  const y = Buffer.from(String(b ?? ''))
+  return x.length > 0 && x.length === y.length && timingSafeEqual(x, y)
+}
+
+/**
+ * Read a request body, refusing anything over `limit`.
+ *
+ * Every POST was buffered whole with no cap, so one request could exhaust the
+ * room's memory — and /hook/* took no authentication, which made that reachable
+ * by anyone who could open a socket. Destroying the socket rather than draining
+ * it means an attacker cannot make the room hold the bytes it is rejecting.
+ *
+ * @returns {Promise<{buf:Buffer, tooLarge:boolean}>}
+ */
+const readBody = (req, limit = MAX_BODY) =>
   new Promise(resolve => {
     const chunks = []
-    req.on('data', c => chunks.push(c))
-    req.on('end', () => resolve(Buffer.concat(chunks)))
-    req.on('error', () => resolve(Buffer.alloc(0)))
+    let size = 0
+    let settled = false
+    const finish = out => {
+      if (settled) return
+      settled = true
+      resolve(out)
+    }
+    req.on('data', c => {
+      size += c.length
+      if (size > limit) {
+        finish({ buf: Buffer.alloc(0), tooLarge: true })
+        req.destroy()
+        return
+      }
+      chunks.push(c)
+    })
+    req.on('end', () => finish({ buf: Buffer.concat(chunks), tooLarge: false }))
+    req.on('error', () => finish({ buf: Buffer.alloc(0), tooLarge: false }))
+    req.on('aborted', () => finish({ buf: Buffer.alloc(0), tooLarge: false }))
   })
 
 export function createWeb(deps) {
@@ -32,10 +79,27 @@ export function createWeb(deps) {
   // Address seen per member, so a ban can cover the device as well as the name.
   // On a tailnet these are stable per machine. Held in `runtime` rather than
   // locally because the admin layer needs to read it when issuing a ban.
-  const addrOf = req =>
-    String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim() ||
-    req.socket?.remoteAddress ||
-    ''
+  //
+  // The socket address is the only one anybody can be held to. X-Forwarded-For
+  // is a request header — the client writes it — so trusting it unconditionally
+  // made address bans a formality: a banned device sets the header and walks
+  // back in, and `lastAddrOf` (what `ban --address` reaches for) becomes
+  // whatever the sender chose to claim.
+  //
+  // It is honoured only when ROOM_TRUST_PROXY says a proxy really is in front,
+  // and then only from the socket peer, which is the proxy itself. Rightmost
+  // entry rather than leftmost: everything to the left was appended by
+  // upstream hops and is client-supplied, while the last one was written by
+  // the proxy we are choosing to trust.
+  const addrOf = req => {
+    const socketAddr = req.socket?.remoteAddress ?? ''
+    if (!config.trustProxy) return socketAddr
+    const xff = String(req.headers['x-forwarded-for'] ?? '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean)
+    return xff.length ? xff[xff.length - 1] : socketAddr
+  }
   const uploadDir = join(config.stateDir, 'uploads')
   mkdirSync(uploadDir, { recursive: true })
 
@@ -162,6 +226,11 @@ export function createWeb(deps) {
   const slimTurn = t => ({
     id: t.id, promptId: t.promptId, msgIds: t.msgIds, preview: t.preview,
     startedAt: t.startedAt, endedAt: t.endedAt,
+    // Which destination ran this turn — the local channel or a named seat.
+    // Without it a browser watching a room with several live seats cannot tell
+    // whose turn any of them is, and the Agents panel cannot show a seat as
+    // working. Cheap, and the browser already has everything else it needs.
+    dest: t.dest ?? LOCAL_DEST,
     activityCount: t.activity.length, replyCount: t.replies.length,
     usage: t.usage, ratio: t.ratio,
   })
@@ -203,7 +272,10 @@ export function createWeb(deps) {
 
   function emitActivity(evt, promptId, dest = LOCAL_DEST) {
     const turn = turns.activity(evt, promptId, dest)
-    bus.publish('activity', { ...evt, turnId: turn?.id ?? null })
+    // `dest` travels with the event for the same reason it travels on a turn:
+    // in a room with several live seats, "Read src/billing.ts" means nothing
+    // unless you can tell which agent ran it.
+    bus.publish('activity', { ...evt, dest, turnId: turn?.id ?? null })
   }
 
   // `ctx.dest` scopes this whole pipeline to one destination's turn, so seat
@@ -335,7 +407,9 @@ export function createWeb(deps) {
       if (req.method === 'POST' && path === '/msg') {
         let body = {}
         try {
-          body = JSON.parse((await readBody(req)).toString('utf8') || '{}')
+          const read = await readBody(req)
+          if (read.tooLarge) return json(res, 413, { error: 'body too large' })
+          body = JSON.parse(read.buf.toString('utf8') || '{}')
         } catch {
           return json(res, 400, { error: 'bad json' })
         }
@@ -360,7 +434,9 @@ export function createWeb(deps) {
       if (req.method === 'POST' && path === '/upload') {
         const member = memberFrom(req, url, null)
         if (!member) return json(res, 401, { error: 'bad token' })
-        const buf = await readBody(req)
+        const read = await readBody(req, MAX_UPLOAD)
+        if (read.tooLarge) return json(res, 413, { error: 'upload too large' })
+        const buf = read.buf
         const name = String(url.searchParams.get('name') ?? 'upload.bin')
         // Never trust the client filename for a path; keep only a short extension.
         const ext = extname(name).slice(0, 12).replace(/[^.A-Za-z0-9]/g, '')
@@ -379,7 +455,9 @@ export function createWeb(deps) {
       if (req.method === 'POST' && path.startsWith('/api/admin/')) {
         let body = {}
         try {
-          body = JSON.parse((await readBody(req)).toString('utf8') || '{}')
+          const read = await readBody(req)
+          if (read.tooLarge) return json(res, 413, { error: 'body too large' })
+          body = JSON.parse(read.buf.toString('utf8') || '{}')
         } catch {
           return json(res, 400, { ok: false, reason: 'bad-json' })
         }
@@ -414,7 +492,9 @@ export function createWeb(deps) {
       if (req.method === 'POST' && path === '/verdict') {
         let body = {}
         try {
-          body = JSON.parse((await readBody(req)).toString('utf8') || '{}')
+          const read = await readBody(req)
+          if (read.tooLarge) return json(res, 413, { error: 'body too large' })
+          body = JSON.parse(read.buf.toString('utf8') || '{}')
         } catch {
           return json(res, 400, { error: 'bad json' })
         }
@@ -449,7 +529,9 @@ export function createWeb(deps) {
       if (req.method === 'POST' && path === '/seat/join') {
         let body = {}
         try {
-          body = JSON.parse((await readBody(req)).toString('utf8') || '{}')
+          const read = await readBody(req)
+          if (read.tooLarge) return json(res, 413, { error: 'body too large' })
+          body = JSON.parse(read.buf.toString('utf8') || '{}')
         } catch {
           return json(res, 400, { error: 'bad json' })
         }
@@ -521,7 +603,9 @@ export function createWeb(deps) {
       if (req.method === 'POST' && path === '/seat/reply') {
         let body = {}
         try {
-          body = JSON.parse((await readBody(req)).toString('utf8') || '{}')
+          const read = await readBody(req)
+          if (read.tooLarge) return json(res, 413, { error: 'body too large' })
+          body = JSON.parse(read.buf.toString('utf8') || '{}')
         } catch {
           return json(res, 400, { error: 'bad json' })
         }
@@ -562,7 +646,9 @@ export function createWeb(deps) {
         const event = path.slice('/seat/hook/'.length)
         let payload = {}
         try {
-          payload = JSON.parse((await readBody(req)).toString('utf8') || '{}')
+          const read = await readBody(req)
+          if (read.tooLarge) return json(res, 413, { error: 'body too large' })
+          payload = JSON.parse(read.buf.toString('utf8') || '{}')
         } catch {
           payload = {}
         }
@@ -591,10 +677,30 @@ export function createWeb(deps) {
         const event = path.slice('/hook/'.length)
         let payload = {}
         try {
-          payload = JSON.parse((await readBody(req)).toString('utf8') || '{}')
+          const read = await readBody(req)
+          if (read.tooLarge) return json(res, 413, { error: 'body too large' })
+          payload = JSON.parse(read.buf.toString('utf8') || '{}')
         } catch {
           payload = {}
         }
+
+        // Authenticated like every other route. This one was not, and the
+        // exception was load-bearing in the worst way: Stop ends the host's
+        // in-flight turn, records ledger usage read from a caller-supplied
+        // transcript_path, and PreToolUse broadcasts arbitrary tool activity
+        // to every browser. Unauthenticated, anyone who could reach the port
+        // could stall the room indefinitely, forge costs, and fake what the
+        // agent appeared to be doing — while web.mjs's own rule is to gate on
+        // member identity, never on who can reach the port.
+        //
+        // Claude Code's hooks are configured statically and carry no member
+        // token, which is why this was open. The room now mints its own hook
+        // token and writes the settings file that quotes it, so the hooks
+        // authenticate as the room rather than as nobody.
+        if (!config.hookToken || !sameSecret(hookTokenFrom(req, url, payload), config.hookToken)) {
+          return json(res, 401, { error: 'bad hook token' })
+        }
+
         try {
           handleHook(event, payload)
         } catch {

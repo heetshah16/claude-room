@@ -35,6 +35,7 @@ export function buildNotification(messages, roomName) {
     : messages.map(m => `[${m.name}] ${m.content}`).join('\n')
 
   const first = messages[0]
+  const attachments = messages.map(m => m.attachment?.path).filter(Boolean)
   const meta = sanitizeMeta({
     room: roomName,
     user: single ? first.name : messages.map(m => m.name).join(','),
@@ -42,7 +43,10 @@ export function buildNotification(messages, roomName) {
     msg_id: messages.map(m => m.id).join(','),
     batch: messages.length,
     ts: new Date().toISOString(),
-    ...(first.attachment ? { file_path: first.attachment.path } : {}),
+    // Every attachment in the batch, not just the first message's. Reading
+    // only messages[0] silently dropped a file whenever someone else uploaded
+    // while the agent was busy — the batch is exactly when that happens.
+    ...(attachments.length ? { file_path: attachments.join(',') } : {}),
   })
 
   return { method: 'notifications/claude/channel', params: { content, meta } }

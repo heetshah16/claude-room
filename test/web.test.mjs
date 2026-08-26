@@ -17,7 +17,9 @@ import { TurnLog } from '../src/turns.mjs'
 
 function harness(env = {}, observer = null) {
   const dir = mkdtempSync(join(tmpdir(), 'roomweb-'))
-  const config = loadConfig({ ROOM_STATE_DIR: dir, ...env })
+  // /hook/* is authenticated like every other route; a known token here lets
+  // these tests drive it the way the generated settings file drives it.
+  const config = loadConfig({ ROOM_STATE_DIR: dir, ROOM_HOOK_TOKEN: 'test-hook-token', ...env })
   const turns = new TurnLog()
   const order = []
   const briefs = []
@@ -62,9 +64,13 @@ function harness(env = {}, observer = null) {
   })
   return {
     dir, server, owner, viewer, sent, verdicts, queue, ledger, permissions, turns, config,
-    order, briefs, noted, bans, admin, registry,
+    order, briefs, noted, bans, admin, registry, hookToken: config.hookToken,
   }
 }
+
+/** POST to /hook/*, carrying the room's hook token the way a real hook does. */
+const postHook = (base, h, event, body) =>
+  post(base, `/hook/${event}?token=${encodeURIComponent(h.hookToken)}`, body)
 
 const listen = server =>
   new Promise(r => server.listen(0, '127.0.0.1', () => r(`http://127.0.0.1:${server.address().port}`)))
@@ -126,7 +132,7 @@ test('a Stop hook records usage against the turn participants and drains the que
     message: { usage: { input_tokens: 1, output_tokens: 40, cache_read_input_tokens: 900, cache_creation_input_tokens: 0 } },
   }) + '\n')
 
-  await post(base, '/hook/Stop', { hook_event_name: 'Stop', prompt_id: 'p1', transcript_path: tp })
+  await postHook(base, h, 'Stop', { hook_event_name: 'Stop', prompt_id: 'p1', transcript_path: tp })
   assert.equal(h.ledger.totalsFor(h.owner.id).output, 40)
   // The queued second message became the next turn.
   assert.equal(h.sent.length, 2)
@@ -135,7 +141,10 @@ test('a Stop hook records usage against the turn participants and drains the que
 
 test('hook ingest always answers 200 so a hook never blocks a turn', async () => {
   const h = harness(); const base = await listen(h.server)
-  const res = await fetch(base + '/hook/PostToolUse', { method: 'POST', body: 'not json at all' })
+  const res = await fetch(
+    `${base}/hook/PostToolUse?token=${encodeURIComponent(h.hookToken)}`,
+    { method: 'POST', body: 'not json at all' },
+  )
   assert.equal(res.status, 200)
   done(h)
 })
@@ -143,7 +152,7 @@ test('hook ingest always answers 200 so a hook never blocks a turn', async () =>
 test('a Stop hook with an unreadable transcript still ends the turn', async () => {
   const h = harness(); const base = await listen(h.server)
   await post(base, '/msg', { token: h.owner.token, text: '@claude go' })
-  await post(base, '/hook/Stop', { prompt_id: 'p9', transcript_path: '/no/such/file' })
+  await postHook(base, h, 'Stop', { prompt_id: 'p9', transcript_path: '/no/such/file' })
   assert.equal(h.queue.busy(), false)
   done(h)
 })
@@ -329,8 +338,8 @@ test('a turn records the tool calls that ran during it, tied to its message', as
   const sent = await (await post(base, '/msg', { token: h.owner.token, text: '@claude find the TTL' })).json()
   assert.equal(sent.addressed, true)
 
-  await post(base, '/hook/PreToolUse', { prompt_id: 'p1', tool_name: 'Read', tool_input: { file_path: 'src/auth.js' } })
-  await post(base, '/hook/PostToolUse', { prompt_id: 'p1', tool_name: 'Read' })
+  await postHook(base, h, 'PreToolUse', { prompt_id: 'p1', tool_name: 'Read', tool_input: { file_path: 'src/auth.js' } })
+  await postHook(base, h, 'PostToolUse', { prompt_id: 'p1', tool_name: 'Read' })
 
   const state = await (await fetch(base + '/api/state?token=' + h.owner.token)).json()
   assert.equal(state.turns.length, 1)
@@ -362,7 +371,7 @@ test('closing a turn stamps usage and cache ratio onto it', async () => {
     type: 'assistant',
     message: { usage: { input_tokens: 2, output_tokens: 50, cache_read_input_tokens: 998, cache_creation_input_tokens: 0 } },
   }) + '\n')
-  await post(base, '/hook/Stop', { prompt_id: 'p1', transcript_path: tp })
+  await postHook(base, h, 'Stop', { prompt_id: 'p1', transcript_path: tp })
 
   const state = await (await fetch(base + '/api/state?token=' + h.owner.token)).json()
   assert.equal(state.turns[0].usage.output, 50)
@@ -418,8 +427,8 @@ test('a closed turn is fed to the observer with its tools and reply', async () =
   const h = harness({}, { brief: () => ({ text: '', ageS: 0, pending: 0 }) })
   const base = await listen(h.server)
   await post(base, '/msg', { token: h.owner.token, text: '@claude find the TTL' })
-  await post(base, '/hook/PreToolUse', { prompt_id: 'p1', tool_name: 'Grep', tool_input: { pattern: 'TTL' } })
-  await post(base, '/hook/Stop', { prompt_id: 'p1', transcript_path: '/nope' })
+  await postHook(base, h, 'PreToolUse', { prompt_id: 'p1', tool_name: 'Grep', tool_input: { pattern: 'TTL' } })
+  await postHook(base, h, 'Stop', { prompt_id: 'p1', transcript_path: '/nope' })
 
   const turnEvt = h.noted.find(n => n.kind === 'turn')
   assert.ok(turnEvt, 'expected a turn event')

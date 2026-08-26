@@ -19,9 +19,10 @@
  * <token> comes from `room-admin seat add <name> --owner <member>`.
  */
 import { spawn, execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import { HOOK_EVENTS } from '../src/state.mjs'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -38,16 +39,37 @@ export function worktreeFor(repo, handle) {
 }
 
 /**
+ * The hooks settings a seat runs with, pointed at its own /seat/hook/* routes
+ * and carrying its own seat token.
+ *
+ * Without this a seat has NO hooks at all: its CLAUDE_CONFIG_DIR is fresh, so
+ * there is no settings.json in it, and nothing else supplies one. That meant
+ * Stop never fired, so `queue.endTurn` was never called for the seat's
+ * destination — the seat answered exactly one message and then stayed busy
+ * forever, with every later message queued behind it and never drained. Tests
+ * missed it because they post /seat/hook/Stop by hand, which is precisely the
+ * thing production never did.
+ */
+export function seatHookSettings({ roomUrl, token }) {
+  const hooks = {}
+  for (const [event, timeout] of Object.entries(HOOK_EVENTS)) {
+    const url = `${roomUrl}/seat/hook/${event}?token=${encodeURIComponent(token)}`
+    hooks[event] = [{ hooks: [{ type: 'http', url, timeout }] }]
+  }
+  return { hooks }
+}
+
+/**
  * Builds the spawn recipe for one seat: real `claude`, pointed at its own
  * config dir and its own worktree, with the seat bridge loaded as an MCP
- * server. Pure and injection-testable — nothing here touches the filesystem
- * or a child process.
+ * server and its own hooks settings. Pure and injection-testable — nothing
+ * here touches the filesystem or a child process.
  *
  * Deliberately never sets ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN: doing so
  * would let this script authenticate the session instead of the person, which
  * is exactly the shortcut this whole design exists to avoid.
  */
-export function seatArgs({ configDir, roomUrl, token, handle, repo }) {
+export function seatArgs({ configDir, roomUrl, token, handle, repo, settingsPath }) {
   const worktree = worktreeFor(repo, handle)
   const mcpConfig = JSON.stringify({
     mcpServers: { seat: { command: 'node', args: [SEAT_BRIDGE] } },
@@ -65,6 +87,9 @@ export function seatArgs({ configDir, roomUrl, token, handle, repo }) {
     args: [
       '--dangerously-load-development-channels',
       '--mcp-config', mcpConfig,
+      // Without --settings the seat fires no hooks, so its turns never close
+      // and its destination wedges after the first message.
+      '--settings', settingsPath,
       '--add-dir', worktree,
     ],
     env: {
@@ -111,7 +136,15 @@ async function main() {
   const roomUrl = flag('--room') || process.env.ROOM_URL || 'http://127.0.0.1:8787'
 
   const worktree = ensureWorktree(repo, handle)
-  const { cmd, args, env } = seatArgs({ configDir, roomUrl, token, handle, repo })
+
+  // The seat's hooks live beside its credentials, in its own config dir, so
+  // two seats on one machine never share a settings file — and so the seat
+  // token in it is no more exposed than the login already in that directory.
+  mkdirSync(configDir, { recursive: true })
+  const settingsPath = join(configDir, 'settings.hooks.json')
+  writeFileSync(settingsPath, JSON.stringify(seatHookSettings({ roomUrl, token }), null, 2))
+
+  const { cmd, args, env } = seatArgs({ configDir, roomUrl, token, handle, repo, settingsPath })
 
   console.error(`launching seat "${handle}" — config: ${configDir}  worktree: ${worktree}`)
   console.error('first run will prompt /login for this seat\'s own account.')

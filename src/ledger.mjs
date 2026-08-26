@@ -62,11 +62,25 @@ export function attribute(usage, participants, mode = 'equal') {
   for (const p of participants) {
     const share = useWeights ? n(p.weight) / totalWeight : 1 / participants.length
     const slice = ZERO()
-    for (const k of Object.keys(slice)) slice[k] = n(usage[k]) * share
+    // Tokens are whole things. Multiplying by 1/3 gave totals like
+    // 1266.6666666666667, which then accumulated float error across every
+    // turn and rendered as noise in the UI. Rounding each slice can lose a
+    // token or two against the true total; that is the right trade for a
+    // fairness display, and the per-turn `usage` above stays exact.
+    for (const k of Object.keys(slice)) slice[k] = Math.round(n(usage[k]) * share)
     out[p.memberId] = slice
   }
   return out
 }
+
+/**
+ * How many per-turn records to keep, and how many promptIds to remember for
+ * idempotency. Totals are cumulative and never dropped — only the itemised
+ * history is trimmed. Unbounded, these grew for the life of the room and were
+ * rewritten to disk in full on every single turn, so cost was O(turns so far)
+ * per turn.
+ */
+const MAX_TURNS = 1000
 
 export class Ledger {
   #turns = []
@@ -85,11 +99,18 @@ export class Ledger {
     }
     const turn = { promptId, usage, participants, split, ratio: cacheRatio(usage), ts: Date.now() }
     this.#turns.push(turn)
+    // Trim in step so the two never diverge: dropping a turn whose promptId is
+    // still in #seen would keep the set growing forever anyway.
+    if (this.#turns.length > MAX_TURNS) {
+      const dropped = this.#turns.splice(0, this.#turns.length - MAX_TURNS)
+      for (const d of dropped) if (d.promptId) this.#seen.delete(d.promptId)
+    }
     return turn
   }
 
+  /** A copy: handing out the live object lets any caller silently rewrite the ledger. */
   totalsFor(memberId) {
-    return this.#totals.get(memberId) ?? ZERO()
+    return { ...ZERO(), ...(this.#totals.get(memberId) ?? {}) }
   }
 
   turns() {
@@ -102,7 +123,7 @@ export class Ledger {
 
   static fromJSON(o = {}) {
     const l = new Ledger()
-    for (const t of o.turns ?? []) {
+    for (const t of (o.turns ?? []).slice(-MAX_TURNS)) {
       l.#turns.push(t)
       if (t.promptId) l.#seen.add(t.promptId)
     }

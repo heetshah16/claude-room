@@ -52,6 +52,17 @@ export function loadConfig(env = process.env) {
       .map(h => h.trim().replace(/^@/, '').toLowerCase())
       .filter(Boolean),
     paused: bool(env.ROOM_PAUSED),
+    // Authenticates POST /hook/*. Normally minted and persisted by server.mjs
+    // rather than configured, since it is a secret rather than a setting; the
+    // env var exists so a test (or an operator pinning a settings file) can
+    // supply a known one. Empty here means "no hooks may be accepted", which
+    // is the safe default for anything that forgets to set it.
+    hookToken: env.ROOM_HOOK_TOKEN || '',
+    // Whether to believe X-Forwarded-For. Off by default: the header is
+    // client-written, and believing it makes an address ban trivially evaded.
+    // Turn it on only when a reverse proxy really does sit in front, and
+    // expect the tailnet case (the normal one) to leave it off.
+    trustProxy: bool(env.ROOM_TRUST_PROXY),
     // How often to write a comment frame to every open SSE stream. Comfortably
     // under undici's 300s response-body timeout, which is what actually cut
     // idle seat feeds, and under the 60s idle cut common in reverse proxies.

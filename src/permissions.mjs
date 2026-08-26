@@ -20,11 +20,22 @@ export class PermissionBroker {
     this.now = now
   }
 
+  /**
+   * seatHandle names which agent seat's session raised the prompt (null for
+   * the single local session), so an approver — and, once wired end to end,
+   * the verdict itself — can tell which of several live agents is actually
+   * asking before allowing a tool call.
+   *
+   * @returns {object|null} the entry, or null if the id is not one Claude Code
+   * would have issued. The docstring on this class has always claimed two
+   * gates — "the request id must be one Claude Code issued" and the approver
+   * must hold authority — but only the second was ever implemented; REQUEST_ID
+   * was exported and unit-tested and never called. An id of an unexpected
+   * shape means something other than a channel permission prompt reached this,
+   * which is the moment to stop rather than to open an approvable request.
+   */
   open(req, seatHandle = null) {
-    // seatHandle names which agent seat's session raised the prompt (null for
-    // the single local session), so an approver — and, once wired end to
-    // end, the verdict itself — can tell which of several live agents is
-    // actually asking before allowing a tool call.
+    if (!REQUEST_ID.test(String(req?.request_id ?? ''))) return null
     const entry = { ...req, seat: seatHandle, openedAt: this.now() }
     this.#open.set(req.request_id, entry)
     return entry

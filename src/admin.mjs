@@ -1,4 +1,4 @@
-import { createMember, createAgentMember, ROLES, mayApprove, isAgent, ADDRESS_POLICIES, addressPolicyOf } from './identity.mjs'
+import { createMember, createAgentMember, ROLES, mayApprove, isAgent, ADDRESS_POLICIES, addressPolicyOf, validName, validHandle, normalizeHandle } from './identity.mjs'
 import { DEFAULT_HANDLES } from './router.mjs'
 
 /**
@@ -73,6 +73,9 @@ export function createAdmin({ registry, bans, store, bus, config, queue, runtime
     invite({ name, role = 'member', canApprove = false, payerRef, kind, handle, ownerId }) {
       const clean = String(name ?? '').trim()
       if (!clean) return no('name-required')
+      // A name is rendered to the model as `[name] text` in a batched turn, so
+      // one carrying a bracket or a newline can forge a line from someone else.
+      if (!validName(clean)) return no('bad-name')
       if (registry.byName(clean)) return no('name-taken')
       if (bans.isBanned({ name: clean })) return no('name-banned')
 
@@ -83,8 +86,10 @@ export function createAdmin({ registry, bans, store, bus, config, queue, runtime
       // agents sharing a handle would otherwise both be created successfully,
       // and byHandle would silently return whichever comes first.
       if (kind === 'agent') {
-        const h = String(handle ?? '').replace(/^@/, '').toLowerCase()
+        const h = normalizeHandle(handle)
         if (!h) return no('handle-required')
+        // A handle that cannot be mentioned is a seat nobody can address.
+        if (!validHandle(h)) return no('bad-handle')
         if (registry.byHandle(h)) return no('handle-taken')
         if (!ownerId || !registry.byId(ownerId)) return no('bad-owner')
 

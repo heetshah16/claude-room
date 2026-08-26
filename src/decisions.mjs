@@ -16,6 +16,9 @@ export function extractTags(text) {
 const escape = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const hasNegator = t => NEGATORS.some(neg => new RegExp(`\\b${escape(neg)}\\b`, 'i').test(t))
 
+// Open decisions are never dropped; this only bounds the superseded history.
+const MAX_DECISIONS = 500
+
 export class Decisions {
   #items = []
 
@@ -33,6 +36,15 @@ export class Decisions {
       if (prev) prev.supersededBy = d.id
     }
     this.#items.push(d)
+    // Superseded decisions are history, not state: `open()` filters them out
+    // and `conflicts()` never consults them, but they were kept forever and
+    // rewritten to disk on every decision. Trim the oldest closed ones only —
+    // an open decision is live and must never be dropped.
+    if (this.#items.length > MAX_DECISIONS) {
+      const closed = this.#items.filter(x => x.supersededBy !== null)
+      const drop = new Set(closed.slice(0, this.#items.length - MAX_DECISIONS))
+      if (drop.size) this.#items = this.#items.filter(x => !drop.has(x))
+    }
     return d
   }
 
