@@ -63,7 +63,7 @@ const runtime = {
   lastAddrOf: id => addrs.get(id) ?? null,
 }
 
-const admin = createAdmin({ registry, bans, store, bus, config, queue, runtime })
+const admin = createAdmin({ registry, bans, store, bus, config, queue, runtime, seats })
 
 // Rotation needs Console API keys. Verified 2026-08-22: a subscription OAuth
 // access token supplied through apiKeyHelper does not authenticate, and the
@@ -102,7 +102,13 @@ if (config.permissionRelay) {
     permissions.open(params)
     bus.publish('approval-request', params)
   })
-  log('permission relay is ON — approvers in the room can allow tool calls')
+  // Scoped deliberately: only the local session's prompts reach the room.
+  // A seat's Claude Code still approves its own tool calls in its own
+  // terminal, because seat.mjs does not intercept permission prompts. Saying
+  // "approvers in the room can allow tool calls" unqualified would promise
+  // cover over every seat, which is not true.
+  log('permission relay is ON for the local session — approvers in the room can allow its tool calls')
+  log('           seats approve their own tool calls in their own terminal')
 }
 
 // Sweep prompts nobody answered, so the approvals panel cannot grow forever.

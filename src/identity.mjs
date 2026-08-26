@@ -45,6 +45,23 @@ export function createAgentMember({ name, handle, ownerId }) {
 
 export const isAgent = m => m?.kind === 'agent'
 
+/** How a seat decides who may address it. */
+export const ADDRESS_POLICIES = ['owner-only', 'shared']
+
+/**
+ * A seat's addressing policy, defaulting to `owner-only`.
+ *
+ * `owner-only` is the safe default because a seat is somebody's personal
+ * Anthropic account: opening it up spends their subscription on another
+ * person's request. `shared` exists for the case where that is not true — a
+ * seat running on a team or service account that the room is meant to share.
+ *
+ * Anything unrecognised (including a value from an older state file) falls
+ * back to `owner-only`: a policy that fails open would be the wrong way round.
+ */
+export const addressPolicyOf = agent =>
+  ADDRESS_POLICIES.includes(agent?.addressPolicy) ? agent.addressPolicy : 'owner-only'
+
 /**
  * Whether `sender` may address `agent`.
  *

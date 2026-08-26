@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { classify } from './router.mjs'
-import { ownsSeat } from './identity.mjs'
+import { ownsSeat, addressPolicyOf } from './identity.mjs'
 
 const INFLIGHT = '__inflight__'
 
@@ -106,13 +106,25 @@ export class Queue {
     const paused = opts.paused ?? this.config.paused
     if (paused) return { ok: false, reason: 'paused', message: null, conflicts: [] }
 
-    // A handle that resolves to an agent seat is a different person's Anthropic
-    // account — only its owner may address it, and only while it is listening.
-    // No agent match (single-session rooms, or `registry`/`seats` not wired up)
-    // leaves behaviour exactly as it was before seats existed.
+    // Who may address what.
+    //
+    // The local channel is `shared`: it is the host's own session, and several
+    // humans driving one shared session is the entire premise of the room, so
+    // anyone who may address at all may address it. An agent seat is
+    // `owner-only`: it is a different person's Anthropic account, and letting
+    // the room reach it would spend someone else's subscription on someone
+    // else's request.
+    //
+    // Both defaults are what the room has always done; naming them makes the
+    // asymmetry a decision rather than an accident, and lets a seat on a
+    // genuinely shared account opt into `shared` per seat.
     const agent = this.registry?.byHandle(c.handle)
     if (agent) {
-      if (!ownsSeat(member, agent)) return { ok: false, reason: 'not-your-seat', message: null, conflicts: [] }
+      if (addressPolicyOf(agent) === 'owner-only' && !ownsSeat(member, agent)) {
+        return { ok: false, reason: 'not-your-seat', message: null, conflicts: [] }
+      }
+      // Liveness is not a policy question: an offline seat cannot be addressed
+      // by anyone, however permissive its policy.
       if (!this.seats?.isOnline(c.handle)) return { ok: false, reason: 'seat-offline', message: null, conflicts: [] }
     }
 

@@ -1,4 +1,4 @@
-import { createMember, createAgentMember, ROLES, mayApprove, isAgent } from './identity.mjs'
+import { createMember, createAgentMember, ROLES, mayApprove, isAgent, ADDRESS_POLICIES, addressPolicyOf } from './identity.mjs'
 import { DEFAULT_HANDLES } from './router.mjs'
 
 /**
@@ -32,12 +32,32 @@ function isUnbannableAddr(addr, registry, runtime) {
 const publicMember = m => ({
   id: m.id, name: m.name, role: m.role, canApprove: mayApprove(m), muted: !!m.muted,
   hasPayer: !!m.payerRef,
-  ...(isAgent(m) ? { kind: 'agent', handle: m.handle, ownerId: m.ownerId } : {}),
+  // addressPolicy is surfaced resolved, never raw: a seat from an older state
+  // file has no such field, and the roster must show what will actually be
+  // enforced rather than undefined.
+  ...(isAgent(m)
+    ? { kind: 'agent', handle: m.handle, ownerId: m.ownerId, addressPolicy: addressPolicyOf(m) }
+    : {}),
 })
 
-export function createAdmin({ registry, bans, store, bus, config, queue, runtime }) {
+export function createAdmin({ registry, bans, store, bus, config, queue, runtime, seats }) {
   const persistMembers = () => store.saveRegistry(registry)
   const persistBans = () => store.saveBans(bans)
+
+  /**
+   * Cut every live stream belonging to a member — browser and seat alike.
+   *
+   * `bus.disconnect` only knows about browser streams; a seat's connection
+   * lives in Seats. Every path that revokes access has to do both, or the
+   * member is only half removed: their token stops working for new requests
+   * while the socket they already hold keeps streaming the conversation.
+   * `seats` is optional so a single-session room, which has none, is
+   * unaffected.
+   */
+  const cutOff = memberId => {
+    bus.disconnect(memberId)
+    seats?.evict?.(memberId)
+  }
 
   const announce = (event, data) => bus.publish(event, data)
 
@@ -89,7 +109,7 @@ export function createAdmin({ registry, bans, store, bus, config, queue, runtime
 
       registry.revoke(m.id)
       persistMembers()
-      bus.disconnect(m.id)          // drop their live stream immediately
+      cutOff(m.id)                  // drop every live stream: browser and seat
       rosterChanged()
       announce('admin', { action: 'remove', name: m.name })
       return ok({ removed: publicMember(m) })
@@ -119,7 +139,7 @@ export function createAdmin({ registry, bans, store, bus, config, queue, runtime
       if (m) {
         registry.revoke(m.id)
         persistMembers()
-        bus.disconnect(m.id)
+        cutOff(m.id)
       }
       rosterChanged()
       announce('admin', { action: 'ban', name: entry.name })
@@ -170,12 +190,32 @@ export function createAdmin({ registry, bans, store, bus, config, queue, runtime
       return ok({ member: publicMember(m) })
     },
 
+    /**
+     * Who may address a seat: `owner-only` (the default) or `shared`.
+     *
+     * Only meaningful for an agent seat — the local channel is shared by
+     * definition, since several humans driving one session is what the room
+     * is for. Opening a seat to the room means anyone can spend its owner's
+     * Anthropic subscription, so this is deliberately an explicit act.
+     */
+    addressPolicy({ memberId, policy }) {
+      const m = registry.byId(memberId)
+      if (!m) return no('no-such-member')
+      if (!isAgent(m)) return no('not-an-agent')
+      if (!ADDRESS_POLICIES.includes(policy)) return no('bad-policy')
+      m.addressPolicy = policy
+      persistMembers()
+      rosterChanged()
+      announce('admin', { action: 'address-policy', name: m.name, policy })
+      return ok({ member: publicMember(m) })
+    },
+
     /** New token, old one dead on the next request. Use when a link leaks. */
     rotate({ memberId }) {
       const m = registry.rotate(memberId)
       if (!m) return no('no-such-member')
       persistMembers()
-      bus.disconnect(m.id)
+      cutOff(m.id)
       return ok({ member: publicMember(m), token: m.token, joinUrl: runtime.joinUrl(m.token) })
     },
 

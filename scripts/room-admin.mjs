@@ -22,6 +22,7 @@
  *   room-admin clear-queue
  *   room-admin budget [--tokens N] [--messages N]
  *   room-admin seat add <name> --owner <member> [--handle <handle>]
+ *   room-admin seat policy <name> <owner-only|shared>
  */
 import { loadConfig } from '../src/config.mjs'
 
@@ -86,6 +87,11 @@ function printMembers(s) {
       m.canApprove ? 'approver' : null,
       m.muted ? 'MUTED' : null,
       m.hasPayer ? 'payer' : null,
+      // A seat's handle is how anyone addresses it, and its policy decides
+      // whose account gets spent — both belong in the roster, not just in the
+      // output of the command that happened to create it.
+      m.kind === 'agent' ? `@${m.handle}` : null,
+      m.kind === 'agent' && m.addressPolicy === 'shared' ? 'SHARED' : null,
     ].filter(Boolean).join(' ')
     console.log(`${m.name.padEnd(14)} ${tags.padEnd(28)} ${m.joinUrl}`)
   }
@@ -197,14 +203,32 @@ switch (cmd) {
     break
   }
   case 'seat': {
-    if (argv[1] !== 'add') die('usage: room-admin seat add <name> --owner <member> [--handle <handle>]')
+    const SEAT_USAGE =
+      'usage: room-admin seat add <name> --owner <member> [--handle <handle>]\n' +
+      '       room-admin seat policy <name> <owner-only|shared>'
+
+    if (argv[1] === 'policy') {
+      const m = await resolve(argv[2])
+      const policy = argv[3]
+      if (!policy) die(SEAT_USAGE)
+      await call('/api/admin/addressPolicy', { memberId: m.id, policy })
+      console.log(
+        policy === 'shared'
+          ? `@${m.handle ?? m.name} is now SHARED — anyone in the room can address it, spending its owner's account`
+          : `@${m.handle ?? m.name} is now owner-only`,
+      )
+      break
+    }
+
+    if (argv[1] !== 'add') die(SEAT_USAGE)
     const name = argv[2]
     const ownerName = flag('--owner')
-    if (!name || !ownerName) die('usage: room-admin seat add <name> --owner <member> [--handle <handle>]')
+    if (!name || !ownerName) die(SEAT_USAGE)
     const owner = await resolve(ownerName)
     const handle = (flag('--handle') || name).replace(/^@/, '')
     const r = await call('/api/admin/invite', { name, kind: 'agent', handle, ownerId: owner.id })
     console.log(`seat added: ${name} (@${handle}), owned by ${owner.name}`)
+    console.log(`only ${owner.name} can address it (seat policy owner-only)`)
     console.log(`run: node scripts/room-seat.mjs ${handle} --token ${r.token} --repo <path-to-repo>`)
     break
   }

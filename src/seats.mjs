@@ -107,6 +107,36 @@ export class Seats {
   }
 
   /**
+   * Ends the feeds of every seat belonging to a member: the agent member
+   * itself, and any seat that member owns. Returns how many were ended.
+   *
+   * This is the seat half of `Bus.disconnect`. A seat's connection lives here
+   * rather than on the bus, so revoking, banning, or re-tokening someone left
+   * their seat streaming the room — deliverToSeats writes to `conn` directly
+   * and never re-checks a token, so a removed agent kept reading everything.
+   *
+   * Deliberately only ends the connection. The feed's own close handler is
+   * what retires the seat and ends any turn left in flight; removing the
+   * record here instead would free the handle while leaving the queue busy
+   * forever — the same wedge the mid-turn-disconnect fix exists to prevent.
+   * Liveness keeps exactly one owner.
+   */
+  evict(memberId) {
+    if (!memberId) return 0
+    let ended = 0
+    for (const seat of [...this.#seats.values()]) {
+      if (seat.memberId !== memberId && seat.ownerId !== memberId) continue
+      try {
+        seat.conn?.end()
+        ended++
+      } catch {
+        // Already gone; its close handler has run or is about to.
+      }
+    }
+    return ended
+  }
+
+  /**
    * The same comment frame as Bus.keepalive, for seat feeds.
    *
    * A seat is online exactly while its feed is open, so an idle feed being cut

@@ -64,7 +64,7 @@ export function harness(env = {}, observer = null) {
     noteAddr: (id, a) => addrs.set(id, a),
     lastAddrOf: id => addrs.get(id) ?? null,
   }
-  const admin = createAdmin({ registry, bans, store, bus, config, queue, runtime })
+  const admin = createAdmin({ registry, bans, store, bus, config, queue, runtime, seats })
 
   const server = createWeb({
     config, registry, ledger, decisions, queue, turns, observer: obs,

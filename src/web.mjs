@@ -422,6 +422,24 @@ export function createWeb(deps) {
         if (!member) return json(res, 401, { error: 'bad token' })
         const r = permissions.resolve(String(body.request_id), member, String(body.behavior))
         if (r.ok) {
+          // A verdict belongs to the session that asked. channel.sendVerdict
+          // reaches the LOCAL session and only that one, so answering a
+          // seat-scoped request through it would allow a tool call in the
+          // wrong session, on the wrong person's account — the exact boundary
+          // seats exist to hold.
+          //
+          // PermissionBroker.open already carries a seatHandle, but nothing
+          // opens a seat-scoped request yet (seat.mjs does not intercept its
+          // session's permission prompts), so this is unreachable today.
+          // Refusing loudly is what keeps it unreachable: the day the seat
+          // side is built, this fails visibly instead of misrouting.
+          if (r.entry?.seat) {
+            return json(res, 501, {
+              ok: false,
+              reason: 'seat-verdicts-not-wired',
+              seat: r.entry.seat,
+            })
+          }
           channel.sendVerdict(body.request_id, body.behavior)
           bus.publish('approval', { request_id: body.request_id, behavior: body.behavior, by: member.name })
         }
