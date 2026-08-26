@@ -63,10 +63,29 @@ export class Queue {
   }
 
   /**
+   * Every handle that can be addressed right now: the local channel's
+   * configured aliases, plus one for each agent seat on the roster.
+   *
+   * Agent handles are minted at runtime by `seat add`, never configured up
+   * front, so a caller's `handles` option only ever describes the local
+   * channel. Unioning them here rather than at each call site is what stops
+   * the two lists from drifting — web.mjs passes `config.handles`, and on its
+   * own that made every seat unaddressable from the browser: the classifier
+   * did not recognise `@ana-agent` as a mention at all, so the message was
+   * filed as ordinary chatter and the owner-only and offline guards below
+   * were never reached.
+   */
+  #addressableHandles(opts) {
+    const configured = opts.handles ?? this.config.handles ?? []
+    const agents = this.registry ? this.registry.agents().map(a => a.handle) : []
+    return [...new Set([...configured, ...agents])]
+  }
+
+  /**
    * @returns {{ok:boolean, reason:string, message:import('./types.mjs').RoomMessage|null, conflicts:object[]}}
    */
   submit(member, text, opts = {}) {
-    const c = classify(text, member, { ...opts, handles: opts.handles ?? this.config.handles })
+    const c = classify(text, member, { ...opts, handles: this.#addressableHandles(opts) })
     const message = {
       id: randomUUID(),
       memberId: member.id,

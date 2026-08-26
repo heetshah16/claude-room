@@ -196,3 +196,60 @@ test('an offline seat is refused visibly rather than queued forever', () => {
   assert.equal(r.ok, false)
   assert.equal(r.reason, 'seat-offline')
 })
+
+/**
+ * The seat tests above pre-declare the seat's handle via ROOM_HANDLES, which
+ * is not how a real room is configured: `seat add` mints the agent at runtime
+ * and nothing ever writes its handle into config. With the handle list taken
+ * straight from config, the classifier did not recognise `@ana-agent` as a
+ * mention at all — the message was filed as chatter, `ok:true`, and no seat
+ * ever ran. Every guard below it was unreachable from the browser.
+ */
+function unconfiguredSeatQueue({ handles } = {}) {
+  const registry = new Registry()
+  const ana = registry.add(createMember({ name: 'ana', role: 'member' }))
+  const heet = registry.add(createMember({ name: 'heet', role: 'owner' }))
+  registry.add(createAgentMember({ name: 'ana-agent', handle: 'ana-agent', ownerId: ana.id }))
+  const seats = new Seats()
+  seats.join(registry.byHandle('ana-agent'), { write() {}, end() {} })
+  // Stock config: only the local channel's own handle, exactly as a room that
+  // has never had `room-admin handle` run against it.
+  const config = loadConfig({})
+  return {
+    q: new Queue({ config, ledger: new Ledger(), decisions: new Decisions(), registry, seats }),
+    ana, heet, seats, config, handles,
+  }
+}
+
+test('a seat added at runtime is addressable without being listed in ROOM_HANDLES', () => {
+  const { q, ana, config } = unconfiguredSeatQueue()
+  assert.deepEqual(config.handles, ['claude'], 'guard: stock config must not know the seat')
+  const r = q.submit(ana, '@ana-agent find the TTL')
+  assert.equal(r.ok, true)
+  assert.equal(r.message.addressed, true, 'the mention must not be filed as chatter')
+  assert.equal(r.message.handle, 'ana-agent')
+})
+
+test('the owner-only guard is reachable for a runtime-added seat', () => {
+  const { q, heet } = unconfiguredSeatQueue()
+  const r = q.submit(heet, '@ana-agent find the TTL')
+  assert.equal(r.ok, false)
+  assert.equal(r.reason, 'not-your-seat')
+})
+
+test('an explicit handles option still only describes the local channel', () => {
+  // web.mjs passes config.handles here. That must add to the seat handles,
+  // never replace them.
+  const { q, ana } = unconfiguredSeatQueue()
+  const r = q.submit(ana, '@ana-agent find the TTL', { handles: ['claude'] })
+  assert.equal(r.ok, true)
+  assert.equal(r.message.handle, 'ana-agent')
+})
+
+test('the local channel handle keeps working alongside seat handles', () => {
+  const { q, ana } = unconfiguredSeatQueue()
+  const r = q.submit(ana, '@claude run the tests')
+  assert.equal(r.ok, true)
+  assert.equal(r.message.addressed, true)
+  assert.equal(r.message.handle, 'claude')
+})
