@@ -39,6 +39,48 @@ test('the observer sees a seat turn closing, with its tools', async () => {
   done(h)
 })
 
+/**
+ * The turn note above carries the tools a seat used; this is the other half —
+ * what it actually said. The observer builds its note from `closed.replies`,
+ * which only gets filled if /seat/reply attaches the reply to the seat's open
+ * turn. It did not, so every seat turn reached the observer with an empty
+ * reply: the component whose entire job is tracking the conversation could see
+ * that a seat ran Grep but never what it concluded.
+ */
+test('a seat turn reaches the observer with what the seat actually said', async () => {
+  const h = harness({}, { brief: () => ({ text: '', ageS: 0, pending: 0 }) })
+  const base = await listen(h.server)
+  const feed = await openSeatFeed(base, h.agentToken)
+  await post(base, '/msg', { token: h.anaToken, text: '@ana-agent find the TTL' })
+  await feed.next()
+  await post(base, '/seat/reply', { token: h.agentToken, text: 'the TTL is 900 seconds' })
+  await post(base, '/seat/hook/Stop', { token: h.agentToken, prompt_id: 'p1', transcript_path: '/nope' })
+
+  const turn = h.noted.find(n => n.kind === 'turn')
+  assert.ok(turn, 'expected a turn event')
+  assert.match(turn.reply, /900 seconds/, 'the observer must see the seat\'s answer, not an empty string')
+  feed.close()
+  done(h)
+})
+
+test('a seat reply is attached to its own turn, so the UI can show it', async () => {
+  const h = harness({}, { brief: () => ({ text: '', ageS: 0, pending: 0 }) })
+  const base = await listen(h.server)
+  const feed = await openSeatFeed(base, h.agentToken)
+  await post(base, '/msg', { token: h.anaToken, text: '@ana-agent find the TTL' })
+  await feed.next()
+  await post(base, '/seat/reply', { token: h.agentToken, text: 'the TTL is 900 seconds' })
+
+  // Scoped to this seat's own destination, exactly like its hooks - a reply
+  // must never land on another seat's (or the local channel's) open turn.
+  const turn = h.turns.openTurn('ana-agent')
+  assert.ok(turn, 'expected an open turn for this seat')
+  assert.equal(turn.replies.length, 1)
+  assert.match(turn.replies[0].text, /900 seconds/)
+  feed.close()
+  done(h)
+})
+
 // Each seat compacts its own context independently, so two seats' recollections
 // of the same conversation drift apart and neither knows. The brief is
 // regenerated from the room's own record, never from any seat's context, so

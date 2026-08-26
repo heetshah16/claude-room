@@ -512,6 +512,16 @@ export function createWeb(deps) {
         if (!isAgent(member)) return json(res, 403, { error: 'not-an-agent' })
 
         const text = String(body.text ?? '')
+        // Attach the reply to this seat's own open turn, scoped by handle the
+        // same way its hooks are — exactly what the local channel's onReply
+        // does via turns.reply(). Without it a seat's answer is recorded as a
+        // loose message belonging to no turn, and three things silently lose
+        // it: the turn detail panel shows the seat's tool calls but never what
+        // it said, replyCount stays 0, and the observer's per-turn note reads
+        // closed.replies and so learns nothing about what any seat ever
+        // answered — leaving the one component whose job is tracking the
+        // conversation blind to every seat outcome.
+        const turn = turns.reply(text, null, member.handle)
         const message = {
           id: randomUUID(),
           memberId: member.id,
@@ -522,6 +532,7 @@ export function createWeb(deps) {
           addressed: false,
           handle: null,
           kind: 'reply',
+          turnId: turn?.id ?? null,
         }
         broadcastMessage(message)
         deliverToSeats({ type: 'reply', fromHandle: member.handle, text })
