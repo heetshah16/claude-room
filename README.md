@@ -11,14 +11,55 @@ merges transcripts afterward.
 ```
 teammates' browsers ──POST /msg──────┐
       (Tailscale)  ◄──SSE /events────┤
-                                     │
-Claude Code hooks ──POST /hook/:evt──►   room server   ──stdio──► Claude Code session
-                                     │  (one process)             (host account, the repo)
-                                     │
-                    apiKeyHelper ◄───┘ reads current payer
+                                     │                    ┌─► @claude
+ local hooks ──POST /hook/:evt───────►   room server   ────┤   (host's session, host's account)
+                                     │  (one process)     │
+ seat hooks ──POST /seat/hook/:evt───►                    ├─► @ana-agent
+                                     │                    │   (Ana's account, Ana's login)
+                     observer ◄──────┘                    └─► @devops
+              (tracks forks, reversals)                        (their machine, their account)
 ```
 
+Two ways to take part, and the difference matters:
+
+- **`@claude`** is the host's own session. Anyone in the room can address it, and every
+  token it spends comes off the **host's** plan. This is the shared context window.
+- **`@ana-agent`** is an *agent seat*: a second Claude Code process running under its own
+  `CLAUDE_CONFIG_DIR`, where Ana did her own `/login`. By default only Ana can address it,
+  and its cost lands on Ana. **No credential is ever copied, forwarded, or stored** —
+  that isolation is the entire reason this design is legitimate rather than account
+  sharing.
+
+Seats see the conversation (their turns and everyone's replies are mirrored to them) but
+each runs its own context. An **observer** watches the room and writes a short brief —
+open threads, forks, who walked back on what — which is injected ahead of each turn so
+seats that have compacted independently get re-synchronised from the room's own record.
+
 ---
+
+## Status
+
+Working and tested, with one honest gap. **365 tests** (`node --test`), plus an opt-in
+endurance run (`ROOM_ENDURANCE=1`) that idles a real six minutes to prove seat feeds
+survive undici's 300s body timeout.
+
+What has been exercised end to end:
+
+- the shared `@claude` session, with several browsers driving it
+- agent seats over the full HTTP/SSE protocol — addressing, mirroring, per-seat turns,
+  cost attribution, eviction, reconnection
+- the observer, on a real conversation containing a genuine fork and walk-back
+
+**Not yet run for real: two seats logged into two different Anthropic accounts.** Every
+demo so far has driven the seat protocol with a stand-in rather than a second real
+`/login`. The room-side code is the shipped code, but `scripts/room-seat.mjs` launching a
+genuine second Claude Code under its own `CLAUDE_CONFIG_DIR` has never been verified with
+two accounts. Treat that path as unproven.
+
+This is a personal project, not an Anthropic product. It uses
+`--dangerously-load-development-channels`, because custom channels are not on the
+Anthropic-curated allowlist — read [Security](#security) before pointing it at anything
+that matters.
 
 ## Prerequisites
 
@@ -105,6 +146,8 @@ Owners get the same controls as a panel in the browser sidebar.
 | `rotate <name>` | Issue a new link and kill the old one — use when a link leaks |
 | `payer <name> <url>` | Set their credential endpoint for payer rotation |
 | `handle <@name>[,<@name>…]` | **Rename the agent.** `@claude` becomes `@ada` for everyone, at once |
+| `seat add <name> --owner <member> [--handle <h>]` | Create an agent seat and print its launch command |
+| `seat policy <name> <owner-only\|shared>` | Who may address a seat. `owner-only` is the default |
 | `pause [on\|off]` | Stop taking work; conversation carries on |
 | `clear-queue` | Drop everything waiting |
 | `budget [--tokens N] [--messages N]` | Change per-member limits at runtime |
@@ -403,7 +446,23 @@ text in front of an agent with your filesystem.
 - Gating is on **member identity**, never on who can reach the port. Group-membership
   gating is the documented hole; the room does not do it.
 - Tokens are per-member, revocable, and compared in constant time.
+- **Hook routes are authenticated too.** `POST /hook/*` requires the room's own hook
+  token, which is why the settings file is generated rather than checked in. Without
+  this, anyone who could reach the port could end the host's in-flight turn, forge ledger
+  entries, and broadcast fake tool activity to every browser.
 - Bind to the Tailscale interface, never `0.0.0.0`.
+- Request bodies are capped (1MB JSON, 25MB uploads) and the socket is destroyed on
+  overflow, so no single request can exhaust the room's memory.
+- `X-Forwarded-For` is **ignored** unless `ROOM_TRUST_PROXY` is set. It is a
+  client-written header, and believing it makes an address ban trivial to evade.
+- Member names and agent handles are validated. A batched turn renders to the model as
+  `[name] text` per line, so a name containing a bracket or a newline could otherwise
+  forge a line from someone else.
+- State files are written atomically with a `.bak`, and a corrupt file **refuses to
+  start** rather than being mistaken for an empty one — a torn `members.json` read as "no
+  members" would silently invalidate everyone's token.
+- Seats never share credentials. `room-seat.mjs` deliberately strips `ANTHROPIC_API_KEY`
+  and `ANTHROPIC_AUTH_TOKEN` so it can never be the thing that authenticates a session.
 - The room never interprets message content. Slash commands arrive as plain text.
 - The browser client writes every server-supplied string with `textContent`.
 - Uploaded filenames never reach the filesystem; only a sanitised extension survives.
