@@ -61,6 +61,37 @@ This is a personal project, not an Anthropic product. It uses
 Anthropic-curated allowlist — read [Security](#security) before pointing it at anything
 that matters.
 
+## Is sharing a session allowed?
+
+Worth reading before you invite anyone. Not legal advice, and terms change — check
+[Consumer Terms](https://www.anthropic.com/legal/consumer-terms) and
+[Commercial Terms](https://www.anthropic.com/legal/commercial-terms) yourself.
+
+**Credentials are never shared by this project, in any mode.** The Consumer Terms are
+unambiguous there: *"You may not share your Account login information, Anthropic API key,
+or Account credentials with anyone else."* Nothing here copies, forwards, or stores a
+credential, and `room-seat.mjs` actively strips `ANTHROPIC_API_KEY` and
+`ANTHROPIC_AUTH_TOKEN` so it cannot become the thing that authenticates a session.
+
+The harder question is the shared `@claude` session, where other people's text runs on
+**your** account. The same paragraph continues: *"You also may not make your Account
+available to anyone else. You are responsible for all activity occurring under your
+Account."*
+
+How much that bites depends on what you are doing:
+
+| Situation | Read |
+|---|---|
+| Your own personal Pro/Max account, other people driving `@claude` | **Hard to defend.** On a plain reading this is making your Account available to someone else. Don't. |
+| You at the keyboard, colleagues suggesting input, you watching | Closer to pair programming over a screen share. Defensible — but it weakens the more unattended it gets. |
+| Colleagues on the **same Team/Enterprise org**, all already licensed | No clause found prohibiting it; the org is the customer and everyone is a licensed user. But Team is billed and metered **per seat**, so one person's limits absorb everyone's work. Not obviously a terms breach; do ask Anthropic if it matters commercially. |
+| Agent seats (`@ana-agent`) | **Unambiguously fine.** Each person authenticates themselves and spends their own quota. This is why the feature exists. |
+
+The honest summary: **agent seats are the mode this project is comfortable recommending.**
+The shared session is genuinely useful and is the reason the project exists, but treat it
+as *you, with your team feeding you input* — not as a way to give several people an
+account they do not have.
+
 ## Prerequisites
 
 - **Node 22+** on the host. Nothing else — the only runtime dependency is `@modelcontextprotocol/sdk`.
@@ -74,11 +105,21 @@ that matters.
 
 ## Setup
 
-```bash
-npm install
+Five steps from a clone to a teammate typing in the room.
 
-# Bind to your tailnet address so teammates can reach the room.
-export ROOM_HOST=$(tailscale ip -4)
+### 1. Install
+
+```bash
+git clone https://github.com/heetshah16/claude-room
+cd claude-room
+npm install          # one dependency: @modelcontextprotocol/sdk
+node --test          # optional: 365 tests, ~10s
+```
+
+### 2. Choose where it listens
+
+```bash
+export ROOM_HOST=$(tailscale ip -4)   # reachable by your tailnet, and nobody else
 export ROOM_NAME=auth-work
 ```
 
@@ -88,7 +129,9 @@ works out which address to put in join links — it prefers the tailnet address 
 anyone can browse to. Override with `ROOM_ADVERTISE` if you have a MagicDNS name you would
 rather hand out.
 
-Start the session from the repo you want the team working in:
+### 3. Start the session
+
+From the repo you want the team working in:
 
 ```bash
 claude --dangerously-load-development-channels server:room \
@@ -114,11 +157,42 @@ Two dialogs appear the first time: a full-screen development-channels warning (c
 this MCP server**). The warning appears at every start — custom channels are not on the
 Anthropic-curated allowlist, and that is the standing cost of this approach.
 
+### 4. Invite people
+
 On first run the room bootstraps an owner and prints a join URL to stderr:
 
 ```
 room: join: http://100.x.y.z:8787/?token=…
 ```
+
+Open that yourself, then hand out links for everyone else:
+
+```bash
+export ROOM_ADMIN_TOKEN=<the owner token from that URL>
+node scripts/room-admin.mjs invite ana member
+node scripts/room-admin.mjs invite sam viewer      # can read, cannot spend tokens
+```
+
+Each prints a join link. **The token is the identity** — send them privately, and use
+`rotate` if one leaks. They open the link in a browser and start typing; `@claude`
+addresses the shared session, anything else is chatter that costs nothing.
+
+### 5. (Optional) Give someone their own agent
+
+Everything above spends **your** plan. If you would rather a teammate's work came off
+theirs, give them a seat:
+
+```bash
+node scripts/room-admin.mjs seat add "ana's claude" --owner ana --handle ana-agent
+# → run: node scripts/room-seat.mjs ana-agent --token <token> --repo <path-to-repo>
+```
+
+Ana runs that command **on a machine she controls**, in a real terminal. The first run
+lands in a fresh `CLAUDE_CONFIG_DIR` and prompts her own `/login`. From then on
+`@ana-agent` is hers: only she can address it, and its tokens come off her account. See
+[Multiple agents](#multiple-agents) for what seats can and cannot see.
+
+> **Not yet verified with two real accounts.** See [Status](#status).
 
 ## Running the room
 
