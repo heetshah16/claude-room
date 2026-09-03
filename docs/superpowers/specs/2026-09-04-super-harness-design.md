@@ -149,8 +149,10 @@ POSTs `/seat/reply`, done.
 
 **Turn identity for cost.** The room's ledger is idempotent per
 `promptId` (`ledger.mjs:91`) so a re-fired Stop cannot double-charge.
-OpenCode has no `prompt_id`, so the driver uses the assistant message id
-from the session as a stable per-turn id. Free-tier usage records as zero
+OpenCode has no `prompt_id`, so the driver mints one id per turn when it
+sends the prompt and quotes that same id on every `Stop` for that turn.
+A reconnect that re-delivers `session.idle` therefore cannot double-charge,
+and no extra round trip is needed to read an id back out of the session. Free-tier usage records as zero
 cost, but the turn is still recorded so the activity feed and the queue
 behave identically for both harnesses.
 
