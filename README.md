@@ -43,7 +43,7 @@ seats that have compacted independently get re-synchronised from the room's own 
 
 ## Status
 
-Working and tested, with two honest gaps. **432 tests** (`node --test`, 431 passing, 1
+Working and tested, with two honest gaps. **460 tests** (`node --test`, 459 passing, 1
 skipped — the skip is the opt-in endurance test below), plus an opt-in endurance run
 (`ROOM_ENDURANCE=1`) that idles a real six minutes to prove seat feeds survive undici's
 300s body timeout.
@@ -55,8 +55,7 @@ What has been exercised end to end:
   cost attribution, eviction, reconnection
 - the observer, on a real conversation containing a genuine fork and walk-back
 - an OpenCode seat, driven by the real `opencode` binary against a real free model inside
-  a live standalone room — see the next paragraph for exactly what that did and didn't
-  prove.
+  a live standalone room — real work **and** real replies, see below for the exact scope.
 
 **Not yet run for real: two seats logged into two different Anthropic accounts.** Every
 demo so far has driven the seat protocol with a stand-in rather than a second real
@@ -64,17 +63,33 @@ demo so far has driven the seat protocol with a stand-in rather than a second re
 genuine second Claude Code under its own `CLAUDE_CONFIG_DIR` has never been verified with
 two accounts. Treat that path as unproven.
 
-**OpenCode seats: real work confirmed, replies not.** A manual smoke test (opencode
-1.18.27 on Windows, model `opencode/mimo-v2.5-free`, run from this checkout's own
-space-containing path) added a seat, addressed it twice, and watched both turns run real
-tool calls and land the correct edit — confirmed by `git diff` in `.worktrees/opencode`.
-Neither turn stalled, and the MCP bridge registered via `POST /mcp` connected cleanly
-despite the space in the path, which is the opposite of a risk flagged during design. What
-did **not** happen: the model never called `room_reply` in either turn, even when asked
-explicitly to reply, so nothing reached the room — you'd have to check the worktree to
-know the work was done. Details, including the exact evidence, are in
-[`docs/opencode-seat.md`](docs/opencode-seat.md#recorded-smoke-test). Treat an OpenCode
-seat as reliable for the edit and unreliable for the room-visible confirmation of it.
+**OpenCode seats: real work confirmed, and replies confirmed.** A manual smoke test
+(opencode 1.18.27 on Windows, model `opencode/mimo-v2.5-free`, run from this checkout's
+own space-containing path) added a seat, addressed it twice, and watched both turns run
+real tool calls and land the correct edit — confirmed by `git diff` in
+`.worktrees/opencode`. Neither turn stalled, and the MCP bridge registered via `POST /mcp`
+connected cleanly despite the space in the path, which is the opposite of a risk flagged
+during design.
+
+The first run of that smoke test showed the model never calling `room_reply` — it did the
+work and said so in its own transcript, which nobody in the room can see. The cause was
+that OpenCode does not surface an MCP server's declared `instructions` to its model the
+way Claude Code does, so the seat never learned the one rule that matters. The instruction
+now rides in the prompt body itself, and a re-run against the same binary and model had
+both turns call `room_reply` — including the turn that never asked for a reply. Details
+and the exact evidence for both runs are in
+[`docs/opencode-seat.md`](docs/opencode-seat.md#recorded-smoke-test).
+
+That is one model on one machine, not a guarantee: a free model can still end a turn
+without using a tool, so `docs/opencode-seat.md`'s troubleshooting table keeps the
+"check the worktree" recipe for when it happens.
+
+**The `delegate` tool has never been run end to end against a real seat.** Its pieces are
+covered by tests — validation, the authorisation gate, the queue tag, the result coming
+back to `@claude` — and the seat protocol underneath it is the same one the smoke test
+exercised. But no run has yet gone `delegate(...)` → real OpenCode seat → real
+`room_reply` → `delegation-result` in one live room. Treat it as implemented and
+unproven.
 
 This is a personal project, not an Anthropic product. It uses
 `--dangerously-load-development-channels`, because custom channels are not on the
@@ -133,7 +148,7 @@ Five steps from a clone to a teammate typing in the room.
 git clone https://github.com/heetshah16/claude-room
 cd claude-room
 npm install          # one dependency: @modelcontextprotocol/sdk
-node --test          # optional: 432 tests, ~7s
+node --test          # optional: 460 tests, ~7s
 ```
 
 ### 2. Choose where it listens
@@ -415,12 +430,20 @@ delegate({
 ```
 
 `class: "execution"` is what makes `spec.files` and `spec.tests` mandatory — reasoning and
-verification tasks take just a `task` line, since there is no interface to scope. The
-rendered brief that actually reaches `@opencode` also appends "report what you changed
-with `room_reply`" to the prompt itself (`src/delegation.mjs`), which is a stronger nudge
-toward a room-visible reply than a bare `@handle` mention gets — see
-[`docs/opencode-seat.md`](docs/opencode-seat.md) for why that distinction matters in
-practice.
+verification tasks take just a `task` line, since there is no interface to scope. `class`
+never routes: `to` does that, chosen by the session that holds the plan.
+
+The delegated turn is queued for that seat like any other, tagged `kind="delegation"`, and
+when the seat answers, its reply comes back to the shared session as a
+`kind="delegation-result"` event carrying the delegation id — so the orchestrator learns
+what happened instead of handing work out and never hearing back. A delegation that cannot
+be placed is refused out loud, with the reason: a handle no seat holds, a seat that never
+opted in, `@claude` itself (which delegation deliberately does not reach), or a brief too
+thin to act on.
+
+The rendered brief also appends "report what you changed with `room_reply`" to the prompt
+(`src/delegation.mjs`); every turn now carries an equivalent directive, for the reason in
+[`docs/opencode-seat.md`](docs/opencode-seat.md).
 
 See [`docs/opencode-seat.md`](docs/opencode-seat.md) for prerequisites, the free-model
 reliability warning, `--attach`, and troubleshooting.
@@ -640,7 +663,7 @@ text in front of an agent with your filesystem.
 npm test
 ```
 
-432 tests (431 passing, 1 skipped — see [Status](#status)), no network and no Claude Code
+460 tests (459 passing, 1 skipped — see [Status](#status)), no network and no Claude Code
 required. The pure modules — router, ledger,
 identity, decisions, queue, turns, brief, observer, admin, seats, fanout — carry the
 load-bearing logic and are tested directly. The observer takes `runModel` as an injected seam,
