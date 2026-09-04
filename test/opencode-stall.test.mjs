@@ -54,15 +54,23 @@ test('a session that never idles is aborted and its room turn is closed anyway',
 
 test('a provider retrying in a loop does NOT get its deadline reset', async () => {
   // A model retrying a 502 forever is stalled, not working. Treating retry as
-  // progress would mean the deadline never fires.
+  // progress would mean the deadline never fires. Counting live timers is not
+  // enough: a clear-then-rearm nets back to one timer and would slip past,
+  // while silently pushing the deadline out on every retry.
   const c = clock()
+  let setCalls = 0
+  let clearCalls = 0
+  const setTimer = (fn, ms) => { setCalls++; return c.setTimer(fn, ms) }
+  const clearTimer = id => { clearCalls++; return c.clearTimer(id) }
+
   const r = recorder()
   const seat = createOpenCodeSeat({
     roomUrl: 'http://room', token: 't', handle: 'opencode', opencodeUrl: 'http://oc',
-    fetchImpl: r.fetchImpl, setTimer: c.setTimer, clearTimer: c.clearTimer, turnTimeoutMs: 1000,
+    fetchImpl: r.fetchImpl, setTimer, clearTimer, turnTimeoutMs: 1000,
   })
   await seat.onRoomEvent(turn)
   const armed = c.pending()
+  assert.equal(setCalls, 1, 'the turn arms exactly one deadline')
 
   for (let i = 1; i <= 3; i++) {
     await seat.onOpencodeEvent({
@@ -70,7 +78,9 @@ test('a provider retrying in a loop does NOT get its deadline reset', async () =
       properties: { sessionID: 'ses_a', status: { type: 'retry', attempt: i } },
     })
   }
-  assert.equal(c.pending(), armed, 'retry must not arm a fresh deadline')
+  assert.equal(setCalls, 1, 'retry must not arm a new timer')
+  assert.equal(clearCalls, 0, 'retry must not touch the existing deadline either')
+  assert.equal(c.pending(), armed, 'and the original deadline is still the one pending')
 
   c.fireAll()
   await new Promise(r2 => setImmediate(r2))
@@ -113,4 +123,6 @@ test('a deadline that fires for an already-finished turn does nothing', async ()
   c.fireAll()
   await new Promise(r2 => setImmediate(r2))
   assert.equal(r.find(/Stop/).length, 1, 'the turn must be ended exactly once')
+  assert.equal(r.find(/\/abort$/).length, 0, 'a stale deadline must not touch the session again')
+  assert.equal(r.find(/\/seat\/reply/).length, 0, 'the room must not be told twice')
 })
