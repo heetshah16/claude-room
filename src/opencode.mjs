@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { buildNotification } from './channel.mjs'
 
 /**
@@ -97,4 +98,149 @@ export function actionForOpencodeEvent(ev, sessionId) {
     return { type: 'busy' }
   }
   return { type: 'ignore' }
+}
+
+export const DEFAULT_MODEL = 'opencode/mimo-v2.5-free'
+export const DEFAULT_TURN_TIMEOUT_MS = 300_000
+
+/**
+ * One OpenCode session, driven as a room seat.
+ *
+ * The room pushes work to a Claude seat through a channel notification. That
+ * path does not exist here: OpenCode discards notifications it does not know,
+ * so delivery is an outbound HTTP call this driver makes. Everything else —
+ * the reply path, the queue, cost — is the room's existing seat protocol,
+ * unchanged.
+ */
+export function createOpenCodeSeat({
+  roomUrl,
+  token,
+  handle,
+  opencodeUrl,
+  model = DEFAULT_MODEL,
+  roomName = 'room',
+  maxPendingContext = 20,
+  turnTimeoutMs = DEFAULT_TURN_TIMEOUT_MS,
+  fetchImpl = fetch,
+  setTimer = setTimeout,
+  clearTimer = clearTimeout,
+  log = () => {},
+}) {
+  const modelRef = parseModel(model)
+  const pending = new PendingContext(maxPendingContext)
+  let sessionId = null
+  let turn = null // { promptId } while one is in flight
+
+  const post = (url, body) => fetchImpl(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body ?? {}),
+  })
+
+  async function ensureSession() {
+    if (sessionId) return sessionId
+    const res = await fetchImpl(`${opencodeUrl}/session`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: `room seat ${handle}` }),
+    })
+    if (!res.ok) throw new Error(`could not create an opencode session: ${res.status}`)
+    const body = await res.json()
+    sessionId = body?.id ?? null
+    if (!sessionId) throw new Error('opencode created a session with no id')
+    return sessionId
+  }
+
+  /** The room's only way to hear from this seat. */
+  function say(text) {
+    return post(`${roomUrl}/seat/reply`, { token, text })
+  }
+
+  /**
+   * Closes the room turn. Without this the destination stays busy and every
+   * later message for this seat queues behind a turn that already finished —
+   * the same failure the missing Stop hook caused for Claude seats.
+   */
+  async function endTurn(promptId) {
+    await post(`${roomUrl}/seat/hook/Stop?token=${encodeURIComponent(token)}`,
+      { token, prompt_id: promptId })
+  }
+
+  async function finish(promptId) {
+    clearTimer(turn?.timer)
+    turn = null
+    await endTurn(promptId)
+  }
+
+  async function onRoomEvent(ev) {
+    const kind = ev?.event
+    const data = ev?.data ?? {}
+
+    // Not requests: they wait for the next real turn.
+    if (kind === 'mirror') return void pending.add('mirror', data.text, data.from)
+    if (kind === 'brief') return void pending.add('brief', data.text)
+    if (kind === 'seed') return void pending.add('seed', data.text)
+    if (kind !== 'turn') return
+
+    const body = promptFromTurn(data.messages ?? [], data.room ?? roomName)
+    if (!body) return
+
+    const id = await ensureSession()
+    const { text: context } = pending.drain()
+    const promptId = `oc-${randomUUID()}`
+
+    turn = { promptId, timer: null }
+    turn.timer = setTimer(() => { void onDeadline(promptId) }, turnTimeoutMs)
+    // Injected fakes in tests won't have unref; the real setTimeout does.
+    // Without it, a real un-fired deadline timer keeps the process alive
+    // long after the test that scheduled it has finished asserting.
+    turn.timer?.unref?.()
+
+    await post(`${opencodeUrl}/session/${id}/prompt_async`, {
+      model: modelRef,
+      parts: [{ type: 'text', text: context ? `${context}\n\n${body}` : body }],
+    })
+  }
+
+  async function onDeadline(promptId) {
+    // Guard against a deadline that fires for a turn already finished.
+    if (!turn || turn.promptId !== promptId) return
+    log(`turn ${promptId} exceeded ${turnTimeoutMs}ms — aborting`)
+    try {
+      if (sessionId) await post(`${opencodeUrl}/session/${sessionId}/abort`, {})
+    } catch {
+      // The abort is best-effort. Draining the room queue is not.
+    }
+    await say(`no response after ${Math.round(turnTimeoutMs / 1000)}s — the turn was abandoned.`)
+    await finish(promptId)
+  }
+
+  async function onOpencodeEvent(ev) {
+    const action = actionForOpencodeEvent(ev, sessionId)
+    if (action.type === 'ignore' || action.type === 'busy') return
+    // Retry means the provider is failing in a loop. It is deliberately NOT
+    // progress: resetting the deadline here is exactly how a wedged seat
+    // would block its queue destination forever.
+    if (action.type === 'retry') {
+      log(`provider retry (attempt ${action.attempt})`)
+      return
+    }
+    if (!turn) return
+    const { promptId } = turn
+
+    if (action.type === 'error') {
+      const name = action.error?.name ?? 'unknown error'
+      await say(`the turn failed: ${name}`)
+      await finish(promptId)
+      return
+    }
+    if (action.type === 'end-turn') await finish(promptId)
+  }
+
+  return {
+    onRoomEvent,
+    onOpencodeEvent,
+    sessionId: () => sessionId,
+    busy: () => turn !== null,
+  }
 }
