@@ -102,3 +102,59 @@ test('a session error ends the turn and says so in the room', async () => {
   assert.equal(said.length, 1, 'a failure the room cannot see is a seat that just went quiet')
   assert.match(said[0].body.text, /ProviderAuthError/)
 })
+
+test('a session that cannot be created still closes the room turn, or the seat wedges forever', async () => {
+  // The room marks the destination busy on dispatch. Nothing else will clear
+  // it: abandonTurn only fires on a dropped feed, and the feed is fine here.
+  const calls = []
+  const fetchImpl = async (url, init = {}) => {
+    const u = String(url)
+    calls.push({ url: u, body: init.body ? JSON.parse(init.body) : null })
+    if (u.endsWith('/session')) return { ok: false, status: 500, json: async () => ({}) }
+    return { ok: true, status: 204, json: async () => ({}) }
+  }
+  const seat = createOpenCodeSeat({
+    roomUrl: 'http://room', token: 'tok', handle: 'opencode',
+    opencodeUrl: 'http://oc', fetchImpl,
+  })
+  await seat.onRoomEvent(turn('do it'))
+
+  assert.equal(calls.filter(c => /\/seat\/hook\/Stop/.test(c.url)).length, 1, 'the queue must drain')
+  assert.equal(calls.filter(c => /\/seat\/reply/.test(c.url)).length, 1, 'the room must be told')
+  assert.equal(seat.busy(), false)
+})
+
+test('a prompt that cannot be delivered closes the turn too, without waiting for the deadline', async () => {
+  let n = 0
+  const calls = []
+  const fetchImpl = async (url, init = {}) => {
+    const u = String(url)
+    calls.push({ url: u })
+    if (u.endsWith('/session')) return { ok: true, status: 200, json: async () => ({ id: 'ses_a' }) }
+    if (u.includes('prompt_async') && n++ === 0) throw new Error('socket hang up')
+    return { ok: true, status: 204, json: async () => ({}) }
+  }
+  const seat = createOpenCodeSeat({
+    roomUrl: 'http://room', token: 'tok', handle: 'opencode',
+    opencodeUrl: 'http://oc', fetchImpl,
+  })
+  await seat.onRoomEvent(turn('do it'))
+
+  assert.equal(calls.filter(c => /\/seat\/hook\/Stop/.test(c.url)).length, 1)
+  assert.equal(seat.busy(), false)
+})
+
+test('finishing a turn twice cannot end the turn that replaced it', async () => {
+  // readFrames dispatches callbacks synchronously and unawaited, and the room
+  // and opencode feeds are independent, so two paths can race to finish.
+  const r = recorder()
+  const seat = seatOf(r)
+  await seat.onRoomEvent(turn('first'))
+  await seat.onOpencodeEvent({ type: 'session.idle', properties: { sessionID: 'ses_a' } })
+  await seat.onRoomEvent(turn('second'))
+  // A late idle quoting the FIRST turn must not touch the second.
+  await seat.onOpencodeEvent({ type: 'session.idle', properties: { sessionID: 'ses_a' } })
+
+  assert.equal(r.find(/\/seat\/hook\/Stop/).length, 2, 'one Stop per turn, no more')
+  assert.equal(seat.busy(), false)
+})

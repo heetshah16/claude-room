@@ -167,7 +167,11 @@ export function createOpenCodeSeat({
   }
 
   async function finish(promptId) {
-    clearTimer(turn?.timer)
+    // Ownership guard: a concurrent path may already have finished this turn and
+    // armed the next one. Without this, a late finish for turn A clears turn B's
+    // timer and ends B while its prompt is still running.
+    if (turn?.promptId !== promptId) return
+    clearTimer(turn.timer)
     turn = null
     await endTurn(promptId)
   }
@@ -185,21 +189,33 @@ export function createOpenCodeSeat({
     const body = promptFromTurn(data.messages ?? [], data.room ?? roomName)
     if (!body) return
 
-    const id = await ensureSession()
-    const { text: context } = pending.drain()
     const promptId = `oc-${randomUUID()}`
+    try {
+      const id = await ensureSession()
+      const { text: context } = pending.drain()
 
-    turn = { promptId, timer: null }
-    turn.timer = setTimer(() => { void onDeadline(promptId) }, turnTimeoutMs)
-    // Injected fakes in tests won't have unref; the real setTimeout does.
-    // Without it, a real un-fired deadline timer keeps the process alive
-    // long after the test that scheduled it has finished asserting.
-    turn.timer?.unref?.()
+      turn = { promptId, timer: null }
+      turn.timer = setTimer(() => { void onDeadline(promptId) }, turnTimeoutMs)
+      // Injected fakes in tests won't have unref; the real setTimeout does.
+      // Without it, a real un-fired deadline timer keeps the process alive
+      // long after the test that scheduled it has finished asserting.
+      turn.timer?.unref?.()
 
-    await post(`${opencodeUrl}/session/${id}/prompt_async`, {
-      model: modelRef,
-      parts: [{ type: 'text', text: context ? `${context}\n\n${body}` : body }],
-    })
+      await post(`${opencodeUrl}/session/${id}/prompt_async`, {
+        model: modelRef,
+        parts: [{ type: 'text', text: context ? `${context}\n\n${body}` : body }],
+      })
+    } catch (err) {
+      // The room marked this destination busy the moment it dispatched the
+      // turn. If delivery fails we must still close it, or every later message
+      // for this seat queues behind a turn that never started.
+      if (turn?.promptId === promptId) {
+        clearTimer(turn.timer)
+        turn = null
+      }
+      await say(`could not start the turn: ${err?.message ?? err}`)
+      await endTurn(promptId)
+    }
   }
 
   async function onDeadline(promptId) {
