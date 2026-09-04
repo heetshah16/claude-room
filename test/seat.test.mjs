@@ -180,6 +180,86 @@ test('run as main with every variable set: connects for real, logging only to st
   await new Promise(resolve => server.close(resolve))
 })
 
+// --- Task 3: reply-only mode ---
+
+test('a reply-only seat never joins or opens a feed, so it cannot collide with its driver', async () => {
+  // The OpenCode driver owns the room feed. A second connection claiming the
+  // same handle would be rejected as handle-taken, leaving the seat deaf.
+  const calls = []
+  const fetchImpl = async url => {
+    calls.push(String(url))
+    return { ok: true, status: 200, json: async () => ({}) }
+  }
+  const seat = createSeat({
+    roomUrl: 'http://room', token: 't', handle: 'opencode',
+    fetchImpl, mode: 'reply-only',
+  })
+  await seat.connect()
+  seat.stop()
+  assert.equal(calls.length, 0, `reply-only must make no calls of its own, got ${calls.join()}`)
+})
+
+test('a reply-only seat still delivers room_reply, which is its entire job', async () => {
+  const calls = []
+  const fetchImpl = async (url, init) => {
+    calls.push({ url: String(url), body: JSON.parse(init.body) })
+    return { ok: true, status: 200, json: async () => ({}) }
+  }
+  const seat = createSeat({
+    roomUrl: 'http://room', token: 't', handle: 'opencode',
+    fetchImpl, mode: 'reply-only',
+  })
+  const res = await seat.callTool('room_reply', { text: 'hello from opencode' })
+  assert.equal(res.isError, undefined)
+  assert.equal(calls[0].url, 'http://room/seat/reply')
+  assert.equal(calls[0].body.text, 'hello from opencode')
+})
+
+test('mode defaults to full when omitted, so every pre-existing caller of createSeat is unaffected', async () => {
+  const calls = []
+  const fetchImpl = async url => {
+    calls.push(String(url))
+    return { ok: true, status: 200, json: async () => ({ seed: {} }) }
+  }
+  const seat = createSeat({ roomUrl: 'http://room', token: 't', handle: 'ana-agent', fetchImpl })
+  await seat.connect()
+  seat.stop()
+  assert.ok(calls.some(u => u === 'http://room/seat/join'), 'default mode must still join')
+})
+
+test('an unrecognized mode string falls through to full behaviour rather than silently degrading', async () => {
+  const calls = []
+  const fetchImpl = async url => {
+    calls.push(String(url))
+    return { ok: true, status: 200, json: async () => ({ seed: {} }) }
+  }
+  const seat = createSeat({
+    roomUrl: 'http://room', token: 't', handle: 'ana-agent', fetchImpl, mode: 'bogus',
+  })
+  await seat.connect()
+  seat.stop()
+  assert.ok(calls.some(u => u === 'http://room/seat/join'), 'an unknown mode must not be treated as reply-only')
+})
+
+test('callTool on the full-mode MCP handler and the direct callTool path agree, because they share one implementation', async () => {
+  const calls = []
+  const fetchImpl = async (url, init) => {
+    calls.push({ url: String(url), body: JSON.parse(init.body) })
+    return { ok: true, status: 200, json: async () => ({}) }
+  }
+  const seat = createSeat({ roomUrl: 'http://room', token: 't', handle: 'ana-agent', fetchImpl })
+  const res = await seat.callTool('room_reply', { text: 'hi', to: 'ana' })
+  assert.equal(res.content[0].text, 'sent')
+  assert.equal(calls[0].body.to, 'ana')
+})
+
+test('callTool reports an unknown tool as an error instead of throwing', async () => {
+  const seat = createSeat({ roomUrl: 'http://room', token: 't', handle: 'ana-agent', fetchImpl: async () => ({ ok: true, json: async () => ({}) }) })
+  const res = await seat.callTool('not_a_real_tool', {})
+  assert.equal(res.isError, true)
+  assert.match(res.content[0].text, /unknown tool/)
+})
+
 test('importing the module does not fire the main guard', async () => {
   // Real seats launch via scripts/room-seat.mjs, which spawns `node
   // src/seat.mjs` as a fresh process - process.argv[1] is the file itself.

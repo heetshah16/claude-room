@@ -118,7 +118,15 @@ async function readFrames(body, onFrame) {
  * fetch is stable with no flags, so it is the only transport the default
  * path may depend on.
  */
-export function createSeat({ roomUrl, token, handle, fetchImpl = fetch }) {
+export function createSeat({ roomUrl, token, handle, fetchImpl = fetch, mode = 'full' }) {
+  // A reply-only seat is a tool surface and nothing more: its driver (the
+  // OpenCode process) owns the room feed, so this must never join or open
+  // one itself - a second join on the same handle is refused as
+  // handle-taken (src/seats.mjs), leaving the seat deaf. Only the exact
+  // string 'reply-only' selects it; anything else - including undefined -
+  // falls through to unchanged full behaviour.
+  const replyOnly = mode === 'reply-only'
+
   const mcp = new Server(
     { name: `seat:${handle}`, version: '0.1.0' },
     {
@@ -145,22 +153,28 @@ export function createSeat({ roomUrl, token, handle, fetchImpl = fetch }) {
     ],
   }))
 
-  mcp.setRequestHandler(CallToolRequestSchema, async req => {
-    const a = req.params.arguments ?? {}
+  // Extracted so both the MCP request handler and the directly-callable
+  // callTool() (used by reply-only seats, and by tests without an MCP
+  // client) share one implementation instead of a hand-maintained second
+  // copy - precisely how a previous bug here was introduced.
+  async function roomReply(a) {
     try {
-      if (req.params.name === 'room_reply') {
-        const res = await fetchImpl(`${roomUrl}/seat/reply`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ token, text: String(a.text ?? ''), to: a.to ? String(a.to) : undefined }),
-        })
-        if (!res.ok) return { content: [{ type: 'text', text: `room_reply failed: ${res.status}` }], isError: true }
-        return { content: [{ type: 'text', text: 'sent' }] }
-      }
-      return { content: [{ type: 'text', text: `unknown tool: ${req.params.name}` }], isError: true }
+      const res = await fetchImpl(`${roomUrl}/seat/reply`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token, text: String(a.text ?? ''), to: a.to ? String(a.to) : undefined }),
+      })
+      if (!res.ok) return { content: [{ type: 'text', text: `room_reply failed: ${res.status}` }], isError: true }
+      return { content: [{ type: 'text', text: 'sent' }] }
     } catch (err) {
       return { content: [{ type: 'text', text: String(err?.message ?? err) }], isError: true }
     }
+  }
+
+  mcp.setRequestHandler(CallToolRequestSchema, async req => {
+    const a = req.params.arguments ?? {}
+    if (req.params.name === 'room_reply') return roomReply(a)
+    return { content: [{ type: 'text', text: `unknown tool: ${req.params.name}` }], isError: true }
   })
 
   let abortCtrl = null
@@ -215,6 +229,11 @@ export function createSeat({ roomUrl, token, handle, fetchImpl = fetch }) {
     async connect() {
       await mcp.connect(new StdioServerTransport())
 
+      // A reply-only seat is a tool surface and nothing more: its driver
+      // owns the room feed, and a second join would be refused as
+      // handle-taken. Stop here - no join, no feed, no reconnect timer.
+      if (replyOnly) return
+
       const res = await fetchImpl(`${roomUrl}/seat/join`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -231,6 +250,13 @@ export function createSeat({ roomUrl, token, handle, fetchImpl = fetch }) {
       stopped = true
       if (reconnectTimer) clearTimeout(reconnectTimer)
       abortCtrl?.abort()
+    },
+    // Directly-callable tool surface, bypassing the MCP transport entirely -
+    // what a reply-only seat's driver process calls in-process, and what
+    // tests use instead of standing up a real MCP client.
+    callTool(name, args) {
+      if (name === 'room_reply') return roomReply(args ?? {})
+      return Promise.resolve({ content: [{ type: 'text', text: `unknown tool: ${name}` }], isError: true })
     },
   }
 }
@@ -258,7 +284,8 @@ async function main() {
   const handle = process.env.ROOM_SEAT_HANDLE
   if (!handle) return die('missing ROOM_SEAT_HANDLE - this seat\'s own @handle')
 
-  const seat = createSeat({ roomUrl, token, handle })
+  const mode = process.env.ROOM_SEAT_MODE === 'reply-only' ? 'reply-only' : 'full'
+  const seat = createSeat({ roomUrl, token, handle, mode })
   try {
     await seat.connect()
   } catch (err) {
