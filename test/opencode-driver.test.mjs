@@ -144,17 +144,59 @@ test('a prompt that cannot be delivered closes the turn too, without waiting for
   assert.equal(seat.busy(), false)
 })
 
-test('finishing a turn twice cannot end the turn that replaced it', async () => {
-  // readFrames dispatches callbacks synchronously and unawaited, and the room
-  // and opencode feeds are independent, so two paths can race to finish.
+test('two turns in succession each close exactly once', async () => {
   const r = recorder()
   const seat = seatOf(r)
   await seat.onRoomEvent(turn('first'))
   await seat.onOpencodeEvent({ type: 'session.idle', properties: { sessionID: 'ses_a' } })
   await seat.onRoomEvent(turn('second'))
-  // A late idle quoting the FIRST turn must not touch the second.
   await seat.onOpencodeEvent({ type: 'session.idle', properties: { sessionID: 'ses_a' } })
 
   assert.equal(r.find(/\/seat\/hook\/Stop/).length, 2, 'one Stop per turn, no more')
   assert.equal(seat.busy(), false)
+})
+
+test('a finish that resumes after its turn was replaced must not end the replacement', async () => {
+  // The real interleaving: the error branch suspends inside say() while a
+  // concurrent idle finishes turn A and the room dispatches turn B. Without
+  // the ownership guard in finish(), the resuming branch clears B's timer and
+  // ends B while B's prompt is still live in OpenCode.
+  let releaseReply
+  const held = new Promise(resolve => { releaseReply = resolve })
+  const calls = []
+  const fetchImpl = async (url, init = {}) => {
+    const u = String(url)
+    calls.push(u)
+    if (u.endsWith('/session')) return { ok: true, status: 200, json: async () => ({ id: 'ses_a' }) }
+    if (u.includes('/seat/reply')) {
+      await held
+      return { ok: true, status: 200, json: async () => ({}) }
+    }
+    return { ok: true, status: 204, json: async () => ({}) }
+  }
+  const seat = createOpenCodeSeat({
+    roomUrl: 'http://room', token: 'tok', handle: 'opencode',
+    opencodeUrl: 'http://oc', fetchImpl,
+  })
+
+  await seat.onRoomEvent(turn('first'))
+
+  // Deliberately NOT awaited: this suspends inside say() and resumes at the end.
+  const errorBranch = seat.onOpencodeEvent({
+    type: 'session.error',
+    properties: { sessionID: 'ses_a', error: { name: 'UnknownError' } },
+  })
+
+  await seat.onOpencodeEvent({ type: 'session.idle', properties: { sessionID: 'ses_a' } })
+  await seat.onRoomEvent(turn('second'))
+  assert.equal(seat.busy(), true, 'the replacement turn is live')
+
+  releaseReply()
+  await errorBranch
+
+  assert.equal(seat.busy(), true, 'the stale finish must not have ended the replacement turn')
+  assert.equal(
+    calls.filter(u => /\/seat\/hook\/Stop/.test(u)).length, 1,
+    'only the first turn was ever closed',
+  )
 })
