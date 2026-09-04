@@ -257,9 +257,13 @@ export function createSeat({ roomUrl, token, handle, fetchImpl = fetch, mode = '
       if (reconnectTimer) clearTimeout(reconnectTimer)
       abortCtrl?.abort()
     },
-    // Directly-callable tool surface, bypassing the MCP transport entirely -
-    // what a reply-only seat's driver process calls in-process, and what
-    // tests use instead of standing up a real MCP client.
+    // Directly-callable tool surface, bypassing the MCP transport entirely.
+    // Nothing in production calls it: a reply-only seat runs as its own
+    // `node src/seat.mjs` process, registered with the harness as an MCP
+    // server, and reaches room_reply over the transport like any other client.
+    // It exists so tests can exercise the real tool implementation without
+    // standing up an MCP client, and that shared implementation is the point -
+    // a second copy for tests would be free to drift from the one that ships.
     callTool(name, args) {
       if (name === 'room_reply') return roomReply(args ?? {})
       return Promise.resolve({ content: [{ type: 'text', text: `unknown tool: ${name}` }], isError: true })

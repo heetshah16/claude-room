@@ -224,10 +224,15 @@ export function createOpenCodeSeat({
       turn.timer?.unref?.()
 
       const parts = [context, body, REPLY_DIRECTIVE].filter(Boolean)
-      await post(`${opencodeUrl}/session/${id}/prompt_async`, {
+      const res = await post(`${opencodeUrl}/session/${id}/prompt_async`, {
         model: modelRef,
         parts: [{ type: 'text', text: parts.join('\n\n') }],
       })
+      // A rejected prompt left `turn` armed, so the room waited out the full
+      // deadline and was then told "no response after 300s" — the stall
+      // message — instead of the actual reason. The catch below already closes
+      // the turn correctly; it just needed something to catch.
+      if (!res.ok) throw new Error(`opencode refused the prompt: HTTP ${res.status}`)
     } catch (err) {
       // The room marked this destination busy the moment it dispatched the
       // turn. If delivery fails we must still close it, or every later message
@@ -282,7 +287,7 @@ export function createOpenCodeSeat({
 
   /** Registers the reply-only bridge so opencode can call room_reply. */
   async function registerBridge(bridgePath) {
-    await post(`${opencodeUrl}/mcp`, {
+    const res = await post(`${opencodeUrl}/mcp`, {
       name: 'room',
       config: {
         type: 'local',
@@ -298,6 +303,11 @@ export function createOpenCodeSeat({
         enabled: true,
       },
     })
+    // Ignoring this response left a seat that joins the room, accepts turns
+    // and can never reply — the same silent-seat failure c3b17e6 fixed, through
+    // another door and without even a log line. A seat that cannot answer must
+    // not come online pretending it can.
+    if (!res.ok) throw new Error(`opencode refused the room bridge: HTTP ${res.status}`)
   }
 
   /**
@@ -349,6 +359,10 @@ export function createOpenCodeSeat({
     sessionId: () => sessionId,
     busy: () => turn !== null,
     async connect({ bridgePath = DEFAULT_BRIDGE_PATH } = {}) {
+      // Deliberately first, and deliberately not caught: a bridge that failed
+      // to register means this seat can never call room_reply, so connect()
+      // must fail loudly here rather than let the seat come online and then
+      // go silent on the first turn it is given.
       if (bridgePath) await registerBridge(bridgePath)
 
       const res = await fetchImpl(`${roomUrl}/seat/join`, {

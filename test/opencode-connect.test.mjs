@@ -5,19 +5,37 @@ import { startFakeOpencode } from './helpers/fake-opencode.mjs'
 
 const settle = () => new Promise(r => setTimeout(r, 50))
 
-test('the driver registers the reply-only bridge with opencode when it connects', async () => {
+/**
+ * Tear the fake server and the seat down however the test ends.
+ *
+ * An assertion failure used to leave the server and its SSE feeds open, so a
+ * FAILING test hung `node --test` instead of going red — confirmed during
+ * review. Registering the teardown before the first assertion is what makes
+ * the failure visible.
+ */
+async function fakeOpencode(t) {
+  const oc = await startFakeOpencode()
+  let seat = null
+  t.after(async () => {
+    seat?.stop()
+    await oc.close()
+  })
+  return { oc, hold: s => { seat = s; return s } }
+}
+
+test('the driver registers the reply-only bridge with opencode when it connects', async t => {
   // The bridge is what lets opencode call room_reply. Registering it in
   // reply-only mode is what stops it claiming the handle the driver holds.
-  const oc = await startFakeOpencode()
+  const { oc, hold } = await fakeOpencode(t)
   const roomCalls = []
-  const seat = createOpenCodeSeat({
+  const seat = hold(createOpenCodeSeat({
     roomUrl: 'http://room', token: 'tok', handle: 'opencode', opencodeUrl: oc.url,
     fetchImpl: async (url, init) => {
       if (String(url).startsWith(oc.url)) return fetch(url, init)
       roomCalls.push(String(url))
       return { ok: true, status: 200, json: async () => ({ seed: null }) }
     },
-  })
+  }))
   await seat.connect()
   await settle()
 
@@ -27,17 +45,14 @@ test('the driver registers the reply-only bridge with opencode when it connects'
   assert.equal(cfg.config.environment.ROOM_SEAT_MODE, 'reply-only')
   assert.equal(cfg.config.environment.ROOM_SEAT_TOKEN, 'tok')
   assert.ok(roomCalls.some(u => u.includes('/seat/join')), 'the driver joins the room itself')
-
-  seat.stop()
-  await oc.close()
 })
 
-test('an idle arriving over the real event stream ends the room turn', async () => {
+test('an idle arriving over the real event stream ends the room turn', async t => {
   // End to end over an actual socket: the pure mapper tests prove the
   // decision, this proves the wiring that delivers it.
-  const oc = await startFakeOpencode()
+  const { oc, hold } = await fakeOpencode(t)
   const stops = []
-  const seat = createOpenCodeSeat({
+  const seat = hold(createOpenCodeSeat({
     roomUrl: 'http://room', token: 'tok', handle: 'opencode', opencodeUrl: oc.url,
     fetchImpl: async (url, init) => {
       const u = String(url)
@@ -45,7 +60,7 @@ test('an idle arriving over the real event stream ends the room turn', async () 
       if (u.includes('/seat/hook/Stop')) stops.push(u)
       return { ok: true, status: 200, json: async () => ({ seed: null }) }
     },
-  })
+  }))
   await seat.connect()
   await settle()
 
@@ -58,9 +73,50 @@ test('an idle arriving over the real event stream ends the room turn', async () 
   oc.emit('session.idle', { sessionID: 'ses_fake' })
   await settle()
   assert.equal(stops.length, 1)
+})
 
+test('a refused bridge registration fails the connect instead of producing a silent seat', async () => {
+  // Ignoring this response left a seat that joins the room, accepts turns and
+  // can never reply: the same silent-seat failure c3b17e6 fixed, through
+  // another door and without even a log line to find it by.
+  const calls = []
+  const seat = createOpenCodeSeat({
+    roomUrl: 'http://room', token: 'tok', handle: 'opencode', opencodeUrl: 'http://oc',
+    fetchImpl: async url => {
+      calls.push(String(url))
+      if (String(url).endsWith('/mcp')) return { ok: false, status: 503, json: async () => ({}) }
+      return { ok: true, status: 200, json: async () => ({ seed: null }) }
+    },
+  })
+  await assert.rejects(() => seat.connect({ bridgePath: '/seat.mjs' }), /bridge.*503/)
+  assert.ok(!calls.some(u => u.includes('/seat/join')), 'a seat that cannot reply must not join the room')
   seat.stop()
-  await oc.close()
+})
+
+test('a refused prompt closes the turn immediately rather than burning the whole deadline', async () => {
+  // A rejected prompt_async left `turn` armed, so the room waited out the full
+  // 300s and was then told "no response after 300s" — the stall message — for
+  // a request that was refused in milliseconds.
+  const said = []
+  const stops = []
+  const seat = createOpenCodeSeat({
+    roomUrl: 'http://room', token: 'tok', handle: 'opencode', opencodeUrl: 'http://oc',
+    fetchImpl: async (url, init) => {
+      const u = String(url)
+      if (u.includes('prompt_async')) return { ok: false, status: 400, json: async () => ({}) }
+      if (u.includes('/seat/reply')) said.push(JSON.parse(init.body).text)
+      if (u.includes('/seat/hook/Stop')) stops.push(u)
+      return { ok: true, status: 200, json: async () => ({ id: 'ses_fake', seed: null }) }
+    },
+  })
+  await seat.onRoomEvent({
+    event: 'turn',
+    data: { room: 'room', messages: [{ name: 'heet', memberId: 'm', id: 'i', content: 'go' }] },
+  })
+  assert.equal(seat.busy(), false, 'the turn must not stay armed')
+  assert.equal(stops.length, 1, 'the room destination must be freed')
+  assert.match(said.join('\n'), /400/, 'and the room must be told the real reason, not the stall message')
+  seat.stop()
 })
 
 /** A controllable clock: nothing fires until the test says so. Same shape as test/opencode-stall.test.mjs's. */
