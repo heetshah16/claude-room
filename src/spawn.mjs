@@ -1,7 +1,7 @@
 import { spawn as nodeSpawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
-import { extname } from 'node:path'
+import { win32, posix } from 'node:path'
 
 /** `.cmd` and `.bat` are batch scripts: Node refuses to spawn them without a shell. */
 const isBatch = ext => /^\.(cmd|bat)$/i.test(ext)
@@ -23,14 +23,13 @@ export function resolveCommand(name, opts = {}) {
   } = opts
 
   const isWin = platform === 'win32'
-  const delimiterChar = isWin ? ';' : ':'
-  const sepChar = isWin ? '\\' : '/'
+  const P = isWin ? win32 : posix
   const raw = String(name)
 
   // An explicit path is an instruction, not a search term.
   const bases = raw.includes('/') || raw.includes('\\')
     ? [raw]
-    : (env.PATH || env.Path || '').split(delimiterChar).filter(Boolean).map(d => d + sepChar + raw)
+    : (env.PATH || env.Path || '').split(P.delimiter).filter(Boolean).map(d => P.join(d, raw))
 
   if (!isWin) {
     for (const p of bases) if (exists(p)) return { path: p, needsShell: false }
@@ -47,7 +46,7 @@ export function resolveCommand(name, opts = {}) {
     .sort((a, b) => Number(isBatch(a)) - Number(isBatch(b)))
 
   for (const base of bases) {
-    const given = extname(base)
+    const given = P.extname(base)
     if (given && exists(base)) return { path: base, needsShell: isBatch(given) }
     for (const ext of exts) {
       const p = base + ext.toLowerCase()
