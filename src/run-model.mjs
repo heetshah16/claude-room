@@ -1,4 +1,4 @@
-import { spawn as nodeSpawn } from 'node:child_process'
+import { spawnPortable } from './spawn.mjs'
 
 /**
  * Recover a JSON object from model output that may be fenced or wrapped in
@@ -24,7 +24,10 @@ const NO_TOOLS = 'Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch,Task,Noteboo
 
 function defaultSpawn(cmd, args, prompt) {
   return new Promise(resolve => {
-    const child = nodeSpawn(cmd, args, { stdio: ['pipe', 'pipe', 'pipe'] })
+    // spawnPortable rather than a bare spawn: on a machine where `claude` is
+    // an npm .cmd shim, a bare spawn fails ENOENT and the observer silently
+    // never produces a brief.
+    const child = spawnPortable(cmd, args, { stdio: ['pipe', 'pipe', 'pipe'] })
     let stdout = ''
     let stderr = ''
     child.stdout.on('data', d => { stdout += d })

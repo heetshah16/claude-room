@@ -18,12 +18,13 @@
  *
  * <token> comes from `room-admin seat add <name> --owner <member>`.
  */
-import { spawn, execFileSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { HOOK_EVENTS } from '../src/state.mjs'
 import { fileURLToPath } from 'node:url'
+import { spawnPortable } from '../src/spawn.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -60,6 +61,15 @@ export function seatHookSettings({ roomUrl, token }) {
 }
 
 /**
+ * The MCP config body a seat loads. Extracted so the launcher can write it to
+ * a file: passing it as JSON on argv cannot survive a Windows shell, and a
+ * shell is exactly what an npm-installed `claude` needs.
+ */
+export function mcpConfigFor() {
+  return { mcpServers: { seat: { command: 'node', args: [SEAT_BRIDGE] } } }
+}
+
+/**
  * Builds the spawn recipe for one seat: real `claude`, pointed at its own
  * config dir and its own worktree, with the seat bridge loaded as an MCP
  * server and its own hooks settings. Pure and injection-testable — nothing
@@ -69,11 +79,9 @@ export function seatHookSettings({ roomUrl, token }) {
  * would let this script authenticate the session instead of the person, which
  * is exactly the shortcut this whole design exists to avoid.
  */
-export function seatArgs({ configDir, roomUrl, token, handle, repo, settingsPath }) {
+export function seatArgs({ configDir, roomUrl, token, handle, repo, settingsPath, mcpConfigPath }) {
   const worktree = worktreeFor(repo, handle)
-  const mcpConfig = JSON.stringify({
-    mcpServers: { seat: { command: 'node', args: [SEAT_BRIDGE] } },
-  })
+  const configPath = mcpConfigPath || join(configDir, 'mcp.seat.json')
 
   // Start from the operator's own environment (PATH, HOME, etc. — claude
   // needs those to run at all), then strip any credential that might be set
@@ -86,7 +94,7 @@ export function seatArgs({ configDir, roomUrl, token, handle, repo, settingsPath
     cmd: 'claude',
     args: [
       '--dangerously-load-development-channels',
-      '--mcp-config', mcpConfig,
+      '--mcp-config', configPath,
       // Without --settings the seat fires no hooks, so its turns never close
       // and its destination wedges after the first message.
       '--settings', settingsPath,
@@ -144,14 +152,21 @@ async function main() {
   const settingsPath = join(configDir, 'settings.hooks.json')
   writeFileSync(settingsPath, JSON.stringify(seatHookSettings({ roomUrl, token }), null, 2))
 
-  const { cmd, args, env } = seatArgs({ configDir, roomUrl, token, handle, repo, settingsPath })
+  const mcpConfigPath = join(configDir, 'mcp.seat.json')
+  writeFileSync(mcpConfigPath, JSON.stringify(mcpConfigFor(), null, 2))
+
+  const { cmd, args, env } = seatArgs({
+    configDir, roomUrl, token, handle, repo, settingsPath, mcpConfigPath,
+  })
 
   console.error(`launching seat "${handle}" — config: ${configDir}  worktree: ${worktree}`)
   console.error('first run will prompt /login for this seat\'s own account.')
 
+  // spawnPortable rather than a bare spawn: on a machine where `claude` is an
+  // npm .cmd shim, a bare spawn fails ENOENT.
   // stdio: 'inherit' so the first run's /login prompt shows up right here,
   // in the operator's own terminal, for this seat's own account.
-  const child = spawn(cmd, args, { cwd: worktree, env, stdio: 'inherit' })
+  const child = spawnPortable(cmd, args, { cwd: worktree, env, stdio: 'inherit' })
   child.on('exit', code => process.exit(code ?? 0))
   child.on('error', err => die(`failed to launch claude: ${err.message}`))
 }
