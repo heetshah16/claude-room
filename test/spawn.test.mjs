@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { resolveCommand, spawnPortable } from '../src/spawn.mjs'
+import { resolveCommand, spawnPortable, quoteForCmd } from '../src/spawn.mjs'
 
 const WIN = {
   platform: 'win32',
@@ -97,14 +97,62 @@ test('the failure stub carries usable streams, so callers need no special case',
   await new Promise(resolve => child.on('error', resolve))
 })
 
-test('a shell is requested only for the shim, never for a real executable', () => {
+test('a real executable is spawned directly, with no shell and no cmd.exe anywhere', () => {
+  // The point this has always defended: a shell means quoting, and quoting is
+  // an injection surface. When the machine offers a real .exe, nothing about
+  // the launch may involve an interpreter.
   const seen = []
-  const spy = (path, args, opts) => { seen.push(opts.shell); return { on() {} } }
-  spawnPortable('claude', [], {}, {
+  const spy = (file, args, opts) => { seen.push({ file, args, opts }); return { on() {} } }
+  spawnPortable('claude', ['--add-dir', 'C:\\My Repo'], {}, {
     ...WIN, exists: p => p === 'C:\\bin\\claude.exe', spawnImpl: spy,
   })
-  spawnPortable('opencode', [], {}, {
+  assert.equal(seen.length, 1)
+  assert.equal(seen[0].file, 'C:\\bin\\claude.exe')
+  assert.deepEqual(seen[0].args, ['--add-dir', 'C:\\My Repo'])
+  assert.equal(seen[0].opts.shell, false)
+  assert.equal(seen[0].opts.windowsVerbatimArguments, undefined)
+})
+
+test('the .cmd shim goes through cmd.exe explicitly, never through Node shell:true', () => {
+  // Node's shell:true joins argv with plain spaces and quotes NOTHING, so
+  // `--add-dir C:\My Repo` arrives at the shim as two arguments. Driving
+  // cmd.exe ourselves with windowsVerbatimArguments is what keeps our
+  // quoting intact.
+  const seen = []
+  const spy = (file, args, opts) => { seen.push({ file, args, opts }); return { on() {} } }
+  spawnPortable('opencode', ['--add-dir', 'C:\\My Repo'], {}, {
     ...WIN, exists: p => p === 'C:\\bin\\opencode.cmd', spawnImpl: spy,
   })
-  assert.deepEqual(seen, [false, true])
+  assert.equal(seen.length, 1)
+  assert.equal(seen[0].file, 'cmd.exe')
+  assert.equal(seen[0].opts.shell, false, 'shell:true is exactly what this replaces')
+  assert.equal(seen[0].opts.windowsVerbatimArguments, true)
+  assert.deepEqual(seen[0].args.slice(0, 3), ['/d', '/s', '/c'])
+  assert.equal(seen[0].args[3], '"C:\\bin\\opencode.cmd --add-dir "C:\\My Repo""')
+})
+
+test('an argument with a space survives the shim path instead of being split in two', () => {
+  // The bug in the field: this repo\'s own path contains a space, and
+  // scripts/room-seat.mjs passes three such paths (--mcp-config, --settings,
+  // --add-dir). Unquoted, each became two arguments and the seat launched
+  // with a corrupted argv.
+  assert.equal(quoteForCmd('C:\\Program Files\\node\\node.exe'), '"C:\\Program Files\\node\\node.exe"')
+})
+
+test('a plain argument is passed through untouched, so ordinary launches read normally', () => {
+  assert.equal(quoteForCmd('--add-dir'), '--add-dir')
+})
+
+test('an embedded double quote is escaped by Windows argv rules, not dropped', () => {
+  assert.equal(quoteForCmd('say "hi"'), '"say \\"hi\\""')
+})
+
+test('a cmd.exe metacharacter outside quotes is escaped, closing the injection surface', () => {
+  // configDir embeds an unsanitised handle. Unescaped, `a&calc` would run
+  // calc.exe as a second command rather than being passed to the seat.
+  assert.equal(quoteForCmd('a&calc'), 'a^&calc')
+  assert.equal(quoteForCmd('a|b'), 'a^|b')
+  // Inside a quoted region cmd does not parse the metacharacter, and a caret
+  // there would be passed through as a literal character instead.
+  assert.equal(quoteForCmd('a b&c'), '"a b&c"')
 })

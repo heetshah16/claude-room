@@ -57,6 +57,65 @@ export function resolveCommand(name, opts = {}) {
 }
 
 /**
+ * The characters `cmd.exe` parses rather than passes on, when it meets them
+ * outside a quoted region. `%` is here because a bare `%NAME%` is expanded.
+ */
+const CMD_META = /[&|<>^()%]/
+
+/**
+ * Quote one argument for a command line handed to `cmd.exe /d /s /c "…"`.
+ *
+ * Two escaping systems apply at once, in this order:
+ *
+ *  1. `cmd.exe` reads the line first. Outside a quoted region it acts on
+ *     `& | < > ^ ( ) %`, so those are escaped with `^`. INSIDE a quoted
+ *     region a caret is not an escape — it is passed through as a literal
+ *     character — so the quote state is tracked as the output is built and
+ *     the escape is only emitted where it actually escapes.
+ *  2. Whatever cmd hands on is parsed again by the target's own argv
+ *     splitter, under the Windows rules: a run of backslashes is literal
+ *     unless it precedes a double quote, where n backslashes become 2n, and
+ *     an embedded quote is escaped as `\"`.
+ *
+ * An argument is wrapped in double quotes when it contains a space, a tab or
+ * a quote — and when it is empty, which would otherwise vanish entirely.
+ */
+export function quoteForCmd(arg) {
+  const s = String(arg)
+  const wrap = s === '' || /[ \t"]/.test(s)
+
+  let inQuotes = false
+  let out = ''
+  const emitQuote = () => {
+    out += '"'
+    inQuotes = !inQuotes
+  }
+
+  if (wrap) emitQuote()
+  let slashes = 0
+  for (const ch of s) {
+    if (ch === '\\') {
+      slashes++
+      continue
+    }
+    if (ch === '"') {
+      out += '\\'.repeat(slashes * 2 + 1)
+      slashes = 0
+      emitQuote()
+      continue
+    }
+    out += '\\'.repeat(slashes)
+    slashes = 0
+    out += !inQuotes && CMD_META.test(ch) ? `^${ch}` : ch
+  }
+  // A trailing run of backslashes would otherwise escape our own closing
+  // quote and swallow it, gluing this argument to the next one.
+  out += '\\'.repeat(wrap ? slashes * 2 : slashes)
+  if (wrap) emitQuote()
+  return out
+}
+
+/**
  * A stand-in child that reports a launch failure the same way a real one
  * does. Callers already handle `error`; without this they would have to
  * handle a synchronous throw as well, and the EINVAL case proves they forget.
@@ -83,7 +142,20 @@ export function spawnPortable(name, args = [], opts = {}, deps = {}) {
   const found = resolveCommand(name, resolveOpts)
   if (!found) return failedChild(new Error(`command not found on PATH: ${name}`))
   try {
-    return spawnImpl(found.path, args, { ...opts, shell: found.needsShell })
+    // A real executable is spawned directly, with no shell anywhere near it.
+    if (!found.needsShell) return spawnImpl(found.path, args, { ...opts, shell: false })
+
+    // Node's shell:true joins argv with plain spaces and quotes nothing, so
+    // any argument containing a space is silently split — and both seat
+    // launchers pass paths derived from homedir() and cwd(), which routinely
+    // contain spaces. Drive cmd.exe ourselves with windowsVerbatimArguments
+    // so our own quoting survives intact instead of being re-quoted away.
+    const env = opts.env ?? resolveOpts.env ?? process.env
+    const comspec = env.ComSpec || env.COMSPEC || 'cmd.exe'
+    const quoted = [found.path, ...args].map(quoteForCmd).join(' ')
+    return spawnImpl(comspec, ['/d', '/s', '/c', `"${quoted}"`], {
+      ...opts, windowsVerbatimArguments: true, shell: false,
+    })
   } catch (err) {
     return failedChild(err)
   }
