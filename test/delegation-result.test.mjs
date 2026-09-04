@@ -100,6 +100,22 @@ test('a seat that owes a delegation gets its reply routed back to @claude as the
   assert.deepEqual(published.filter(([e]) => e === 'delegation').map(([, x]) => x.state), ['sent', 'done'])
 })
 
+test('the published done event carries the seat\'s reply text, not just its shape', () => {
+  // This is the actual wire shape the extension's SSE feed receives — the
+  // `message` SSE event with the seat's words is a separate broadcast the
+  // extension never subscribes to, so if `text` is missing here the
+  // extension has nothing to relay but the literal string "undefined". A
+  // fixture that invents a `text` field the producer never sent would pass
+  // against a router test alone; this pins the producer itself.
+  const { d, queue, published } = delegator()
+  d.delegate({ ...EXEC, to: '@opencode' })
+  queue.beginTurn()
+  d.onSeatReply('opencode', 'added mul(), tests pass')
+  const done = published.find(([e, x]) => e === 'delegation' && x.state === 'done')
+  assert.ok(done, 'a done event must be published')
+  assert.equal(done[1].text, 'added mul(), tests pass')
+})
+
 test('a reply from a seat that owes nothing produces no delegation-result', () => {
   // A seat answering its own owner is an ordinary reply; turning it into a
   // result for a delegation that never happened would invent work.

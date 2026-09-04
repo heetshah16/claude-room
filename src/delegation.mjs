@@ -190,7 +190,11 @@ export function createDelegator({
         const record = pending.take(m.id)
         if (!record) continue
         results.push(channel.notifyDelegationResult({ ...record, handle, text }))
-        bus.publish('delegation', { ...record, to: handle, state: 'done' })
+        // `text` travels here too, not just to the local channel above: this
+        // is the only event the extension's SSE feed ever sees for a
+        // finished delegation, and without the seat's actual words on it the
+        // relay to the orchestrator reads literally as "undefined".
+        bus.publish('delegation', { ...record, to: handle, state: 'done', text })
       }
       return results
     },
