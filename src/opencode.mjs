@@ -113,6 +113,19 @@ export const DEFAULT_MODEL = 'opencode/mimo-v2.5-free'
 export const DEFAULT_TURN_TIMEOUT_MS = 300_000
 
 /**
+ * OpenCode does not surface an MCP server's `instructions` to its model the way
+ * Claude Code does, so the seat never learns the one rule that matters. It has
+ * to ride in the prompt body instead. Without it the seat does the work and
+ * reports nothing, which reads as silence to everyone waiting in the room.
+ */
+const REPLY_DIRECTIVE = [
+  '---',
+  'When you have finished, you MUST call the room_reply tool to report what you did.',
+  'Your normal output does NOT reach the room — room_reply is the only channel to it.',
+  'A turn that ends without calling room_reply looks like silence to the people waiting.',
+].join('\n')
+
+/**
  * One OpenCode session, driven as a room seat.
  *
  * The room pushes work to a Claude seat through a channel notification. That
@@ -210,9 +223,10 @@ export function createOpenCodeSeat({
       // long after the test that scheduled it has finished asserting.
       turn.timer?.unref?.()
 
+      const parts = [context, body, REPLY_DIRECTIVE].filter(Boolean)
       await post(`${opencodeUrl}/session/${id}/prompt_async`, {
         model: modelRef,
-        parts: [{ type: 'text', text: context ? `${context}\n\n${body}` : body }],
+        parts: [{ type: 'text', text: parts.join('\n\n') }],
       })
     } catch (err) {
       // The room marked this destination busy the moment it dispatched the

@@ -36,7 +36,8 @@ test('a room turn becomes one prompt on a session the driver creates once', asyn
   assert.equal(r.find(/\/session$/).length, 1, 'the session is created once and reused')
   const prompts = r.find(/prompt_async/)
   assert.equal(prompts.length, 2)
-  assert.equal(prompts[0].body.parts[0].text, 'add a mul function')
+  assert.ok(prompts[0].body.parts[0].text.startsWith('add a mul function'),
+    'with no pending context, the request itself opens the prompt')
   assert.deepEqual(prompts[0].body.model, { providerID: 'opencode', modelID: 'mimo-v2.5-free' })
 })
 
@@ -54,6 +55,20 @@ test('mirrors ride along with the next turn rather than starting one of their ow
   assert.match(sent, /now do the tests/)
   assert.ok(sent.indexOf('ana-agent finished') < sent.indexOf('now do the tests'),
     'context comes first, the request last')
+})
+
+test('every prompt tells the seat that room_reply is the only way to be heard', async () => {
+  // OpenCode never sees the MCP server's instructions, so the rule has to ride
+  // in the prompt. Without it the seat does the work and reports nothing.
+  const r = recorder()
+  const seat = seatOf(r)
+  await seat.onRoomEvent(turn('add a mul function'))
+  const sent = r.find(/prompt_async/)[0].body.parts[0].text
+  assert.match(sent, /room_reply/)
+  assert.ok(
+    sent.indexOf('add a mul function') < sent.lastIndexOf('room_reply'),
+    'the directive comes last, after the request',
+  )
 })
 
 test('idle closes the room turn by posting Stop, which is what drains the queue', async () => {
