@@ -64,8 +64,25 @@ unverified in a real VS Code window.
    (Task 2's tree-kill).
 ```
 
-**Result: not yet run.** Record the actual outcome here (including any
-failure) the first time someone runs this.
+**Result: partially verified — everything except the webview itself.**
+
+A headless harness composed this extension's own modules (`createSupervisor`,
+`roomRecipe`, `readOwnerToken`, `createRoomClient`, `bridgeMcpConfig`,
+`orchestratorRecipe`, `createOrchestrator`) against the **real** `server.mjs`
+and the **real** `claude` binary, with only VS Code absent. It passed:
+
+- the room started, wrote its roster, and `readOwnerToken` found the token in it
+- the orchestrator started and reported back the session id we generated
+- a real turn ran end to end: `Read` tool call → tool result → text →
+  turn-end, and the answer contained the file's actual contents
+- **every** event kind `stream.js` handles was exercised — `session`,
+  `thinking-tokens`, `tool`, `tool-result`, `rate-limit`, `text`, `turn-end`
+- `stopAll()` left both statuses `stopped` with null pids, and a process sweep
+  found no strays: tree-kill confirmed against real processes
+
+**Still unverified: the webview.** Steps 3–4 above (streaming render, tool
+cards, thinking indicator, cost) need a real VS Code host and have not been
+run. Record the outcome here the first time someone does.
 
 ### Task 7 steps (delegation wired into the chat)
 
@@ -82,5 +99,25 @@ plan's Task 1) exists, verify by hand with `scripts/room-opencode-seat.mjs`
 launched against the extension's room port (visible in the "Claude Room"
 output channel).
 
-**Result: not yet run.** Record the actual outcome here (including any
-failure) the first time someone runs this.
+**Result: the relay is verified; only the chat rendering of it is not.**
+
+A second headless harness ran a **real** room, a **real** OpenCode worker
+(`opencode/mimo-v2.5-free`), a **real** `POST /api/delegate`, and the room's
+**real** SSE feed through this extension's own `createEventRouter`. It passed:
+
+- the delegation result came back with an id matching the call
+- the relayed line was
+  ``[worker @opencode reports] Added `export function mul(a, b)` to `math.js`
+  (returns `a * b`). Syntax verified with `node --check math.js` — passed.``
+- the worker ran the command named in `spec.tests` without being asked to
+- activity events carried `handles: opencode`, confirming the `dest`→`handle`
+  normalisation
+
+That check exists because the first whole-branch review found this exact path
+was broken: the delegation event carried no `text`, so the orchestrator was
+being told `[worker @opencode reports] undefined`. The unit test could not see
+it — its fixture invented a `text` field the real producer never sent. The
+harness above talks to the real producer, which is why it would have caught it.
+
+**Still unverified: the chat rendering** of the delegate tool card and the
+relayed turn, which needs a real VS Code host.
