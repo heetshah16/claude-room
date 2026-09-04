@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!--
+  Strict CSP: no inline scripts (only this exact nonce), no innerHTML-style
+  execution vectors, styles and fonts only from the webview's own origin.
+  Every server- or model-supplied string webview.js renders goes through
+  textContent, never innerHTML — same rule src/ui.mjs states for the room's
+  own browser client, same reason: message text, tool inputs, tool results
+  and worker output are all untrusted.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src {{cspSource}} https: data:; style-src {{cspSource}}; font-src {{cspSource}}; script-src 'nonce-{{nonce}}';">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{styleUri}}">
+<title>Claude Room</title>
+</head>
+<body>
+  <div id="fatal" class="fatal" hidden></div>
+  <div id="rate-limit" class="rate-limit-banner" hidden></div>
+  <div id="messages" class="messages"></div>
+  <div id="status" class="status" hidden></div>
+  <div class="composer">
+    <textarea id="input" rows="1" placeholder="Message the orchestrator... (Enter to send, Shift+Enter for a new line)"></textarea>
+    <button id="send" type="button">Send</button>
+  </div>
+  <script nonce="{{nonce}}" src="{{scriptUri}}"></script>
+</body>
+</html>
