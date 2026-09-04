@@ -61,6 +61,33 @@ async function waitForServer(url, tries = 60) {
   return false
 }
 
+/**
+ * Kill the child AND everything it started.
+ *
+ * On Windows `opencode` is an npm `.cmd` shim, so the process we hold is an
+ * interpreter — cmd.exe, since spawn.mjs drives it directly — and killing it
+ * orphans the real `opencode serve` underneath, which keeps holding the
+ * worktree and the port. This was observed for real: the smoke test had to
+ * hunt strays by hand. `taskkill /T` reaps the whole tree.
+ *
+ * Best effort throughout: shutdown must never hang or throw, so a failure
+ * here (most often "the process is already gone") is deliberately ignored.
+ */
+export function killTree(child, deps = {}) {
+  const { platform = process.platform, spawn = spawnPortable } = deps
+  if (!child?.pid) return
+  try {
+    if (platform === 'win32') {
+      const killer = spawn('taskkill', ['/T', '/F', '/PID', String(child.pid)], { stdio: 'ignore' })
+      killer?.on?.('error', () => {})
+    } else {
+      child.kill()
+    }
+  } catch {
+    // Already gone, or unkillable. Either way the exit below is what matters.
+  }
+}
+
 async function main() {
   const argv = process.argv.slice(2)
   const handle = argv[0]
@@ -92,6 +119,12 @@ async function main() {
     log(`starting opencode serve on ${opencodeUrl} in ${cwd}`)
     child = spawnPortable(cmd, args, { cwd, env, stdio: ['ignore', 'inherit', 'inherit'] })
     child.on('error', err => die(`failed to launch opencode: ${err.message}`))
+    // Same guard as scripts/room-seat.mjs:169. Without it, an `opencode serve`
+    // that dies AFTER waitForServer passed leaves the driver posting into a
+    // dead socket: every turn burns its full deadline and is then reported as
+    // "no response after 300s", which is a completely misleading diagnosis of
+    // a process that is simply gone.
+    child.on('exit', code => die(`opencode exited with code ${code}`))
     if (!(await waitForServer(opencodeUrl))) die(`opencode did not answer on ${opencodeUrl}`)
   }
 
@@ -103,7 +136,7 @@ async function main() {
 
   const shutdown = () => {
     seat.stop()
-    child?.kill()
+    killTree(child)
     process.exit(0)
   }
   process.on('SIGINT', shutdown)
