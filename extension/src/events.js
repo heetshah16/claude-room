@@ -18,6 +18,19 @@
  * Pure: no I/O, no timers, nothing but the callbacks it is given. That is
  * what keeps this testable without a socket or a real room.
  */
+/**
+ * src/web.mjs's `activity` bus event carries the seat's handle under `dest`
+ * — that is the field name the room's own turn-tracking uses everywhere, and
+ * `emitActivity` just forwards it verbatim. The panel, and the
+ * `delegation-sent` activity this router builds itself, both key off
+ * `handle` instead. Normalising here means the webview only ever has to
+ * read one field name, rather than guessing between two per event source.
+ */
+function normalizeActivity(data) {
+  if (!data || data.handle !== undefined || data.dest === undefined) return data
+  return { ...data, handle: data.dest }
+}
+
 function createEventRouter({ onWorkerActivity, onDelegationResult }) {
   function handleDelegation(data) {
     const { id, to: handle, state, task, text, reason } = data ?? {}
@@ -45,7 +58,7 @@ function createEventRouter({ onWorkerActivity, onDelegationResult }) {
   return {
     handle(event, data) {
       if (event === 'delegation') return handleDelegation(data)
-      if (event === 'activity') return onWorkerActivity(data)
+      if (event === 'activity') return onWorkerActivity(normalizeActivity(data))
       // Any other room event — an unknown or future SSE event type — is
       // dropped rather than crashing the extension host. The room's stream
       // is allowed to grow event types this router does not yet know.
