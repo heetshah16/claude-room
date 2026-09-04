@@ -21,7 +21,7 @@
  *   room-admin handle <@name>[,<@name>...]      room-admin pause [on|off]
  *   room-admin clear-queue
  *   room-admin budget [--tokens N] [--messages N]
- *   room-admin seat add <name> --owner <member> [--handle <handle>]
+ *   room-admin seat add <name> --owner <member> [--handle <handle>] [--delegatable]
  *   room-admin seat policy <name> <owner-only|shared>
  */
 import { loadConfig } from '../src/config.mjs'
@@ -92,6 +92,7 @@ function printMembers(s) {
       // output of the command that happened to create it.
       m.kind === 'agent' ? `@${m.handle}` : null,
       m.kind === 'agent' && m.addressPolicy === 'shared' ? 'SHARED' : null,
+      m.kind === 'agent' && m.delegatable ? 'DELEGATABLE' : null,
     ].filter(Boolean).join(' ')
     console.log(`${m.name.padEnd(14)} ${tags.padEnd(28)} ${m.joinUrl}`)
   }
@@ -204,7 +205,7 @@ switch (cmd) {
   }
   case 'seat': {
     const SEAT_USAGE =
-      'usage: room-admin seat add <name> --owner <member> [--handle <handle>]\n' +
+      'usage: room-admin seat add <name> --owner <member> [--handle <handle>] [--delegatable]\n' +
       '       room-admin seat policy <name> <owner-only|shared>'
 
     if (argv[1] === 'policy') {
@@ -226,9 +227,13 @@ switch (cmd) {
     if (!name || !ownerName) die(SEAT_USAGE)
     const owner = await resolve(ownerName)
     const handle = (flag('--handle') || name).replace(/^@/, '')
-    const r = await call('/api/admin/invite', { name, kind: 'agent', handle, ownerId: owner.id })
+    const delegatable = has('--delegatable')
+    const r = await call('/api/admin/invite', { name, kind: 'agent', handle, ownerId: owner.id, delegatable })
     console.log(`seat added: ${name} (@${handle}), owned by ${owner.name}`)
     console.log(`only ${owner.name} can address it (seat policy owner-only)`)
+    console.log(delegatable
+      ? `the orchestrator may delegate work to this seat`
+      : `not delegatable — pass --delegatable to let the orchestrator hand it work`)
     console.log(`run: node scripts/room-seat.mjs ${handle} --token ${r.token} --repo <path-to-repo>`)
     break
   }

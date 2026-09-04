@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createMember, Registry, canAddress, mayApprove, createAgentMember, isAgent, ownsSeat } from '../src/identity.mjs'
+import { createMember, Registry, canAddress, mayApprove, createAgentMember, isAgent, ownsSeat, isDelegatable } from '../src/identity.mjs'
 
 test('a member gets a long unguessable token', () => {
   const m = createMember({ name: 'heet', role: 'owner' })
@@ -79,4 +79,29 @@ test('handles are unique and case-insensitive in lookup', () => {
   assert.equal(r.byHandle('ANA-AGENT').id, a.id)
   assert.equal(r.byHandle('nobody'), null)
   assert.equal(r.agents().length, 1)
+})
+
+test('a seat is not delegatable unless its owner said so', () => {
+  // Fail closed. Delegation lets the orchestrator put work on someone else's
+  // seat; that must be opt-in, never a default or an accident.
+  const a = createAgentMember({ name: 'oc', handle: 'opencode', ownerId: 'm1' })
+  assert.equal(isDelegatable(a), false)
+})
+
+test('an owner can opt a seat into delegation', () => {
+  const a = createAgentMember({ name: 'oc', handle: 'opencode', ownerId: 'm1', delegatable: true })
+  assert.equal(isDelegatable(a), true)
+})
+
+test('a delegatable value that is not a boolean true is refused', () => {
+  // A value from an older state file, or a string "false", must not open the
+  // gate. Anything unrecognised means no.
+  for (const bad of ['true', 1, {}, null, undefined]) {
+    const a = { ...createAgentMember({ name: 'oc', handle: 'opencode', ownerId: 'm1' }), delegatable: bad }
+    assert.equal(isDelegatable(a), false, `delegatable=${JSON.stringify(bad)} must not pass`)
+  }
+})
+
+test('a non-agent is never delegatable, whatever its fields say', () => {
+  assert.equal(isDelegatable({ kind: 'human', delegatable: true }), false)
 })

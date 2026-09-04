@@ -1,4 +1,4 @@
-import { createMember, createAgentMember, ROLES, mayApprove, isAgent, ADDRESS_POLICIES, addressPolicyOf, validName, validHandle, normalizeHandle } from './identity.mjs'
+import { createMember, createAgentMember, ROLES, mayApprove, isAgent, isDelegatable, ADDRESS_POLICIES, addressPolicyOf, validName, validHandle, normalizeHandle } from './identity.mjs'
 import { DEFAULT_HANDLES } from './router.mjs'
 
 /**
@@ -32,11 +32,14 @@ function isUnbannableAddr(addr, registry, runtime) {
 const publicMember = m => ({
   id: m.id, name: m.name, role: m.role, canApprove: mayApprove(m), muted: !!m.muted,
   hasPayer: !!m.payerRef,
-  // addressPolicy is surfaced resolved, never raw: a seat from an older state
-  // file has no such field, and the roster must show what will actually be
-  // enforced rather than undefined.
+  // addressPolicy and delegatable are surfaced resolved, never raw: a seat
+  // from an older state file has no such field, and the roster must show what
+  // will actually be enforced rather than undefined or a truthy-but-invalid value.
   ...(isAgent(m)
-    ? { kind: 'agent', handle: m.handle, ownerId: m.ownerId, addressPolicy: addressPolicyOf(m) }
+    ? {
+        kind: 'agent', handle: m.handle, ownerId: m.ownerId,
+        addressPolicy: addressPolicyOf(m), delegatable: isDelegatable(m),
+      }
     : {}),
 })
 
@@ -70,7 +73,7 @@ export function createAdmin({ registry, bans, store, bus, config, queue, runtime
   }
 
   const commands = {
-    invite({ name, role = 'member', canApprove = false, payerRef, kind, handle, ownerId }) {
+    invite({ name, role = 'member', canApprove = false, payerRef, kind, handle, ownerId, delegatable }) {
       const clean = String(name ?? '').trim()
       if (!clean) return no('name-required')
       // A name is rendered to the model as `[name] text` in a batched turn, so
@@ -93,7 +96,7 @@ export function createAdmin({ registry, bans, store, bus, config, queue, runtime
         if (registry.byHandle(h)) return no('handle-taken')
         if (!ownerId || !registry.byId(ownerId)) return no('bad-owner')
 
-        const m = registry.add(createAgentMember({ name: clean, handle: h, ownerId }))
+        const m = registry.add(createAgentMember({ name: clean, handle: h, ownerId, delegatable }))
         persistMembers()
         rosterChanged()
         return ok({ member: publicMember(m), token: m.token, joinUrl: runtime.joinUrl(m.token) })
