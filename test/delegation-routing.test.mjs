@@ -84,3 +84,21 @@ test('the delegate tool is advertised alongside room_reply', async () => {
   assert.ok(names.includes('delegate'))
   assert.ok(names.includes('room_reply'))
 })
+
+test('the orchestrator cannot delegate to @claude - the session it is itself driving', () => {
+  // registry.byHandle('claude') is null: the local channel is not a seat. That
+  // used to mean NEITHER authorisation branch ran, so a delegation to the host
+  // handle sailed through and the orchestrator queued work for itself. How
+  // @claude is addressed is explicitly out of scope for delegation.
+  const { queue, orchestrator } = setup({ delegatable: true })
+  const r = queue.submit(orchestrator, '@claude add mul() to math.js', { delegation: true })
+  assert.equal(r.ok, false)
+  assert.equal(r.reason, 'not-a-seat')
+})
+
+test('a human addressing @claude is unaffected by the delegation gate', () => {
+  // The two paths stay separate in both directions: closing the delegation
+  // hole must not touch the shared session several humans drive.
+  const { queue, ana } = setup({ delegatable: true })
+  assert.equal(queue.submit(ana, '@claude run the tests').ok, true)
+})

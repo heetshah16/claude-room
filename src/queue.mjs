@@ -122,6 +122,17 @@ export class Queue {
     // asymmetry a decision rather than an accident, and lets a seat on a
     // genuinely shared account opt into `shared` per seat.
     const agent = this.registry?.byHandle(c.handle)
+
+    // Delegation only ever reaches an agent seat. `byHandle` is null for the
+    // local channel, so without this neither authorisation branch below runs
+    // and the orchestrator could delegate to `@claude` — the shared session
+    // it is itself driving. How `@claude` is addressed is explicitly out of
+    // scope for delegation, so refuse rather than quietly widen it. Placed
+    // above the agent block so the human path is untouched.
+    if (opts.delegation && !agent) {
+      return { ok: false, reason: 'not-a-seat', message: null, conflicts: [] }
+    }
+
     if (agent) {
       if (opts.delegation) {
         // Delegation is a different authorisation question from addressing.
