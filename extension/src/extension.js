@@ -248,12 +248,24 @@ async function openChat(context) {
   const mcpConfigPath = path.join(stateDir, 'mcp-config.json')
   fs.writeFileSync(mcpConfigPath, JSON.stringify(bridgeMcpConfig(REPO_ROOT), null, 2))
 
+  // Spec §3: a died-and-restarted orchestrator resumes the same conversation
+  // with --resume <id> rather than losing the thread. workspaceState is the
+  // natural place for this — it persists across both a crash and a full VS
+  // Code restart, which is exactly when this matters most. The id is
+  // committed before the process is even confirmed up: --resume and
+  // --session-id both mint/continue the conversation at spawn time, so the
+  // id to persist is already decided the moment the args are built.
+  const SESSION_KEY = 'claudeRoom.sessionId'
+  const priorSessionId = context.workspaceState.get(SESSION_KEY) ?? null
   const sessionId = crypto.randomUUID()
+  await context.workspaceState.update(SESSION_KEY, priorSessionId ?? sessionId)
+
   const orchProc = supervisor.start('orchestrator', orchestratorRecipe({
     repoRoot: REPO_ROOT,
     roomUrl,
     token,
     sessionId,
+    priorSessionId,
     workspace: workspace.uri.fsPath,
     mcpConfigPath,
   }))

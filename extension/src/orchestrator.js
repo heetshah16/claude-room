@@ -19,11 +19,20 @@ When you delegate, say so in your reply. Your live output is visible only to the
  * CLAUDE.md, which is tempting - but it also never reads OAuth or the keychain
  * and requires an API key, and reusing the existing subscription login is the
  * whole reason this is pleasant to install.
+ *
+ * Spec §3: a died-and-restarted orchestrator resumes the same conversation
+ * with `--resume <id>` rather than losing the thread. `priorSessionId` is
+ * the id of a conversation this workspace already has — passed in, never
+ * read from VS Code state here, so this stays pure and testable without a
+ * fake extension host. When it is set, `--resume` supersedes `--session-id`
+ * entirely: resuming and minting a fresh id are mutually exclusive, and
+ * `sessionId` is simply not needed on that path.
  */
 function orchestratorRecipe({
-  repoRoot, roomUrl, token, sessionId, workspace, mcpConfigPath,
+  repoRoot, roomUrl, token, sessionId, priorSessionId, workspace, mcpConfigPath,
   env = process.env, claudePath = 'claude',
 }) {
+  const resumeArgs = priorSessionId ? ['--resume', priorSessionId] : ['--session-id', sessionId]
   return {
     cmd: claudePath,
     args: [
@@ -31,7 +40,7 @@ function orchestratorRecipe({
       '--input-format', 'stream-json',
       '--output-format', 'stream-json',
       '--verbose',
-      '--session-id', sessionId,
+      ...resumeArgs,
       '--append-system-prompt', SYSTEM_PROMPT,
       '--mcp-config', mcpConfigPath,
       '--add-dir', workspace,

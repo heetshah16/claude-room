@@ -30,6 +30,26 @@ test('the session is persistent and bidirectional, not one process per turn', ()
   assert.equal(r.args[r.args.indexOf('--mcp-config') + 1], '/cfg/mcp.json')
 })
 
+test('a workspace with a prior session resumes it instead of starting fresh', () => {
+  // Spec §3: a died-and-restarted orchestrator resumes the same conversation
+  // with --resume <id> rather than losing the thread.
+  const r = orchestratorRecipe({
+    repoRoot: '/repo', roomUrl: 'http://room', token: 'tok',
+    sessionId: 'new-uuid', priorSessionId: 'sess-old', workspace: '/ws', mcpConfigPath: '/cfg/mcp.json',
+  })
+  assert.equal(r.args[r.args.indexOf('--resume') + 1], 'sess-old')
+  assert.ok(!r.args.includes('--session-id'), 'resuming and minting a fresh id are mutually exclusive')
+})
+
+test('a workspace with no prior session starts fresh with a new session id', () => {
+  const r = orchestratorRecipe({
+    repoRoot: '/repo', roomUrl: 'http://room', token: 'tok',
+    sessionId: 'new-uuid', workspace: '/ws', mcpConfigPath: '/cfg/mcp.json',
+  })
+  assert.equal(r.args[r.args.indexOf('--session-id') + 1], 'new-uuid')
+  assert.ok(!r.args.includes('--resume'))
+})
+
 test('--bare is never used, because it would forfeit the user\'s login', () => {
   // --bare skips hooks and CLAUDE.md, but it also never reads OAuth or the
   // keychain and demands an API key. Reusing the existing subscription login
