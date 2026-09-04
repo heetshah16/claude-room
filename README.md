@@ -43,7 +43,7 @@ seats that have compacted independently get re-synchronised from the room's own 
 
 ## Status
 
-Working and tested, with three honest gaps. **464 tests** (`node --test`, 463 passing, 1
+Working and tested, with two honest gaps. **464 tests** (`node --test`, 463 passing, 1
 skipped — the skip is the opt-in endurance test below), plus an opt-in endurance run
 (`ROOM_ENDURANCE=1`) that idles a real six minutes to prove seat feeds survive undici's
 300s body timeout.
@@ -84,12 +84,17 @@ That is one model on one machine, not a guarantee: a free model can still end a 
 without using a tool, so `docs/opencode-seat.md`'s troubleshooting table keeps the
 "check the worktree" recipe for when it happens.
 
-**The `delegate` tool has never been run end to end against a real seat.** Its pieces are
-covered by tests — validation, the authorisation gate, the queue tag, the result coming
-back to `@claude` — and the seat protocol underneath it is the same one the smoke test
-exercised. But no run has yet gone `delegate(...)` → real OpenCode seat → real
-`room_reply` → `delegation-result` in one live room. Treat it as implemented and
-unproven.
+**The `delegate` tool has now been run end to end, against real binaries.** An MCP client
+connected to a real `node src/server.mjs` over stdio and called `delegate` for an
+`execution` task; a real OpenCode seat (opencode 1.18.27, `opencode/mimo-v2.5-free`) took
+it, edited the file in its own worktree, called `room_reply`, and the
+`delegation-result` notification came back over MCP carrying the delegation id. The seat
+also ran the command named in `spec.tests` and left `spec.do_not_touch` alone, which is
+the brief validation doing the job it exists for.
+
+That was one model on one machine, and the room in that run had a single delegation in
+flight. Concurrent delegations to one seat are covered by tests but have not been run
+against a live model.
 
 This is a personal project, not an Anthropic product. It uses
 `--dangerously-load-development-channels`, because custom channels are not on the
