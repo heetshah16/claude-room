@@ -1,5 +1,14 @@
 import { randomUUID } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import { buildNotification } from './channel.mjs'
+import { readFrames } from './seat.mjs'
+
+// The reply-only bridge registered with opencode is always src/seat.mjs
+// itself, so connect() defaults to its own sibling file rather than
+// requiring every caller (including every test) to name it explicitly. A
+// caller that already knows its own on-disk layout (scripts/room-opencode-seat.mjs)
+// may still pass an explicit bridgePath, which simply overrides this.
+const DEFAULT_BRIDGE_PATH = fileURLToPath(new URL('./seat.mjs', import.meta.url))
 
 /**
  * `provider/model`, split on the FIRST slash — a model id may itself contain
@@ -253,10 +262,111 @@ export function createOpenCodeSeat({
     if (action.type === 'end-turn') await finish(promptId)
   }
 
+  let stopped = false
+  let roomCtrl = null
+  let ocCtrl = null
+  let backoffMs = 500
+  let retryTimer = null
+
+  /** Registers the reply-only bridge so opencode can call room_reply. */
+  async function registerBridge(bridgePath) {
+    await post(`${opencodeUrl}/mcp`, {
+      name: 'room',
+      config: {
+        type: 'local',
+        command: ['node', bridgePath],
+        environment: {
+          ROOM_URL: roomUrl,
+          ROOM_SEAT_TOKEN: token,
+          ROOM_SEAT_HANDLE: handle,
+          // Reply-only: the driver owns the room feed. A second join would be
+          // refused as handle-taken and this seat would go deaf.
+          ROOM_SEAT_MODE: 'reply-only',
+        },
+        enabled: true,
+      },
+    })
+  }
+
+  function feed(url, onEvent, label) {
+    const ctrl = new AbortController()
+    ;(async () => {
+      try {
+        const res = await fetchImpl(url, { signal: ctrl.signal })
+        if (!res.ok || !res.body) throw new Error(`${label} feed failed: ${res.status}`)
+        backoffMs = 500
+        await readFrames(res.body, (event, raw) => {
+          let data
+          try { data = JSON.parse(raw) } catch { return }
+          void onEvent(event, data)
+        })
+      } catch {
+        // A dropped feed is normal: sleep/wake, a restart, a wifi blip.
+      }
+      if (!stopped) {
+        // Deliberately NOT unref'd (unlike the deadline timer above): the
+        // deadline's unref is only safe because a pending turn always holds
+        // some other referenced handle - the room feed, the opencode feed, or
+        // the stdio transport. During a reconnect backoff BOTH feeds can be
+        // down at once, so this timer must be the thing that keeps the
+        // process alive, or it could exit mid-turn with the deadline still
+        // armed. src/seat.mjs's own reconnectTimer follows the same rule.
+        retryTimer = setTimer(() => feed(url, onEvent, label), backoffMs)
+        backoffMs = Math.min(backoffMs * 2, 30_000)
+      }
+    })()
+    return ctrl
+  }
+
   return {
     onRoomEvent,
     onOpencodeEvent,
     sessionId: () => sessionId,
     busy: () => turn !== null,
+    async connect({ bridgePath = DEFAULT_BRIDGE_PATH } = {}) {
+      if (bridgePath) await registerBridge(bridgePath)
+
+      const res = await fetchImpl(`${roomUrl}/seat/join`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token, handle }),
+      })
+      if (res.ok) {
+        const body = await res.json()
+        if (body?.seed?.text) pending.add('seed', body.seed.text)
+      }
+
+      roomCtrl = feed(
+        `${roomUrl}/seat/events?token=${encodeURIComponent(token)}`,
+        (event, data) => onRoomEvent({ event, data }),
+        'room',
+      )
+      // opencode's bus frames carry the event type inside `data`, not on an
+      // `event:` line, so the frame's event name is ignored here.
+      ocCtrl = feed(`${opencodeUrl}/event`, (_event, data) => onOpencodeEvent(data), 'opencode')
+    },
+    stop() {
+      stopped = true
+      if (retryTimer) clearTimer(retryTimer)
+      clearTimer(turn?.timer)
+      roomCtrl?.abort()
+      ocCtrl?.abort()
+    },
+  }
+}
+
+/**
+ * The spawn recipe for this seat's own `opencode serve`.
+ *
+ * Bound to loopback deliberately: the server runs with no password unless
+ * OPENCODE_SERVER_PASSWORD is set, so exposing it on the tailnet the room
+ * itself listens on would hand out an unauthenticated shell.
+ */
+export function opencodeSeatArgs({ port, cwd }) {
+  return {
+    cmd: 'opencode',
+    args: ['serve', '--port', String(port), '--hostname', '127.0.0.1'],
+    env: { ...process.env },
+    cwd,
   }
 }

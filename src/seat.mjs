@@ -80,8 +80,14 @@ const FEED_EVENTS = new Set(['turn', 'mirror', 'brief', 'seed'])
  * matter here, so a bare `: comment` keep-alive (the room writes one on
  * connect) has neither and is silently skipped. `onFrame` fires once per
  * complete frame; this returns when the stream ends.
+ *
+ * `event` is passed through as `null` when a frame carries no `event:`
+ * line — OpenCode's SSE frames never have one, only `data:`. The room feed
+ * always sends `event:`, and its caller here additionally filters with
+ * FEED_EVENTS.has(event), which rejects null, so this relaxation is safe
+ * for the room path and required for OpenCode's.
  */
-async function readFrames(body, onFrame) {
+export async function readFrames(body, onFrame) {
   const reader = body.getReader()
   const decoder = new TextDecoder()
   let buf = ''
@@ -99,7 +105,7 @@ async function readFrames(body, onFrame) {
         if (line.startsWith('event: ')) event = line.slice('event: '.length)
         else if (line.startsWith('data: ')) data = line.slice('data: '.length)
       }
-      if (event !== null && data !== null) onFrame(event, data)
+      if (data !== null) onFrame(event, data)
     }
   }
 }
