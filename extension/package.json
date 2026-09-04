@@ -1,0 +1,18 @@
+{
+  "name": "claude-room-orchestrator",
+  "displayName": "Claude Room Orchestrator",
+  "description": "Chat with an orchestrating Claude that delegates mechanical work to free-model workers.",
+  "version": "0.0.1",
+  "private": true,
+  "engines": { "vscode": "^1.90.0", "node": ">=22" },
+  "categories": ["AI", "Other"],
+  "activationEvents": [],
+  "main": "./src/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "claudeRoom.openChat", "title": "Claude Room: Open Orchestrator Chat" },
+      { "command": "claudeRoom.restart", "title": "Claude Room: Restart Services" }
+    ]
+  },
+  "scripts": { "test": "node --test test/" }
+}
