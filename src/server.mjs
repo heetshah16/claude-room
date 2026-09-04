@@ -185,6 +185,7 @@ const web = createWeb({
   // Only a seat that was actually delegated to has a result to return; an
   // ordinary reply passes straight through.
   onSeatReply: (handle, text) => delegator.onSeatReply(handle, text),
+  onTurnAbandoned: (dest, turn, reason) => delegator.onTurnAbandoned(dest, turn, reason),
 })
 
 delegator = createDelegator({

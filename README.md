@@ -43,7 +43,7 @@ seats that have compacted independently get re-synchronised from the room's own 
 
 ## Status
 
-Working and tested, with two honest gaps. **460 tests** (`node --test`, 459 passing, 1
+Working and tested, with three honest gaps. **464 tests** (`node --test`, 463 passing, 1
 skipped — the skip is the opt-in endurance test below), plus an opt-in endurance run
 (`ROOM_ENDURANCE=1`) that idles a real six minutes to prove seat feeds survive undici's
 300s body timeout.
@@ -148,7 +148,7 @@ Five steps from a clone to a teammate typing in the room.
 git clone https://github.com/heetshah16/claude-room
 cd claude-room
 npm install          # one dependency: @modelcontextprotocol/sdk
-node --test          # optional: 460 tests, ~7s
+node --test          # optional: 464 tests, ~7s
 ```
 
 ### 2. Choose where it listens
@@ -663,7 +663,7 @@ text in front of an agent with your filesystem.
 npm test
 ```
 
-460 tests (459 passing, 1 skipped — see [Status](#status)), no network and no Claude Code
+464 tests (463 passing, 1 skipped — see [Status](#status)), no network and no Claude Code
 required. The pure modules — router, ledger,
 identity, decisions, queue, turns, brief, observer, admin, seats, fanout — carry the
 load-bearing logic and are tested directly. The observer takes `runModel` as an injected seam,

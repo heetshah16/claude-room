@@ -79,6 +79,10 @@ export function createWeb(deps) {
     // the seat reply is handed out through a callback the same way every
     // other cross-module hook here is.
     onSeatReply,
+    // Called when a destination's turn is given up on. Same reason: whoever
+    // is tracking work in flight needs to hear that this turn's messages will
+    // never be answered, and this module must not know who that is.
+    onTurnAbandoned,
   } = deps
 
   // Address seen per member, so a ban can cover the device as well as the name.
@@ -220,6 +224,11 @@ export function createWeb(deps) {
     const turn = queue.inflightFor(dest)
     if (!turn) return // nothing was actually in flight for this destination
     queue.endTurn(dest)
+    try {
+      onTurnAbandoned?.(dest, turn, reason)
+    } catch {
+      // Bookkeeping must never stop the room from ending a dead turn.
+    }
     for (const m of turn.messages) {
       bus.publish('rejected', { memberId: m.memberId, name: m.name, reason })
     }

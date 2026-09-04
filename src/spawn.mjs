@@ -57,8 +57,16 @@ export function resolveCommand(name, opts = {}) {
 }
 
 /**
- * The characters `cmd.exe` parses rather than passes on, when it meets them
- * outside a quoted region. `%` is here because a bare `%NAME%` is expanded.
+ * The characters `cmd.exe` parses rather than passes on when it meets them
+ * outside a quoted region, and which a `^` therefore has to escape there.
+ *
+ * `%` is the odd one out and the caret does NOT fully cover it: cmd expands
+ * `%NAME%` inside double quotes as well, and a caret inside a quoted region is
+ * a literal character rather than an escape, so there is no escape available
+ * for the quoted case at all. The known limitation is therefore: an argument
+ * that both needs quoting AND contains `%NAME%` naming a variable that exists
+ * will have it substituted. No path this launcher builds does, and no reliable
+ * command-line escape for it exists — `%%` only works inside a batch file.
  */
 const CMD_META = /[&|<>^()%]/
 
@@ -74,11 +82,20 @@ const CMD_META = /[&|<>^()%]/
  *     the escape is only emitted where it actually escapes.
  *  2. Whatever cmd hands on is parsed again by the target's own argv
  *     splitter, under the Windows rules: a run of backslashes is literal
- *     unless it precedes a double quote, where n backslashes become 2n, and
- *     an embedded quote is escaped as `\"`.
+ *     unless it precedes a double quote, where n backslashes become 2n.
  *
  * An argument is wrapped in double quotes when it contains a space, a tab or
  * a quote — and when it is empty, which would otherwise vanish entirely.
+ *
+ * An embedded quote is escaped by DOUBLING it (`""`), not as `\"`. Both
+ * parsers read `""` inside a quoted region as one literal quote and stay
+ * inside the region, so the quote state stays balanced. `\"` would satisfy the
+ * argv splitter but not cmd, which does not know backslash escapes: cmd would
+ * see the region close early, and everything after it in that argument —
+ * including the next argument on the line — would be read unquoted. That is
+ * not a cosmetic difference. It is **arbitrary command execution**:
+ * `['x"y', 'a b& echo PWNED']` really did run `echo PWNED` under the old
+ * escaping.
  */
 export function quoteForCmd(arg) {
   const s = String(arg)
@@ -99,9 +116,13 @@ export function quoteForCmd(arg) {
       continue
     }
     if (ch === '"') {
-      out += '\\'.repeat(slashes * 2 + 1)
+      // The run of backslashes before a quote is doubled, per the argv rules;
+      // the quote itself is then doubled rather than backslash-escaped, so
+      // cmd's own quote tracking never leaves the region. `inQuotes` is
+      // deliberately NOT toggled — `""` is close-then-reopen, net zero.
+      out += '\\'.repeat(slashes * 2)
       slashes = 0
-      emitQuote()
+      out += '""'
       continue
     }
     out += '\\'.repeat(slashes)

@@ -32,11 +32,11 @@ function seated() {
     config: loadConfig({ ROOM_HANDLES: 'claude' }), registry, seats,
     ledger: new Ledger(), decisions: new Decisions(),
   })
-  return { queue, orchestrator: { id: 'orchestrator', name: 'claude', role: 'member', muted: false } }
+  return { queue, ana, orchestrator: { id: 'orchestrator', name: 'claude', role: 'member', muted: false } }
 }
 
 function delegator(extra = {}) {
-  const { queue, orchestrator } = seated()
+  const { queue, ana, orchestrator } = seated()
   const published = []
   const appended = []
   const drained = []
@@ -51,7 +51,7 @@ function delegator(extra = {}) {
     now: () => 1,
     ...extra,
   })
-  return { d, queue, published, appended, drained, notified }
+  return { d, queue, ana, published, appended, drained, notified }
 }
 
 const EXEC = { class: 'execution', task: 'add mul()', spec: { files: ['math.js'], tests: ['npm test'] } }
@@ -89,10 +89,11 @@ test('a rejected brief never reaches the queue at all', () => {
 })
 
 test('a seat that owes a delegation gets its reply routed back to @claude as the result', () => {
-  const { d, notified, published } = delegator()
+  const { d, queue, notified, published } = delegator()
   const r = d.delegate({ ...EXEC, to: '@opencode' })
-  const nt = d.onSeatReply('opencode', 'added mul(), tests pass')
-  assert.ok(nt, 'the reply must come back as a delegation-result')
+  queue.beginTurn() // the seat is now actually running that delegation
+  const results = d.onSeatReply('opencode', 'added mul(), tests pass')
+  assert.equal(results.length, 1, 'the reply must come back as a delegation-result')
   assert.equal(notified[0].id, r.id, 'carrying the delegation id')
   assert.equal(notified[0].class, 'execution')
   assert.equal(notified[0].text, 'added mul(), tests pass')
@@ -103,15 +104,71 @@ test('a reply from a seat that owes nothing produces no delegation-result', () =
   // A seat answering its own owner is an ordinary reply; turning it into a
   // result for a delegation that never happened would invent work.
   const { d, notified } = delegator()
-  assert.equal(d.onSeatReply('opencode', 'just chatting'), null)
+  assert.deepEqual(d.onSeatReply('opencode', 'just chatting'), [])
   assert.deepEqual(notified, [])
 })
 
 test('a delegation is answered exactly once - the second reply is an ordinary one', () => {
-  const { d } = delegator()
+  const { d, queue } = delegator()
   d.delegate({ ...EXEC, to: '@opencode' })
-  assert.ok(d.onSeatReply('opencode', 'done'))
-  assert.equal(d.onSeatReply('opencode', 'and one more thing'), null)
+  queue.beginTurn()
+  assert.equal(d.onSeatReply('opencode', 'done').length, 1)
+  assert.deepEqual(d.onSeatReply('opencode', 'and one more thing'), [])
+})
+
+test('a second delegation queued behind the first is still answered, not orphaned', () => {
+  // Queue.submit gates a seat on being ONLINE, never on being BUSY, so a
+  // second delegate to a busy seat is accepted and queued behind the first.
+  // Keyed by handle the second record overwrote the first, both calls returned
+  // success, and the first answer never came back - a silent success, which is
+  // the failure the unknown-handle check exists to prevent, arriving through a
+  // different door.
+  const { d, queue, notified } = delegator()
+  const first = d.delegate({ ...EXEC, to: '@opencode' })
+  const second = d.delegate({ ...EXEC, to: '@opencode', task: 'add div()' })
+  assert.equal(second.ok, true, 'a busy seat still accepts a second delegation')
+
+  // Both were queued before any turn began, so they drain into one batch.
+  queue.beginTurn()
+  const results = d.onSeatReply('opencode', 'added both')
+  assert.equal(results.length, 2, 'answering only the first would orphan the second')
+  assert.deepEqual(
+    notified.map(n => n.id).sort(),
+    [first.id, second.id].sort(),
+    'each delegation is answered against its own id',
+  )
+  assert.equal(d.pending.size, 0)
+})
+
+test('a reply to a human-addressed turn is not mistaken for a delegation result', () => {
+  // A human addressing a seat is a supported flow. Matching on handle alone
+  // shipped the human's answer back to the orchestrator as the delegation's
+  // result, and the real delegation - run later - then found nothing left to
+  // return. Identity, not position, is what decides which turn a reply answers.
+  const { d, queue, ana, notified } = delegator()
+  queue.submit(ana, '@opencode what is 2+2?')
+  queue.beginTurn() // the seat is running the HUMAN's turn
+  d.delegate({ ...EXEC, to: '@opencode' }) // queued behind it, not yet running
+
+  assert.deepEqual(d.onSeatReply('opencode', '4'), [], 'that answered the human, not the delegation')
+  assert.deepEqual(notified, [])
+  assert.equal(d.pending.size, 1, 'the delegation is still owed an answer')
+})
+
+test('an abandoned turn releases the delegation it was carrying', () => {
+  // A dropped feed or an eviction retires the turn through abandonTurn. Left
+  // behind, the record is not a leak but something worse: the seat's next
+  // unrelated reply would be delivered as this dead delegation's result.
+  const { d, queue, published } = delegator()
+  d.delegate({ ...EXEC, to: '@opencode' })
+  const turn = queue.beginTurn()
+  d.onTurnAbandoned('opencode', turn, 'seat-disconnected')
+
+  assert.equal(d.pending.size, 0)
+  assert.deepEqual(
+    published.filter(([e]) => e === 'delegation').map(([, x]) => x.state),
+    ['sent', 'abandoned'],
+  )
 })
 
 test('a delegated turn is tagged kind=delegation, so it is distinguishable from something a person typed', () => {
@@ -133,10 +190,10 @@ test('a seat reply pops its pending delegation and comes back as a delegation-re
   // from it. The id is what lets the orchestrator match this answer to the
   // call it made minutes earlier.
   const pending = new PendingDelegations()
-  pending.add('opencode', { id: 'del-1', task: 'add mul()', class: 'execution', at: 1 })
+  pending.add({ id: 'del-1', task: 'add mul()', class: 'execution', at: 1 })
 
-  const record = pending.take('opencode')
-  assert.ok(record, 'the seat that was delegated to owes an answer')
+  const record = pending.take('del-1')
+  assert.ok(record, 'the delegation that was handed out owes an answer')
   const nt = buildDelegationResultNotification(
     { ...record, handle: 'opencode', text: 'added mul(), tests pass' },
     { roomName: 'room' },
@@ -149,15 +206,20 @@ test('a seat reply pops its pending delegation and comes back as a delegation-re
   assert.equal(pending.size, 0, 'a delegation is answered exactly once')
 })
 
-test('one delegation per handle can be in flight, which is what makes keying by handle sound', () => {
-  // The room serialises one turn per destination and a seat is a destination,
-  // so the second delegation cannot start until the first has ended. Recording
-  // it replaces rather than accumulating, and nothing is left orphaned.
+test('two delegations to one seat accumulate, because neither may silently replace the other', () => {
+  // Keyed by handle this asserted the opposite - that the second record
+  // replacing the first was sound, on the belief that the room's
+  // one-turn-per-destination rule made a second in-flight delegation
+  // impossible. It does not: submit gates on the seat being ONLINE, not BUSY.
+  // The id is the delegation's identity, so both survive and each is taken by
+  // its own.
   const pending = new PendingDelegations()
-  pending.add('opencode', { id: 'del-1', task: 'first', class: 'execution', at: 1 })
-  pending.add('opencode', { id: 'del-2', task: 'second', class: 'execution', at: 2 })
-  assert.equal(pending.size, 1)
-  assert.equal(pending.take('opencode').id, 'del-2')
+  pending.add({ id: 'del-1', task: 'first', class: 'execution', at: 1 })
+  pending.add({ id: 'del-2', task: 'second', class: 'execution', at: 2 })
+  assert.equal(pending.size, 2, 'neither delegation may overwrite the other')
+  assert.equal(pending.take('del-1').task, 'first')
+  assert.equal(pending.take('del-2').task, 'second')
+  assert.equal(pending.size, 0)
 })
 
 test('an empty reply produces no notification rather than an empty one', () => {

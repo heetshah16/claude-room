@@ -143,8 +143,23 @@ test('a plain argument is passed through untouched, so ordinary launches read no
   assert.equal(quoteForCmd('--add-dir'), '--add-dir')
 })
 
-test('an embedded double quote is escaped by Windows argv rules, not dropped', () => {
-  assert.equal(quoteForCmd('say "hi"'), '"say \\"hi\\""')
+test('an embedded double quote is doubled, so cmd never leaves the quoted region', () => {
+  // `\"` would satisfy the argv splitter but not cmd, which knows no backslash
+  // escapes: cmd would close the quoted region there and read the rest of the
+  // line — including the NEXT argument — unquoted. `""` is read as one literal
+  // quote by both parsers and leaves the quote state balanced.
+  assert.equal(quoteForCmd('say "hi"'), '"say ""hi"""')
+})
+
+test('a quote in one argument cannot smuggle a second command into the next one', () => {
+  // Not cosmetic: under `\"` escaping, ['x"y', 'a b& echo PWNED'] really did
+  // run `echo PWNED` — the unbalanced quote left `&` outside any quoted region.
+  // Verified against a real cmd.exe; both arguments now round-trip intact.
+  const line = ['x"y', 'a b& echo PWNED'].map(quoteForCmd).join(' ')
+  assert.equal(line, '"x""y" "a b& echo PWNED"')
+  // Every quote in the line pairs up, which is what denies cmd an unquoted
+  // region to find a metacharacter in.
+  assert.equal((line.match(/"/g) ?? []).length % 2, 0)
 })
 
 test('a cmd.exe metacharacter outside quotes is escaped, closing the injection surface', () => {

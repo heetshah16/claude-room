@@ -6,8 +6,12 @@
  * rejection is returned to the orchestrator while it still has the context to
  * fix it — the errors name the missing field, not just "rejected".
  *
- * Pure: no I/O, no timers, no process.env. This module only looks at the
- * object it is given.
+ * `validateDelegation` and `renderDelegation` are pure: no I/O, no timers, no
+ * process.env, nothing but the object they are given. `PendingDelegations` and
+ * `createDelegator` are not — they hold the in-flight delegation records and
+ * read a clock — but they still touch no I/O of their own: the queue, store,
+ * bus, channel and clock all arrive as injected dependencies, which is what
+ * keeps this module importable from a test without booting a room.
  */
 
 /**
@@ -46,39 +50,45 @@ export function validateDelegation(input = {}) {
 }
 
 /**
- * Delegations handed out and not yet answered, keyed by the target seat's
- * handle.
+ * Delegations handed out and not yet answered, keyed by the id of the message
+ * that carries each one.
  *
- * Keying by handle is only correct because the room serialises one turn per
- * destination, and an agent seat IS a destination: a second delegation to the
- * same handle cannot begin until the first one's turn has ended, so at most
- * one delegation per handle is ever in flight. That invariant is what lets a
- * seat's reply be matched to the delegation that caused it without a
- * correlation id — nothing in the seat protocol carries one, and the seat
- * itself is a plain Claude Code or OpenCode session that would have no reason
- * to echo one back.
+ * An earlier version keyed this by target handle, on the belief that the room
+ * runs one turn per destination so only one delegation per handle can ever be
+ * in flight. That belief was wrong, and wrong in the direction that loses
+ * work: `Queue.submit` gates a seat on being ONLINE, never on being BUSY, so a
+ * second `delegate` to a busy seat is accepted and queued behind the first.
+ * Keyed by handle, the second record simply overwrote the first, both calls
+ * returned success, and the first delegation's answer never came back —
+ * exactly the silent-success-then-vanish failure that the unknown-handle fix
+ * exists to prevent, arriving through a different door.
  *
- * `take` is deliberately destructive: a delegation is answered exactly once,
- * and every reply after that is the seat talking to the room normally.
+ * The message id is the delegation's identity, and it is already carried by
+ * the enqueued message (tagged `kind: 'delegation'`), so the seat's reply can
+ * be matched to the right record by reading the turn the seat is actually
+ * running. Nothing in the seat protocol carries a correlation id, and nothing
+ * has to.
+ *
+ * `take` is deliberately destructive: a delegation is answered exactly once.
  */
 export class PendingDelegations {
-  #byHandle = new Map()
+  #byId = new Map()
 
   /** @param {{id:string, task:string, class:string, at:number}} record */
-  add(handle, record) {
-    this.#byHandle.set(handle, record)
+  add(record) {
+    this.#byId.set(record.id, record)
     return record
   }
 
-  /** The delegation this seat owes an answer for, removed. Null if it owes none. */
-  take(handle) {
-    const record = this.#byHandle.get(handle) ?? null
-    if (record) this.#byHandle.delete(handle)
+  /** The record for this delegation id, removed. Null if there is none. */
+  take(id) {
+    const record = this.#byId.get(id) ?? null
+    if (record) this.#byId.delete(id)
     return record
   }
 
   get size() {
-    return this.#byHandle.size
+    return this.#byId.size
   }
 }
 
@@ -146,7 +156,7 @@ export function createDelegator({
       // The delegation record: what makes the seat's eventual answer
       // attributable, and what carries `class` out to the room's event stream.
       const record = { id: r.message.id, task: String(input.task), class: input.class, at: now() }
-      pending.add(handle, record)
+      pending.add(record)
       bus.publish('delegation', { ...record, to: handle, state: 'sent' })
 
       // Every other successful addressed submit drains. Without this the turn
@@ -156,15 +166,52 @@ export function createDelegator({
     },
 
     /**
-     * A seat answered. If it owed a delegation, that answer is the result;
-     * otherwise it is an ordinary reply and nothing here happens.
+     * A seat answered. Which delegation — if any — that answers is decided by
+     * the turn the seat is actually running, never by "the last thing we sent
+     * this handle": position is not identity. A human can address a seat
+     * directly (a supported flow) with a delegation queued behind that turn,
+     * and matching on handle alone shipped the human's answer back to the
+     * orchestrator as the delegation's result while the real delegation, run
+     * later, found nothing left to return.
+     *
+     * Every delegation delivered in this turn is answered by this reply.
+     * Usually that is exactly one. It is two when both were queued behind
+     * something else and drained into a single batch — and answering only the
+     * first would orphan the second in precisely the way keying by handle did.
+     *
+     * @returns {object[]} one notification per delegation answered; empty when
+     *   this reply answers no delegation at all.
      */
     onSeatReply(handle, text) {
-      const record = pending.take(handle)
-      if (!record) return null
-      const nt = channel.notifyDelegationResult({ ...record, handle, text })
-      bus.publish('delegation', { ...record, to: handle, state: 'done' })
-      return nt
+      const turn = queue?.inflightFor?.(handle)
+      const results = []
+      for (const m of turn?.messages ?? []) {
+        if (m.kind !== 'delegation') continue
+        const record = pending.take(m.id)
+        if (!record) continue
+        results.push(channel.notifyDelegationResult({ ...record, handle, text }))
+        bus.publish('delegation', { ...record, to: handle, state: 'done' })
+      }
+      return results
+    },
+
+    /**
+     * A destination's turn ended without ever being answered — a seat's feed
+     * dropping mid-turn, or an eviction, which retires the seat through that
+     * same path.
+     *
+     * Whatever that turn was carrying is never coming back, so its records go
+     * now. Left behind, a stale record is not a leak (it is bounded by the
+     * delegations actually made) but it is worse than one: the next reply from
+     * that seat, for entirely unrelated work, would be delivered to the
+     * orchestrator as the dead delegation's result.
+     */
+    onTurnAbandoned(dest, turn, reason = 'abandoned') {
+      for (const m of turn?.messages ?? []) {
+        if (m.kind !== 'delegation') continue
+        const record = pending.take(m.id)
+        if (record) bus.publish('delegation', { ...record, to: dest, state: 'abandoned', reason })
+      }
     },
   }
 }

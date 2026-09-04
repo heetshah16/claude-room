@@ -160,9 +160,10 @@ export function createSeat({ roomUrl, token, handle, fetchImpl = fetch, mode = '
   }))
 
   // Extracted so both the MCP request handler and the directly-callable
-  // callTool() (used by reply-only seats, and by tests without an MCP
-  // client) share one implementation instead of a hand-maintained second
-  // copy - precisely how a previous bug here was introduced.
+  // callTool() (which only tests use - a reply-only seat runs as its own
+  // process and goes through the transport like any other client) share one
+  // implementation instead of a hand-maintained second copy - precisely how a
+  // previous bug here was introduced.
   async function roomReply(a) {
     try {
       const res = await fetchImpl(`${roomUrl}/seat/reply`, {
