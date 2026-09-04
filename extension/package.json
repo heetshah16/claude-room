@@ -14,5 +14,5 @@
       { "command": "claudeRoom.restart", "title": "Claude Room: Restart Services" }
     ]
   },
-  "scripts": { "test": "node --test test/" }
+  "scripts": { "test": "node --test" }
 }
