@@ -1,6 +1,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
+import { TASK_CLASSES } from './delegation.mjs'
 
 // Claude Code turns each meta entry into an attribute on the <channel> tag, and
 // silently drops any key that is not an identifier. Validate rather than trust:
@@ -88,9 +89,65 @@ Two attributes say how much to trust it. age_s is how many seconds ago it was bu
 
 Your transcript output does NOT reach the room. Anything you want the team to see must go through the room_reply tool. Room members see your tool calls as an activity feed, but never your prose or your reasoning.
 
-When members give you contradictory instructions, say so and ask which one wins. Do not silently pick a side. Use room_decision to record a decision the team has settled, so later contradictory requests get flagged automatically.`
+When members give you contradictory instructions, say so and ask which one wins. Do not silently pick a side. Use room_decision to record a decision the team has settled, so later contradictory requests get flagged automatically.
 
-export function createChannel({ config, onReply, onDecision }) {
+When a piece of work does not need this session — boilerplate, tests, mechanical refactors, documentation, lint and build fixes — consider handing it to another seat with delegate instead of doing it yourself. Only seats whose owner has opted in accept delegated work, and only a spec with real files, an interface, and a way to verify the result gives that seat a fair chance of succeeding; a thin brief is rejected back to you with the reason, so fix it and try again rather than falling back to doing the work yourself out of habit.`
+
+const TOOLS = [
+  {
+    name: 'room_reply',
+    description:
+      'Send a message to everyone in the room. This is the ONLY way the team sees your words - your normal output never reaches them.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'The message to send to the room' },
+        to: { type: 'string', description: 'Optional member name this reply answers' },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    name: 'room_decision',
+    description:
+      'Record a decision the team has settled, so later contradictory requests are flagged instead of silently overriding it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'The decision, stated plainly' },
+        by: { type: 'string', description: 'Who decided' },
+        supersedes: { type: 'string', description: 'Id of a decision this replaces' },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    name: 'delegate',
+    description:
+      'Hand a scoped task to another seat in the room. Use it for work that does not need this session: boilerplate, tests, mechanical refactors, documentation, lint and build fixes. The spec is what determines whether the result is usable - name the files, the interface, and how it will be verified. A thin brief is rejected.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        to: { type: 'string', description: 'The @handle to delegate to' },
+        class: { type: 'string', enum: TASK_CLASSES, description: 'reasoning, execution, or verification' },
+        task: { type: 'string', description: 'One line stating what to do' },
+        spec: {
+          type: 'object',
+          description: 'The brief. files and tests are REQUIRED when class is execution.',
+          properties: {
+            files: { type: 'array', items: { type: 'string' }, description: 'Files the worker may change' },
+            interface: { type: 'string', description: 'The signature or contract to conform to' },
+            tests: { type: 'array', items: { type: 'string' }, description: 'Commands that verify the work' },
+            do_not_touch: { type: 'array', items: { type: 'string' }, description: 'Files that must not change' },
+          },
+        },
+      },
+      required: ['to', 'class', 'task'],
+    },
+  },
+]
+
+export function createChannel({ config, onReply, onDecision, onDelegate }) {
   const mcp = new Server(
     { name: 'room', version: '0.1.0' },
     {
@@ -107,50 +164,40 @@ export function createChannel({ config, onReply, onDecision }) {
     },
   )
 
-  mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
-      {
-        name: 'room_reply',
-        description:
-          'Send a message to everyone in the room. This is the ONLY way the team sees your words - your normal output never reaches them.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            text: { type: 'string', description: 'The message to send to the room' },
-            to: { type: 'string', description: 'Optional member name this reply answers' },
-          },
-          required: ['text'],
-        },
-      },
-      {
-        name: 'room_decision',
-        description:
-          'Record a decision the team has settled, so later contradictory requests are flagged instead of silently overriding it.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            text: { type: 'string', description: 'The decision, stated plainly' },
-            by: { type: 'string', description: 'Who decided' },
-            supersedes: { type: 'string', description: 'Id of a decision this replaces' },
-          },
-          required: ['text'],
-        },
-      },
-    ],
-  }))
+  async function listTools() {
+    return TOOLS
+  }
+
+  async function callTool(name, a = {}) {
+    if (name === 'room_reply') {
+      onReply(String(a.text), a.to ? String(a.to) : null)
+      return { content: [{ type: 'text', text: 'sent' }] }
+    }
+    if (name === 'room_decision') {
+      const d = onDecision(String(a.text), a.by ? String(a.by) : 'claude', a.supersedes)
+      return { content: [{ type: 'text', text: `recorded ${d.id}` }] }
+    }
+    if (name === 'delegate') {
+      const result = onDelegate?.(a) ?? { ok: false, errors: ['delegation is not enabled in this room'] }
+      if (!result.ok) {
+        // Visible, and specific. An orchestrator told only "rejected" cannot
+        // repair the brief; one told which field is missing can.
+        return {
+          content: [{ type: 'text', text: `delegate rejected:\n- ${(result.errors ?? []).join('\n- ')}` }],
+          isError: true,
+        }
+      }
+      return { content: [{ type: 'text', text: `delegated ${result.id} to ${a.to}` }] }
+    }
+    return { content: [{ type: 'text', text: `unknown tool: ${name}` }], isError: true }
+  }
+
+  mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: await listTools() }))
 
   mcp.setRequestHandler(CallToolRequestSchema, async req => {
     const a = req.params.arguments ?? {}
     try {
-      if (req.params.name === 'room_reply') {
-        onReply(String(a.text), a.to ? String(a.to) : null)
-        return { content: [{ type: 'text', text: 'sent' }] }
-      }
-      if (req.params.name === 'room_decision') {
-        const d = onDecision(String(a.text), a.by ? String(a.by) : 'claude', a.supersedes)
-        return { content: [{ type: 'text', text: `recorded ${d.id}` }] }
-      }
-      return { content: [{ type: 'text', text: `unknown tool: ${req.params.name}` }], isError: true }
+      return await callTool(req.params.name, a)
     } catch (err) {
       return { content: [{ type: 'text', text: String(err?.message ?? err) }], isError: true }
     }
@@ -167,6 +214,8 @@ export function createChannel({ config, onReply, onDecision }) {
 
   return {
     mcp,
+    listTools,
+    callTool,
     async connect() {
       await mcp.connect(new StdioServerTransport())
     },

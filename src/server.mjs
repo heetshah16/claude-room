@@ -27,6 +27,7 @@ import { createMember } from './identity.mjs'
 import { Observer } from './observer.mjs'
 import { makeRunner } from './run-model.mjs'
 import { createAdmin } from './admin.mjs'
+import { validateDelegation, renderDelegation } from './delegation.mjs'
 
 const log = s => process.stderr.write(`room: ${s}\n`)
 const standalone = process.env.ROOM_STANDALONE === '1'
@@ -34,6 +35,11 @@ const standalone = process.env.ROOM_STANDALONE === '1'
 // Reserved ledger identity so the observer's spend sits beside the humans it
 // serves rather than hiding inside the host's total.
 const OBSERVER_ID = 'observer'
+
+// Reserved identity for work the orchestrator hands out, so a delegation is
+// attributable in the ledger and the feed rather than appearing to come from
+// a human who never typed it.
+const ORCHESTRATOR = { id: 'orchestrator', name: 'claude', role: 'member', muted: false }
 
 const config = loadConfig(process.env)
 const store = new Store(config.stateDir)
@@ -103,6 +109,19 @@ const channel = createChannel({
     store.saveDecisions(decisions)
     bus.publish('decision', d)
     return d
+  },
+  onDelegate(input) {
+    const check = validateDelegation(input)
+    if (!check.ok) return { ok: false, errors: check.errors }
+
+    const handle = String(input.to).replace(/^@/, '').toLowerCase()
+    const text = `@${handle} ${renderDelegation(input)}`
+    const r = queue.submit(ORCHESTRATOR, text, { delegation: true })
+    if (!r.ok) return { ok: false, errors: [`could not delegate to @${handle}: ${r.reason}`] }
+
+    store.appendMessage(r.message)
+    bus.publish('message', r.message)
+    return { ok: true, id: r.message.id }
   },
 })
 

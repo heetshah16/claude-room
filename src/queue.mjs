@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { classify } from './router.mjs'
-import { ownsSeat, addressPolicyOf } from './identity.mjs'
+import { ownsSeat, addressPolicyOf, isDelegatable } from './identity.mjs'
 
 const INFLIGHT = '__inflight__'
 
@@ -123,11 +123,19 @@ export class Queue {
     // genuinely shared account opt into `shared` per seat.
     const agent = this.registry?.byHandle(c.handle)
     if (agent) {
-      if (addressPolicyOf(agent) === 'owner-only' && !ownsSeat(member, agent)) {
+      if (opts.delegation) {
+        // Delegation is a different authorisation question from addressing.
+        // The orchestrator does not own this seat and never will, so the
+        // owner-only test would always refuse it; what the owner grants
+        // instead is an explicit, per-seat opt-in.
+        if (!isDelegatable(agent)) {
+          return { ok: false, reason: 'not-delegatable', message: null, conflicts: [] }
+        }
+      } else if (addressPolicyOf(agent) === 'owner-only' && !ownsSeat(member, agent)) {
         return { ok: false, reason: 'not-your-seat', message: null, conflicts: [] }
       }
       // Liveness is not a policy question: an offline seat cannot be addressed
-      // by anyone, however permissive its policy.
+      // by anyone, however permissive its policy or however it was authorised.
       if (!this.seats?.isOnline(c.handle)) return { ok: false, reason: 'seat-offline', message: null, conflicts: [] }
     }
 
