@@ -83,6 +83,12 @@ export function createWeb(deps) {
     // is tracking work in flight needs to hear that this turn's messages will
     // never be answered, and this module must not know who that is.
     onTurnAbandoned,
+    // The orchestrator's one way to reach the room: POST /api/delegate hands
+    // the parsed body straight to this and returns whatever it returns. The
+    // room's delegation bookkeeping (validation, the queue, the ledger entry)
+    // lives in src/delegation.mjs and is wired in server.mjs, same reason
+    // onSeatReply/onTurnAbandoned are callbacks rather than imports here.
+    onDelegate,
   } = deps
 
   // Address seen per member, so a ban can cover the device as well as the name.
@@ -416,6 +422,25 @@ export function createWeb(deps) {
         if (!member) return json(res, 401, { error: 'bad token' })
         const turn = turns.get(url.searchParams.get('id'))
         return turn ? json(res, 200, turn) : json(res, 404, { error: 'no such turn' })
+      }
+
+      if (req.method === 'POST' && path === '/api/delegate') {
+        const member = memberFrom(req, url, null)
+        if (!member) return json(res, 401, { error: 'bad token' })
+        // Delegation puts work on somebody else's seat and spends the room's
+        // time; it is an owner action, like every other /api/admin route.
+        if (member.role !== 'owner') return json(res, 403, { error: 'owner-only' })
+        let body = {}
+        try {
+          const read = await readBody(req)
+          if (read.tooLarge) return json(res, 413, { error: 'body too large' })
+          body = JSON.parse(read.buf.toString('utf8') || '{}')
+        } catch {
+          return json(res, 400, { error: 'bad json' })
+        }
+        // The verdict travels verbatim - it names the missing spec field, and
+        // an orchestrator told only "rejected" cannot repair the brief.
+        return json(res, 200, onDelegate?.(body) ?? { ok: false, errors: ['delegation is not enabled'] })
       }
 
       if (req.method === 'POST' && path === '/msg') {

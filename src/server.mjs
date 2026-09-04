@@ -186,6 +186,9 @@ const web = createWeb({
   // ordinary reply passes straight through.
   onSeatReply: (handle, text) => delegator.onSeatReply(handle, text),
   onTurnAbandoned: (dest, turn, reason) => delegator.onTurnAbandoned(dest, turn, reason),
+  // The orchestrator's HTTP entry point, mirrored from the MCP-side wiring
+  // above (channel's onDelegate): same delegator, same delegate() call.
+  onDelegate: input => delegator.delegate(input),
 })
 
 delegator = createDelegator({

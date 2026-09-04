@@ -92,6 +92,7 @@ export function harness(env = {}, observer = null, extra = {}) {
     permissions, turns, config, sent, verdicts, order, briefs, noted, bans, admin, runtime,
     // Convenience accessors the seat-protocol tests read directly.
     agentToken: agent.token, anaToken: ana.token, anaId: ana.id,
+    ownerToken: owner.token,
     hookToken: config.hookToken,
     heetAgentToken: heetAgent.token,
   }
