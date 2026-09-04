@@ -21,6 +21,16 @@ export function sanitizeMeta(meta) {
 }
 
 /**
+ * The envelope every channel event shares. One definition, so a second kind
+ * of event can never drift from the first — this repo has already been bitten
+ * by a hand-maintained second copy of something that had to stay identical.
+ */
+const channelEvent = (content, meta) => ({
+  method: 'notifications/claude/channel',
+  params: { content, meta: sanitizeMeta(meta) },
+})
+
+/**
  * Build the channel notification for a drained turn.
  *
  * Everyone's words travel verbatim in `content`; attribution travels in `meta`.
@@ -37,7 +47,7 @@ export function buildNotification(messages, roomName) {
 
   const first = messages[0]
   const attachments = messages.map(m => m.attachment?.path).filter(Boolean)
-  const meta = sanitizeMeta({
+  return channelEvent(content, {
     room: roomName,
     user: single ? first.name : messages.map(m => m.name).join(','),
     member_id: single ? first.memberId : messages.map(m => m.memberId).join(','),
@@ -49,8 +59,6 @@ export function buildNotification(messages, roomName) {
     // while the agent was busy — the batch is exactly when that happens.
     ...(attachments.length ? { file_path: attachments.join(',') } : {}),
   })
-
-  return { method: 'notifications/claude/channel', params: { content, meta } }
 }
 
 /**
@@ -62,21 +70,40 @@ export function buildNotification(messages, roomName) {
  */
 export function buildBriefNotification(text, { ageS, pending, roomName }) {
   if (!text || !String(text).trim()) return null
-  return {
-    method: 'notifications/claude/channel',
-    params: {
-      content: String(text),
-      meta: sanitizeMeta({
-        room: roomName,
-        kind: 'brief',
-        age_s: ageS ?? 0,
-        // How many room events happened after this brief was built and are
-        // therefore not reflected in it. Distinct from age: a one-second-old
-        // brief can already be missing three messages.
-        pending: pending ?? 0,
-      }),
-    },
-  }
+  return channelEvent(String(text), {
+    room: roomName,
+    kind: 'brief',
+    age_s: ageS ?? 0,
+    // How many room events happened after this brief was built and are
+    // therefore not reflected in it. Distinct from age: a one-second-old
+    // brief can already be missing three messages.
+    pending: pending ?? 0,
+  })
+}
+
+/**
+ * What a delegated seat answered, coming back to the orchestrator.
+ *
+ * Same envelope and the same "annotate, never rewrite" rule as everything
+ * else on this channel: the seat's words are the content, byte for byte, and
+ * everything about the delegation travels in `meta`. `delegation_id` is what
+ * lets an orchestrator match a result to the call it made, and `handle` says
+ * which seat is answering — without them a reply arriving minutes later is
+ * just an unattributable paragraph.
+ */
+export function buildDelegationResultNotification(result = {}, { roomName } = {}) {
+  const text = String(result.text ?? '')
+  if (!text.trim()) return null
+  return channelEvent(text, {
+    room: roomName,
+    kind: 'delegation-result',
+    delegation_id: result.id,
+    handle: result.handle,
+    // The task class labels the work; it never routed anything, and it does
+    // not start doing so here.
+    class: result.class,
+    task: result.task,
+  })
 }
 
 const INSTRUCTIONS = roomName => `You are the shared agent for the "${roomName}" room. Several people talk to you at once.
@@ -226,6 +253,11 @@ export function createChannel({ config, onReply, onDecision, onDelegate }) {
     },
     notifyBrief(text, opts = {}) {
       const nt = buildBriefNotification(text, { ...opts, roomName: config.roomName })
+      if (nt) void mcp.notification(nt)
+      return nt
+    },
+    notifyDelegationResult(result) {
+      const nt = buildDelegationResultNotification(result, { roomName: config.roomName })
       if (nt) void mcp.notification(nt)
       return nt
     },

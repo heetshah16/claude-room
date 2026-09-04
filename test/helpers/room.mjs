@@ -21,7 +21,10 @@ import { Bus } from '../../src/bus.mjs'
 import { PermissionBroker } from '../../src/permissions.mjs'
 import { TurnLog } from '../../src/turns.mjs'
 
-export function harness(env = {}, observer = null) {
+// `extra` is spread into createWeb's deps, for tests that need one of its
+// optional callbacks (onSeatReply, say). Nothing existing passes it, so the
+// default keeps every current caller identical.
+export function harness(env = {}, observer = null, extra = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'roomweb-'))
   // 'ana-agent' and 'heet-agent' are configured handles alongside 'claude' so
   // a plain @mention routes to either seat the same way any other handle
@@ -81,6 +84,7 @@ export function harness(env = {}, observer = null) {
       notifyBrief: (text, o) => { order.push('brief'); briefs.push({ text, ...o }) },
       sendVerdict: (id, b) => verdicts.push([id, b]),
     },
+    ...extra,
   })
 
   return {

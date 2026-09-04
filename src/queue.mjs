@@ -98,7 +98,10 @@ export class Queue {
       ts: this.now(),
       addressed: c.addressed,
       handle: c.handle,
-      kind: 'chat',
+      // `chat` for every human path. A delegated turn is tagged `delegation`
+      // so the transcript, and the seat receiving it, can tell work the
+      // orchestrator handed out from words a person typed.
+      kind: opts.kind ?? 'chat',
       attachment: opts.attachment,
     }
 

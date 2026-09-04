@@ -28,7 +28,7 @@
  * @property {string} [content] verbatim copy, sent to the channel untouched
  * @property {number} ts
  * @property {boolean} addressed
- * @property {'chat'|'reply'|'activity'|'system'} kind
+ * @property {'chat'|'reply'|'activity'|'system'|'delegation'} kind
  * @property {{path:string,name:string}} [attachment]
  *
  * @typedef {Object} Participant

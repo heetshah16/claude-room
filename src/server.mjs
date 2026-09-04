@@ -27,7 +27,7 @@ import { createMember } from './identity.mjs'
 import { Observer } from './observer.mjs'
 import { makeRunner } from './run-model.mjs'
 import { createAdmin } from './admin.mjs'
-import { validateDelegation, renderDelegation } from './delegation.mjs'
+import { createDelegator } from './delegation.mjs'
 
 const log = s => process.stderr.write(`room: ${s}\n`)
 const standalone = process.env.ROOM_STANDALONE === '1'
@@ -40,6 +40,7 @@ const OBSERVER_ID = 'observer'
 // attributable in the ledger and the feed rather than appearing to come from
 // a human who never typed it.
 const ORCHESTRATOR = { id: 'orchestrator', name: 'claude', role: 'member', muted: false }
+
 
 const config = loadConfig(process.env)
 const store = new Store(config.stateDir)
@@ -92,6 +93,11 @@ if (config.payerMode === 'rotate') {
   }
 }
 
+// The delegate tool needs the queue AND a way to drain it, and drain lives on
+// the web server, which is built further down. Declared here and assigned once
+// both exist; the channel only ever reaches it at runtime, long after that.
+let delegator = null
+
 const channel = createChannel({
   config,
   onReply(text, to) {
@@ -110,19 +116,7 @@ const channel = createChannel({
     bus.publish('decision', d)
     return d
   },
-  onDelegate(input) {
-    const check = validateDelegation(input)
-    if (!check.ok) return { ok: false, errors: check.errors }
-
-    const handle = String(input.to).replace(/^@/, '').toLowerCase()
-    const text = `@${handle} ${renderDelegation(input)}`
-    const r = queue.submit(ORCHESTRATOR, text, { delegation: true })
-    if (!r.ok) return { ok: false, errors: [`could not delegate to @${handle}: ${r.reason}`] }
-
-    store.appendMessage(r.message)
-    bus.publish('message', r.message)
-    return { ok: true, id: r.message.id }
-  },
+  onDelegate: input => delegator.delegate(input),
 })
 
 if (config.permissionRelay) {
@@ -188,6 +182,13 @@ if (config.observer.on) {
 const web = createWeb({
   config, registry, ledger, decisions, queue, store, bus, channel,
   permissions, turns, observer, bans, admin, runtime, seats,
+  // Only a seat that was actually delegated to has a result to return; an
+  // ordinary reply passes straight through.
+  onSeatReply: (handle, text) => delegator.onSeatReply(handle, text),
+})
+
+delegator = createDelegator({
+  queue, store, bus, channel, orchestrator: ORCHESTRATOR, drain: () => web.drain(),
 })
 
 web.listen(config.port, config.host, () => {

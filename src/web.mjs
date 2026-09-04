@@ -74,6 +74,11 @@ export function createWeb(deps) {
   const {
     config, registry, ledger, decisions, queue, store, bus, channel,
     permissions, turns, observer, bans, admin, runtime, seats,
+    // Called when an agent seat answers. The room's own delegation
+    // bookkeeping lives in server.mjs; this module must not reach into it, so
+    // the seat reply is handed out through a callback the same way every
+    // other cross-module hook here is.
+    onSeatReply,
   } = deps
 
   // Address seen per member, so a ban can cover the device as well as the name.
@@ -638,6 +643,12 @@ export function createWeb(deps) {
         }
         broadcastMessage(message)
         deliverToSeats({ type: 'reply', fromHandle: member.handle, text })
+        try {
+          onSeatReply?.(member.handle, text)
+        } catch {
+          // A bookkeeping failure must never turn a delivered reply into a
+          // 500 the seat then retries. The reply is already in the room.
+        }
         return json(res, 200, { ok: true })
       }
 
@@ -731,6 +742,13 @@ export function createWeb(deps) {
   // A heartbeat is not a reason to keep the process alive.
   heartbeat.unref()
   server.on('close', () => clearInterval(heartbeat))
+
+  // The one way to start a turn for whatever is queued. Every HTTP path that
+  // accepts an addressed message calls it; server.mjs needs it too, for the
+  // delegate tool, which is not an HTTP path at all. Attached to the server
+  // rather than wrapped in a new object so every existing caller — which
+  // treats the return value as the http.Server it is — keeps working.
+  server.drain = drain
 
   return server
 }
