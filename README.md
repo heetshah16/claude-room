@@ -13,14 +13,15 @@ teammates' browsers ──POST /msg──────┐
       (Tailscale)  ◄──SSE /events────┤
                                      │                    ┌─► @claude
  local hooks ──POST /hook/:evt───────►   room server   ────┤   (host's session, host's account)
-                                     │  (one process)     │
- seat hooks ──POST /seat/hook/:evt───►                    ├─► @ana-agent
-                                     │                    │   (Ana's account, Ana's login)
-                     observer ◄──────┘                    └─► @devops
-              (tracks forks, reversals)                        (their machine, their account)
+                                     │  (one process)     ├─► @ana-agent
+ seat hooks ──POST /seat/hook/:evt───►                    │   (Ana's account, Ana's login)
+                                     │                    ├─► @devops
+                     observer ◄──────┘                    │   (their machine, their account)
+              (tracks forks, reversals)                    └─► @opencode
+                                                                 (no account — free model, own worktree)
 ```
 
-Two ways to take part, and the difference matters:
+Three ways to take part, and the difference matters:
 
 - **`@claude`** is the host's own session. Anyone in the room can address it, and every
   token it spends comes off the **host's** plan. This is the shared context window.
@@ -29,6 +30,9 @@ Two ways to take part, and the difference matters:
   and its cost lands on Ana. **No credential is ever copied, forwarded, or stored** —
   that isolation is the entire reason this design is legitimate rather than account
   sharing.
+- **`@opencode`** is an *OpenCode seat*: a second harness entirely, driving `opencode
+  serve` against a free model in its own git worktree. It has no Anthropic account to
+  isolate in the first place — see [OpenCode seats](#opencode-seats).
 
 Seats see the conversation (their turns and everyone's replies are mirrored to them) but
 each runs its own context. An **observer** watches the room and writes a short brief —
@@ -39,9 +43,10 @@ seats that have compacted independently get re-synchronised from the room's own 
 
 ## Status
 
-Working and tested, with one honest gap. **365 tests** (`node --test`), plus an opt-in
-endurance run (`ROOM_ENDURANCE=1`) that idles a real six minutes to prove seat feeds
-survive undici's 300s body timeout.
+Working and tested, with two honest gaps. **432 tests** (`node --test`, 431 passing, 1
+skipped — the skip is the opt-in endurance test below), plus an opt-in endurance run
+(`ROOM_ENDURANCE=1`) that idles a real six minutes to prove seat feeds survive undici's
+300s body timeout.
 
 What has been exercised end to end:
 
@@ -49,12 +54,27 @@ What has been exercised end to end:
 - agent seats over the full HTTP/SSE protocol — addressing, mirroring, per-seat turns,
   cost attribution, eviction, reconnection
 - the observer, on a real conversation containing a genuine fork and walk-back
+- an OpenCode seat, driven by the real `opencode` binary against a real free model inside
+  a live standalone room — see the next paragraph for exactly what that did and didn't
+  prove.
 
 **Not yet run for real: two seats logged into two different Anthropic accounts.** Every
 demo so far has driven the seat protocol with a stand-in rather than a second real
 `/login`. The room-side code is the shipped code, but `scripts/room-seat.mjs` launching a
 genuine second Claude Code under its own `CLAUDE_CONFIG_DIR` has never been verified with
 two accounts. Treat that path as unproven.
+
+**OpenCode seats: real work confirmed, replies not.** A manual smoke test (opencode
+1.18.27 on Windows, model `opencode/mimo-v2.5-free`, run from this checkout's own
+space-containing path) added a seat, addressed it twice, and watched both turns run real
+tool calls and land the correct edit — confirmed by `git diff` in `.worktrees/opencode`.
+Neither turn stalled, and the MCP bridge registered via `POST /mcp` connected cleanly
+despite the space in the path, which is the opposite of a risk flagged during design. What
+did **not** happen: the model never called `room_reply` in either turn, even when asked
+explicitly to reply, so nothing reached the room — you'd have to check the worktree to
+know the work was done. Details, including the exact evidence, are in
+[`docs/opencode-seat.md`](docs/opencode-seat.md#recorded-smoke-test). Treat an OpenCode
+seat as reliable for the edit and unreliable for the room-visible confirmation of it.
 
 This is a personal project, not an Anthropic product. It uses
 `--dangerously-load-development-channels`, because custom channels are not on the
@@ -113,7 +133,7 @@ Five steps from a clone to a teammate typing in the room.
 git clone https://github.com/heetshah16/claude-room
 cd claude-room
 npm install          # one dependency: @modelcontextprotocol/sdk
-node --test          # optional: 365 tests, ~10s
+node --test          # optional: 432 tests, ~7s
 ```
 
 ### 2. Choose where it listens
@@ -341,6 +361,70 @@ boots a standalone room, registers two seats owned by two different people, and 
 exact commands to bring each one up in its own terminal, so owner-only addressing, both
 refusal reasons, and mirroring can all be watched end to end.
 
+## OpenCode seats
+
+Everything in [Multiple agents](#multiple-agents) is a second Claude Code process on
+someone's Anthropic account. An OpenCode seat is a different kind of seat: it drives
+[OpenCode](https://opencode.ai) against a free model instead, in its own git worktree,
+over the same HTTP seat protocol every other seat uses:
+
+```bash
+node scripts/room-admin.mjs seat add opencode --owner ana --delegatable
+# → prints a launch command naming room-seat.mjs — that suggestion assumes a Claude
+#   seat and is wrong for this kind; use room-opencode-seat.mjs instead, with the
+#   same --token it printed:
+node scripts/room-opencode-seat.mjs opencode --token <token> --repo .
+node scripts/room-admin.mjs handle @claude,@opencode
+```
+
+**It needs no Anthropic credential at all.** There is no `/login`, no `CLAUDE_CONFIG_DIR`,
+nothing to isolate — which is why the ["Is sharing a session
+allowed?"](#is-sharing-a-session-allowed) question, which is entirely about Anthropic
+Account Terms, simply does not arise for this kind of seat. Its isolation concern is
+different and purely practical: two agents writing into one checkout clobber each other,
+so every OpenCode seat gets its own worktree under `.worktrees/<handle>`.
+
+`--delegatable` is a separate gate from addressing, not a relaxation of it.
+**`owner-only` still governs who may type `@opencode` and have it accepted** — exactly
+like any other seat, refused with `not-your-seat` for anyone but the owner. What
+`--delegatable` grants instead is that the **orchestrator** — the shared `@claude`
+session, using its own `delegate` tool — may hand this seat work regardless of who owns
+it, because delegation is authorised as its own decision the owner opts into per seat,
+not as an exception to ownership. A seat with neither flag can only ever be reached by its
+owner typing its handle by hand.
+
+### The `delegate` tool
+
+The shared session can hand a scoped piece of work to any `--delegatable` seat instead of
+doing it itself — useful for boilerplate, tests, mechanical refactors, lint and build
+fixes, the work that does not need the session that is coordinating everything else. A
+thin brief ("just add a function") is rejected back to the caller with what's missing,
+because a worker seat has no other way to know what "done" means:
+
+```
+delegate({
+  to: "opencode",
+  class: "execution",
+  task: "Add a mul(a, b) function to math.js",
+  spec: {
+    files: ["math.js"],
+    interface: "export function mul(a, b)",
+    tests: ["node --test"]
+  }
+})
+```
+
+`class: "execution"` is what makes `spec.files` and `spec.tests` mandatory — reasoning and
+verification tasks take just a `task` line, since there is no interface to scope. The
+rendered brief that actually reaches `@opencode` also appends "report what you changed
+with `room_reply`" to the prompt itself (`src/delegation.mjs`), which is a stronger nudge
+toward a room-visible reply than a bare `@handle` mention gets — see
+[`docs/opencode-seat.md`](docs/opencode-seat.md) for why that distinction matters in
+practice.
+
+See [`docs/opencode-seat.md`](docs/opencode-seat.md) for prerequisites, the free-model
+reliability warning, `--attach`, and troubleshooting.
+
 ## The observer
 
 Off by default. `ROOM_OBSERVER=1` starts a second, **tool-less** agent that watches the room
@@ -556,7 +640,8 @@ text in front of an agent with your filesystem.
 npm test
 ```
 
-294 tests, no network and no Claude Code required. The pure modules — router, ledger,
+432 tests (431 passing, 1 skipped — see [Status](#status)), no network and no Claude Code
+required. The pure modules — router, ledger,
 identity, decisions, queue, turns, brief, observer, admin, seats, fanout — carry the
 load-bearing logic and are tested directly. The observer takes `runModel` as an injected seam,
 so its whole cycle is exercised without spawning a subprocess or spending a token.
