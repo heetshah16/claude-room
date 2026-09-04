@@ -265,8 +265,6 @@ export function createOpenCodeSeat({
   let stopped = false
   let roomCtrl = null
   let ocCtrl = null
-  let backoffMs = 500
-  let retryTimer = null
 
   /** Registers the reply-only bridge so opencode can call room_reply. */
   async function registerBridge(bridgePath) {
@@ -288,13 +286,25 @@ export function createOpenCodeSeat({
     })
   }
 
+  /**
+   * Opens one SSE feed with its own reconnect state - each call gets a fresh
+   * { ctrl, timer, backoffMs } rather than sharing module-level variables.
+   * This is called twice (room, opencode); with shared state, whichever feed
+   * reconnects second overwrites the first's timer handle, so stop() could
+   * only ever cancel one of them - the other fires anyway after stop(),
+   * re-opening its GET and (for the room feed) bringing a stopped seat back
+   * online. Each feed's own AbortController is likewise unreachable from
+   * stop() once a shared handle has been overwritten.
+   */
   function feed(url, onEvent, label) {
-    const ctrl = new AbortController()
-    ;(async () => {
+    const st = { ctrl: null, timer: null, backoffMs: 500 }
+    const run = async () => {
+      if (stopped) return
+      st.ctrl = new AbortController()
       try {
-        const res = await fetchImpl(url, { signal: ctrl.signal })
+        const res = await fetchImpl(url, { signal: st.ctrl.signal })
         if (!res.ok || !res.body) throw new Error(`${label} feed failed: ${res.status}`)
-        backoffMs = 500
+        st.backoffMs = 500
         await readFrames(res.body, (event, raw) => {
           let data
           try { data = JSON.parse(raw) } catch { return }
@@ -311,11 +321,12 @@ export function createOpenCodeSeat({
         // down at once, so this timer must be the thing that keeps the
         // process alive, or it could exit mid-turn with the deadline still
         // armed. src/seat.mjs's own reconnectTimer follows the same rule.
-        retryTimer = setTimer(() => feed(url, onEvent, label), backoffMs)
-        backoffMs = Math.min(backoffMs * 2, 30_000)
+        st.timer = setTimer(run, st.backoffMs)
+        st.backoffMs = Math.min(st.backoffMs * 2, 30_000)
       }
-    })()
-    return ctrl
+    }
+    void run()
+    return { abort: () => { if (st.timer) clearTimer(st.timer); st.ctrl?.abort() } }
   }
 
   return {
@@ -347,7 +358,6 @@ export function createOpenCodeSeat({
     },
     stop() {
       stopped = true
-      if (retryTimer) clearTimer(retryTimer)
       clearTimer(turn?.timer)
       roomCtrl?.abort()
       ocCtrl?.abort()

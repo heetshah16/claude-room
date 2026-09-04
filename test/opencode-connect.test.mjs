@@ -63,6 +63,56 @@ test('an idle arriving over the real event stream ends the room turn', async () 
   await oc.close()
 })
 
+/** A controllable clock: nothing fires until the test says so. Same shape as test/opencode-stall.test.mjs's. */
+function clock() {
+  let next = 1
+  const timers = new Map()
+  return {
+    setTimer: (fn, ms) => { const id = next++; timers.set(id, { fn, ms }); return id },
+    clearTimer: id => timers.delete(id),
+    fireAll() {
+      const due = [...timers.values()]
+      timers.clear()
+      for (const t of due) t.fn()
+    },
+  }
+}
+
+test('a stopped seat stays stopped, even when both feeds are mid-backoff at once', async () => {
+  // Each feed schedules its own reconnect on failure. If that reconnect state
+  // were shared between the room feed and the opencode feed, whichever fails
+  // SECOND overwrites the first's timer handle - stop() can then only cancel
+  // the survivor, and the other fires anyway. For the room feed that is not a
+  // leak: it re-opens GET /seat/events, bringing a stopped seat back online
+  // and re-claiming its handle against a legitimate restart. Both feeds are
+  // made to fail here specifically so both are mid-backoff at once - a
+  // single failing feed can never exercise the overwrite.
+  const c = clock()
+  let roomJoins = 0
+  let ocJoins = 0
+  const fetchImpl = async url => {
+    const u = String(url)
+    if (u.includes('/seat/events')) { roomJoins++; throw new Error('room down') }
+    if (u.endsWith('/event')) { ocJoins++; throw new Error('opencode down') }
+    return { ok: true, status: 200, json: async () => ({ seed: null }) }
+  }
+  const seat = createOpenCodeSeat({
+    roomUrl: 'http://room', token: 'tok', handle: 'opencode', opencodeUrl: 'http://oc',
+    fetchImpl, setTimer: c.setTimer, clearTimer: c.clearTimer,
+  })
+  await seat.connect()
+  await new Promise(r => setImmediate(r)) // let both feeds' first attempt reject and reschedule
+  assert.equal(roomJoins, 1)
+  assert.equal(ocJoins, 1)
+
+  seat.stop()
+  c.fireAll() // fire whatever reconnect timer(s) survived stop()
+  await new Promise(r => setImmediate(r))
+
+  assert.equal(roomJoins, 1, 'no room feed attempt may follow stop()')
+  assert.equal(ocJoins, 1, 'no opencode feed attempt may follow stop()')
+})
+
 test('the launcher binds opencode to loopback, because it runs without a password', () => {
   // `opencode serve` has no auth unless OPENCODE_SERVER_PASSWORD is set. On a
   // tailnet-bound room, a tailnet-bound opencode would be an open shell.
