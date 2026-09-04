@@ -88,6 +88,15 @@ test('a session error is surfaced with its payload', () => {
   assert.equal(a.error.name, 'UnknownError')
 })
 
+test('an event is ignored before this seat has a session, so a shared server cannot cross wires', () => {
+  // One `opencode serve` can be shared by several seats via --attach, and it
+  // broadcasts every session's events on one bus. A seat that has not created
+  // its session yet must not treat another seat's idle as its own.
+  const a = actionForOpencodeEvent(
+    { type: 'session.idle', properties: { sessionID: 'ses_other' } }, null)
+  assert.equal(a.type, 'ignore')
+})
+
 test('unknown event types are ignored rather than crashing the driver', () => {
   assert.equal(actionForOpencodeEvent({ type: 'file.edited', properties: {} }, 'ses_a').type, 'ignore')
   assert.equal(actionForOpencodeEvent(null, 'ses_a').type, 'ignore')

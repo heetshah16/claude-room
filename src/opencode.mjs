@@ -85,7 +85,7 @@ export function actionForOpencodeEvent(ev, sessionId) {
   const type = ev?.type
   const p = ev?.properties ?? {}
   if (!type) return { type: 'ignore' }
-  if (p.sessionID && sessionId && p.sessionID !== sessionId) return { type: 'ignore' }
+  if (p.sessionID && p.sessionID !== sessionId) return { type: 'ignore' }
 
   if (type === 'session.idle') return { type: 'end-turn' }
   if (type === 'session.error') return { type: 'error', error: p.error ?? null }
