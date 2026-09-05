@@ -22,7 +22,50 @@ node --test
 contains spaces on Windows — run bare `node --test` from `extension/`
 instead, which auto-discovers `test/*.test.js`.)
 
-No runtime dependencies are required. Node 22+ and VS Code 1.90+ are assumed.
+No runtime dependencies are required. Node 22+ and a VS Code API of 1.75 or
+newer are assumed — see below for what that means in practice.
+
+## Editors: VS Code and Cursor
+
+This is a standard VS Code extension and it runs in **Cursor** as well, which
+is a VS Code fork. The API surface it uses is small and old — `createWebviewPanel`,
+`asWebviewUri`, `cspSource`, `globalStorageUri`, `workspaceState`,
+`registerCommand`, `showErrorMessage`, `createOutputChannel` — and the newest
+of those (`globalStorageUri`) landed in VS Code **1.44**.
+
+`engines.vscode` is set to `^1.75.0` rather than that true floor, because 1.74
+is where VS Code began generating activation events automatically from
+`contributes.commands`. That is what lets `activationEvents` stay empty: below
+1.74 the commands would appear in the palette and silently do nothing, which is
+a much worse failure than refusing to install.
+
+For reference, Cursor 3.17.8 reports itself to extensions as VS Code
+**1.128.0**, so it clears that bar comfortably.
+
+### Running it from source (either editor)
+
+Press **F5** with this repo open. `.vscode/launch.json` at the repo root points
+the Extension Development Host at `extension/`, which it has to do explicitly
+because the extension is not at the repo root.
+
+The equivalent from a terminal:
+
+```bash
+code  --extensionDevelopmentPath="<repo>/extension"    # VS Code
+cursor --extensionDevelopmentPath="<repo>/extension"   # Cursor
+```
+
+### Installing it properly
+
+There is no build step, so packaging is just:
+
+```bash
+cd extension
+npx @vscode/vsce package        # produces claude-room-orchestrator-0.0.1.vsix
+```
+
+Then in either editor: `Ctrl+Shift+P` → **"Extensions: Install from VSIX…"**.
+Cursor supports VSIX installation the same way VS Code does.
 
 ## Manual verification
 

@@ -4,7 +4,7 @@
   "description": "Chat with an orchestrating Claude that delegates mechanical work to free-model workers.",
   "version": "0.0.1",
   "private": true,
-  "engines": { "vscode": "^1.90.0", "node": ">=22" },
+  "engines": { "vscode": "^1.75.0", "node": ">=22" },
   "categories": ["AI", "Other"],
   "activationEvents": [],
   "main": "./src/extension.js",
