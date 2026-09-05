@@ -298,6 +298,15 @@ const api = { parseMarkdown, parseInline, renderMarkdown, isSafeHref }
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = api
 }
+// The webview has no module system: it loads this with a plain <script> tag,
+// so the ONLY way webview.js can reach these is a global. Omitting this made
+// `window.ClaudeMarkdown` undefined, which threw at the top of webview.js and
+// killed the entire script - including the send button. The Node tests could
+// not see it because they import through module.exports above; the browser
+// path had no test at all. test/chat-globals.test.js now covers both files.
+if (typeof window !== 'undefined') {
+  window.ClaudeMarkdown = api
+}
 if (typeof window !== 'undefined') {
   window.ClaudeMarkdown = api
 }
