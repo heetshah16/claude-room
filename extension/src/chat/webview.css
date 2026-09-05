@@ -12,8 +12,11 @@ html, body {
   padding: 0;
   background: var(--vscode-editor-background);
   color: var(--vscode-foreground);
-  font-family: var(--vscode-font-family, sans-serif);
-  font-size: var(--vscode-font-size, 13px);
+  /* The real Claude Code chat uses the chat-specific font tokens, not the
+   * editor's own -- one of the reasons it reads as native. Fall back through
+   * the editor font vars before a hardcoded default. */
+  font-family: var(--vscode-chat-font-family, var(--vscode-font-family, sans-serif));
+  font-size: var(--vscode-chat-font-size, var(--vscode-font-size, 13px));
 }
 
 body {
@@ -45,10 +48,39 @@ body {
 .messages {
   flex: 1;
   overflow-y: auto;
+  width: 100%;
+  max-width: 820px;
+  margin: 0 auto;
   padding: 12px 16px;
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+/* Shown only while there are no messages -- a centred, muted hint rather
+ * than a void. webview.js hides this element (not CSS :empty) the moment
+ * the first message is appended, and would show it again on a "new
+ * conversation" action if one is ever wired. */
+.empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  opacity: 0.7;
+}
+
+.empty-state-title {
+  font-size: 1.3em;
+  font-weight: 600;
+}
+
+.empty-state-hint {
+  font-size: 0.95em;
+  max-width: 320px;
 }
 
 /* Flat, full-width, left-aligned blocks -- Claude Code's chat has no
@@ -215,30 +247,41 @@ details.thinking .thinking-body {
   color: var(--vscode-descriptionForeground, var(--vscode-foreground));
 }
 
+/* The composer is a distinct rounded card, inset from the window edges --
+ * not a form bar stuck to the bottom. */
 .composer {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px 10px 10px;
-  border-top: 1px solid var(--vscode-widget-border, var(--vscode-foreground));
-  background: var(--vscode-editor-background);
+  gap: 4px;
+  margin: 0 12px 12px 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border, transparent));
+  border-radius: 9px;
+  background: var(--vscode-input-background);
 }
 
-.composer-row {
+.composer-toolbar {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
 }
 
-/* Model picker: a small, quiet control, not a prominent widget -- it shows
- * the live model tracked from the stream and opens a dropdown of whatever
- * `/model`'s own output reports as available. */
+.composer-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Model picker: restyled as a small pill/chip inside the composer's own
+ * toolbar row -- it shows the live model tracked from the stream and opens
+ * a dropdown of whatever `/model`'s own output reports as available. */
 #model-picker {
-  align-self: flex-start;
-  background: none;
-  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
-  border: 1px solid var(--vscode-widget-border, transparent);
-  border-radius: 4px;
-  padding: 2px 8px;
+  background: var(--vscode-badge-background, var(--vscode-toolbar-hoverBackground, transparent));
+  color: var(--vscode-badge-foreground, var(--vscode-descriptionForeground, var(--vscode-foreground)));
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 2px 10px;
   font-family: inherit;
   font-size: 0.85em;
   cursor: pointer;
@@ -249,43 +292,54 @@ details.thinking .thinking-body {
 }
 
 #model-select {
-  align-self: flex-start;
   background: var(--vscode-dropdown-background, var(--vscode-input-background));
   color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground));
   border: 1px solid var(--vscode-dropdown-border, var(--vscode-input-border));
-  border-radius: 4px;
-  padding: 2px 6px;
+  border-radius: 999px;
+  padding: 2px 8px;
   font-family: inherit;
   font-size: 0.85em;
 }
 
+/* Transparent and borderless so it blends into the card; grows with its
+ * content (via webview.js, on the `input` event) up to this max height,
+ * then scrolls. */
 #input {
-  flex: 1;
-  resize: vertical;
-  min-height: 32px;
+  resize: none;
+  min-height: 20px;
   max-height: 200px;
-  background: var(--vscode-input-background);
+  overflow-y: auto;
+  background: transparent;
   color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border, transparent);
-  border-radius: 4px;
-  padding: 6px 8px;
+  border: none;
+  outline: none;
+  padding: 4px 2px;
   font-family: inherit;
   font-size: inherit;
 }
 
 #input:focus {
-  outline: 1px solid var(--vscode-focusBorder);
+  outline: none;
 }
 
+/* Send: a small circular icon button (an arrow glyph, not a text label),
+ * on the far right of the toolbar row. */
 #send {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
   border: none;
-  border-radius: 4px;
-  padding: 0 16px;
+  border-radius: 50%;
   cursor: pointer;
   font-family: inherit;
-  font-size: inherit;
+  font-size: 14px;
+  line-height: 1;
 }
 
 #send:hover {

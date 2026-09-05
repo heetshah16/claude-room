@@ -24,6 +24,16 @@
   const statusEl = document.getElementById('status')
   const modelPickerEl = document.getElementById('model-picker')
   const modelSelectEl = document.getElementById('model-select')
+  const emptyStateEl = document.getElementById('empty-state')
+
+  // Shown only until the first thing is appended to the conversation --
+  // hidden here rather than left to a CSS :empty rule because #messages
+  // always has the empty-state div itself as a child, so it is never
+  // actually empty in the DOM sense. Would be un-hidden again by a future
+  // "new conversation" action, if one is ever wired.
+  function hideEmptyState() {
+    if (emptyStateEl) emptyStateEl.hidden = true
+  }
 
   // The bubble currently receiving `text` chunks, plus its raw markdown so
   // each new chunk can be re-rendered whole rather than appended as plain
@@ -57,6 +67,7 @@
   // body, no bubble, no per-role background — matching Claude Code's layout
   // rather than a messaging app's.
   function appendMsg(role, text) {
+    hideEmptyState()
     const el = document.createElement('div')
     el.className = `msg ${role}`
     const label = document.createElement('div')
@@ -78,6 +89,9 @@
   }
 
   function onText(text) {
+    // A model-list probe's answer must not appear as a chat message -- it
+    // is parsed for the picker (in onTurnEnd) and nothing else.
+    if (awaitingModelList) return
     if (!currentBubble) {
       currentBubble = appendMsg('assistant', '')
       currentBubbleText = ''
@@ -97,6 +111,7 @@
   let currentThinkingBody = null
 
   function onThinking(text) {
+    hideEmptyState()
     endBubble()
     const details = document.createElement('details')
     details.className = 'thinking'
@@ -126,6 +141,7 @@
   }
 
   function onToolUse(ev) {
+    hideEmptyState()
     endBubble()
     currentThinkingBody = null
     // A compact disclosure row: <details> gives the platform's own
@@ -159,6 +175,7 @@
     if (!entry) {
       // A result with no matching card (e.g. the webview reopened mid-turn)
       // is still worth showing — just as its own row, unmatched.
+      hideEmptyState()
       const card = document.createElement('details')
       card.className = `card${ev.isError ? ' tool-error' : ''}`
       const title = document.createElement('summary')
@@ -246,17 +263,40 @@
     if (isRealModel(model)) setCurrentModel(model)
   }
 
+  // A bare `/model` is answered locally (a synthetic turn — no model call,
+  // no cost), which is why `onModel` above never fires for it: stream.js
+  // filters `<synthetic>` model values before emitting a `model` event. So
+  // the picker is populated here instead, once the probe's turn-end arrives.
+  // Sent once per session so the chip reflects reality before the user's
+  // first real turn, instead of showing "(unknown)" until they've sent one.
+  let modelProbeSent = false
+  function onSessionEstablished() {
+    if (modelProbeSent) return
+    modelProbeSent = true
+    awaitingModelList = true
+    vscode.postMessage({ type: 'input', text: '/model' })
+  }
+
   // --- turn lifecycle ----------------------------------------------------
 
   function onTurnEnd(ev) {
-    // If the button was clicked to request the list, this turn's text is the
-    // answer to a bare `/model` — parse it instead of rendering it as a
-    // normal reply's bubble text (it already streamed in as `text`, so the
-    // bubble is already showing it; here we just also feed the picker).
+    // If the picker requested the list (by click, or the session-start
+    // probe above), this turn's text is the answer to a bare `/model` —
+    // parse it for the current model and the option list instead of
+    // treating it as a normal reply. onText already refused to render it as
+    // a bubble, and this must not fall through to the "turn ended" system
+    // line either: it is not a conversational turn, so nothing belongs in
+    // the transcript for it (and doing so would dismiss the empty state
+    // before the user has sent anything).
     if (awaitingModelList) {
       awaitingModelList = false
-      const { available } = parseModelList(ev.text ?? '')
+      const { current, available } = parseModelList(ev.text ?? '')
+      if (current) setCurrentModel(current)
       if (available.length) showModelOptions(available)
+      endBubble()
+      currentThinkingBody = null
+      setStatus('')
+      return
     }
     endBubble()
     currentThinkingBody = null
@@ -277,6 +317,7 @@
   }
 
   function onActivity(activity) {
+    hideEmptyState()
     endBubble()
     currentThinkingBody = null
     const card = document.createElement('div')
@@ -327,7 +368,8 @@
         case 'turn-end': return onTurnEnd(ev)
         case 'rate-limit': return onRateLimit(ev)
         case 'model': return onModel(ev.model)
-        default: return // session and anything unrecognised: nothing to render
+        case 'session': return onSessionEstablished()
+        default: return // anything unrecognised: nothing to render
       }
     }
 
@@ -341,10 +383,19 @@
     appendMsg('user', text)
     vscode.postMessage({ type: 'input', text })
     inputEl.value = ''
+    autoGrow()
+  }
+
+  // The textarea is borderless and blends into the composer card, so it
+  // must grow with its content itself (there is no resize handle any more)
+  // up to the CSS max-height, past which it scrolls instead of growing.
+  function autoGrow() {
     inputEl.style.height = 'auto'
+    inputEl.style.height = `${inputEl.scrollHeight}px`
   }
 
   sendEl.addEventListener('click', send)
+  inputEl.addEventListener('input', autoGrow)
   inputEl.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
