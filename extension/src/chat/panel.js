@@ -32,16 +32,21 @@ function createChatPanel({ context, onInput }) {
   )
 
   const scriptUri = panel.webview.asWebviewUri(vscode.Uri.file(join(chatDir, 'webview.js')))
+  const markdownUri = panel.webview.asWebviewUri(vscode.Uri.file(join(chatDir, 'markdown.js')))
+  const modelUri = panel.webview.asWebviewUri(vscode.Uri.file(join(chatDir, 'model.js')))
   const styleUri = panel.webview.asWebviewUri(vscode.Uri.file(join(chatDir, 'webview.css')))
   const n = nonce()
 
-  // The nonce lets exactly this one inline <script src> run; the CSP meta
-  // tag in webview.html blocks everything else, including any innerHTML a
-  // future edit might be tempted to add.
+  // The same nonce is stamped on every <script> tag webview.html has
+  // (markdown.js, model.js, webview.js) so all three -- and nothing else --
+  // are allowed to run. The CSP meta tag blocks everything else, including
+  // any innerHTML a future edit might be tempted to add.
   const html = readFileSync(join(chatDir, 'webview.html'), 'utf8')
     .split('{{cspSource}}').join(panel.webview.cspSource)
     .split('{{nonce}}').join(n)
     .split('{{scriptUri}}').join(String(scriptUri))
+    .split('{{markdownUri}}').join(String(markdownUri))
+    .split('{{modelUri}}').join(String(modelUri))
     .split('{{styleUri}}').join(String(styleUri))
 
   panel.webview.html = html

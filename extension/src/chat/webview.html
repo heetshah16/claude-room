@@ -21,9 +21,17 @@
   <div id="messages" class="messages"></div>
   <div id="status" class="status" hidden></div>
   <div class="composer">
-    <textarea id="input" rows="1" placeholder="Message the orchestrator... (Enter to send, Shift+Enter for a new line)"></textarea>
-    <button id="send" type="button">Send</button>
+    <div class="composer-row">
+      <button id="model-picker" type="button" title="Change model">model: (unknown)</button>
+      <select id="model-select" hidden></select>
+    </div>
+    <div class="composer-row">
+      <textarea id="input" rows="1" placeholder="Message the orchestrator... (Enter to send, Shift+Enter for a new line)"></textarea>
+      <button id="send" type="button">Send</button>
+    </div>
   </div>
+  <script nonce="{{nonce}}" src="{{markdownUri}}"></script>
+  <script nonce="{{nonce}}" src="{{modelUri}}"></script>
   <script nonce="{{nonce}}" src="{{scriptUri}}"></script>
 </body>
 </html>

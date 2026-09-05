@@ -45,47 +45,104 @@ body {
 .messages {
   flex: 1;
   overflow-y: auto;
-  padding: 12px;
+  padding: 12px 16px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 4px;
 }
 
+/* Flat, full-width, left-aligned blocks -- Claude Code's chat has no
+ * bubbles, no per-role background, no max-width. The role is carried by a
+ * small muted label above the content, not by color or alignment. */
 .msg {
-  max-width: 88%;
-  padding: 8px 12px;
-  border-radius: 8px;
+  width: 100%;
+  padding: 10px 0;
+  line-height: 1.55;
+  border-bottom: 1px solid var(--vscode-widget-border, transparent);
+}
+
+.msg:last-child { border-bottom: none; }
+
+.msg-role {
+  font-size: 0.78em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  opacity: 0.8;
+  margin-bottom: 4px;
+}
+
+.msg-body {
   white-space: pre-wrap;
   word-break: break-word;
-  line-height: 1.4;
-}
-
-.msg.user {
-  align-self: flex-end;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
-}
-
-.msg.assistant {
-  align-self: flex-start;
-  background: var(--vscode-editorWidget-background, var(--vscode-editor-inactiveSelectionBackground));
-  border: 1px solid var(--vscode-widget-border, transparent);
 }
 
 .msg.system {
-  align-self: center;
   font-style: italic;
   opacity: 0.75;
-  background: none;
+}
+
+.msg.system .msg-role { display: none; }
+
+/* Markdown elements rendered inside .msg-body */
+.msg-body .md-paragraph { margin: 0 0 8px 0; }
+.msg-body .md-paragraph:last-child { margin-bottom: 0; }
+
+.msg-body .md-heading { margin: 12px 0 6px 0; line-height: 1.3; }
+.msg-body .md-heading:first-child { margin-top: 0; }
+.msg-body h1.md-heading { font-size: 1.4em; }
+.msg-body h2.md-heading { font-size: 1.25em; }
+.msg-body h3.md-heading { font-size: 1.12em; }
+.msg-body h4.md-heading,
+.msg-body h5.md-heading,
+.msg-body h6.md-heading { font-size: 1em; }
+
+.msg-body .md-list {
+  margin: 0 0 8px 0;
+  padding-left: 1.6em;
+}
+
+.msg-body .md-blockquote {
+  margin: 0 0 8px 0;
+  padding: 2px 0 2px 10px;
+  border-left: 3px solid var(--vscode-widget-border, var(--vscode-foreground));
+  opacity: 0.85;
+}
+
+/* Code blocks: the editor's own monospace font and code-block surface, with
+ * horizontal scroll for long lines rather than wrapping -- matching how
+ * Claude Code (and the editor itself) present code. */
+.msg-body .md-code-block {
+  margin: 0 0 8px 0;
+  padding: 8px 10px;
+  background: var(--vscode-textCodeBlock-background, var(--vscode-editor-inactiveSelectionBackground));
+  border-radius: 4px;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.msg-body .md-code-block code {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--vscode-editor-font-size, 0.92em);
+  white-space: pre;
+}
+
+.msg-body .md-inline-code {
+  font-family: var(--vscode-editor-font-family, monospace);
+  background: var(--vscode-textCodeBlock-background, var(--vscode-editor-inactiveSelectionBackground));
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.92em;
 }
 
 details.thinking {
-  align-self: flex-start;
-  max-width: 88%;
+  align-self: stretch;
   border: 1px dashed var(--vscode-widget-border, var(--vscode-foreground));
-  border-radius: 8px;
+  border-radius: 4px;
   padding: 4px 10px;
   opacity: 0.85;
+  margin-bottom: 4px;
 }
 
 details.thinking summary {
@@ -101,42 +158,50 @@ details.thinking .thinking-body {
   font-size: 0.92em;
 }
 
+/* Tool calls: a compact disclosure row (triangle, name, one-line input
+ * summary), not a card. Details expand to show the full input/result, using
+ * the platform's own <details> marker as the triangle. */
 .card {
-  align-self: flex-start;
-  max-width: 88%;
-  border: 1px solid var(--vscode-widget-border, var(--vscode-foreground));
-  border-radius: 8px;
-  padding: 8px 10px;
-  background: var(--vscode-textCodeBlock-background, var(--vscode-editor-inactiveSelectionBackground));
+  width: 100%;
+  border-bottom: 1px solid var(--vscode-widget-border, transparent);
+  padding: 4px 0;
+  font-size: 0.92em;
 }
 
 .card .card-title {
-  font-weight: 600;
-  font-size: 0.9em;
+  cursor: pointer;
+  font-weight: 500;
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 6px;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  list-style: revert;
+}
+
+.card .card-title .card-summary {
+  opacity: 0.75;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.95em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .card .card-body {
-  margin-top: 6px;
+  margin: 4px 0 4px 1.2em;
   font-family: var(--vscode-editor-font-family, monospace);
-  font-size: 0.88em;
+  font-size: 0.95em;
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-.card.tool-error {
-  border-color: var(--vscode-errorForeground, var(--vscode-foreground));
+  overflow-x: auto;
 }
 
 .card.tool-error .card-title {
   color: var(--vscode-errorForeground);
 }
 
-.card.activity {
-  border-style: dashed;
-  opacity: 0.9;
+.card.activity .card-title {
+  font-style: italic;
 }
 
 .card.pending .card-title::after {
@@ -152,10 +217,46 @@ details.thinking .thinking-body {
 
 .composer {
   display: flex;
-  gap: 8px;
-  padding: 10px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 10px 10px;
   border-top: 1px solid var(--vscode-widget-border, var(--vscode-foreground));
   background: var(--vscode-editor-background);
+}
+
+.composer-row {
+  display: flex;
+  gap: 8px;
+}
+
+/* Model picker: a small, quiet control, not a prominent widget -- it shows
+ * the live model tracked from the stream and opens a dropdown of whatever
+ * `/model`'s own output reports as available. */
+#model-picker {
+  align-self: flex-start;
+  background: none;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-widget-border, transparent);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-family: inherit;
+  font-size: 0.85em;
+  cursor: pointer;
+}
+
+#model-picker:hover {
+  background: var(--vscode-toolbar-hoverBackground, transparent);
+}
+
+#model-select {
+  align-self: flex-start;
+  background: var(--vscode-dropdown-background, var(--vscode-input-background));
+  color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground));
+  border: 1px solid var(--vscode-dropdown-border, var(--vscode-input-border));
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: inherit;
+  font-size: 0.85em;
 }
 
 #input {
