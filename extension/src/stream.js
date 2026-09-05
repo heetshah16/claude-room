@@ -35,7 +35,18 @@ function createStreamParser({ onEvent }) {
         return
       // Both assistant and user messages carry a content-block array; the
       // difference is only which block types appear in them.
-      case 'assistant':
+      case 'assistant': {
+        // Only an assistant message carries `message.model`, and only when a
+        // real model answered. A slash command answers as `<synthetic>` --
+        // that means a local command handled the turn, not a model change,
+        // so it must not be surfaced as one.
+        const model = ev.message?.model
+        if (typeof model === 'string' && model && model !== '<synthetic>') {
+          onEvent({ kind: 'model', model })
+        }
+        emitBlocks(ev.message?.content)
+        return
+      }
       case 'user':
         emitBlocks(ev.message?.content)
         return
