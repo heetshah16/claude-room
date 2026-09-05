@@ -293,10 +293,15 @@ function renderMarkdown(text, doc) {
   return frag
 }
 
-const api = { parseMarkdown, parseInline, renderMarkdown, isSafeHref }
+// Named uniquely, NOT `api`: the webview loads these files as plain <script>
+// tags, which share one global scope. Two files each declaring a top-level
+// `const api` is a SyntaxError that silently kills the second script - which is
+// exactly how the chat lost its send button. test/webview-boot.test.js loads
+// all three together the way a browser does, so a future collision fails there.
+const markdownApi = { parseMarkdown, parseInline, renderMarkdown, isSafeHref }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = api
+  module.exports = markdownApi
 }
 // The webview has no module system: it loads this with a plain <script> tag,
 // so the ONLY way webview.js can reach these is a global. Omitting this made
@@ -305,8 +310,8 @@ if (typeof module !== 'undefined' && module.exports) {
 // not see it because they import through module.exports above; the browser
 // path had no test at all. test/chat-globals.test.js now covers both files.
 if (typeof window !== 'undefined') {
-  window.ClaudeMarkdown = api
+  window.ClaudeMarkdown = markdownApi
 }
 if (typeof window !== 'undefined') {
-  window.ClaudeMarkdown = api
+  window.ClaudeMarkdown = markdownApi
 }

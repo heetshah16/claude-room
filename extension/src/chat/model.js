@@ -44,11 +44,12 @@ function isRealModel(model) {
   return typeof model === 'string' && model.length > 0 && model !== '<synthetic>'
 }
 
-const api = { parseModelList, isRealModel }
+// Uniquely named for the same reason markdown.js is - see the note there.
+const modelApi = { parseModelList, isRealModel }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = api
+  module.exports = modelApi
 }
 if (typeof window !== 'undefined') {
-  window.ClaudeModel = api
+  window.ClaudeModel = modelApi
 }
