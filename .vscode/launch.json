@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // Opens a second VS Code window (the "Extension Development Host") with
+      // this extension loaded. The extension lives in extension/, not at the
+      // repo root, so extensionDevelopmentPath has to point there explicitly.
+      "name": "Run Orchestrator Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}/extension"],
+      "outFiles": [],
+      // The extension is plain CommonJS with no build step, so there is
+      // nothing to compile before launching.
+      "preLaunchTask": ""
+    }
+  ]
+}
