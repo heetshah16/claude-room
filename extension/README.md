@@ -7,20 +7,52 @@ itself.
 
 ## Status
 
-This extension is under active development. This tree is CommonJS
-(`extension/package.json` has no `"type"` field), independent of the ESM
-room server rooted at the repo's top level in `src/`.
+Under active development. This tree is CommonJS (`extension/package.json` has
+no `"type"` field), independent of the ESM room server in the repo's `src/`.
+
+**Working:** the chat, with streaming prose, rendered markdown, collapsible
+tool cards and a live thinking indicator; a model picker (`/model` works in
+headless print mode, and switching genuinely takes effect); process supervision
+with tree-kill; crash recovery via `--resume`; and the full delegation round
+trip, worker result included.
+
+**Not built yet**, and specified in
+[`../docs/superpowers/specs/2026-09-05-orchestrator-parity-design.md`](../docs/superpowers/specs/2026-09-05-orchestrator-parity-design.md):
+login detection and guidance, conversation history, skill and slash-command
+completions, a settings surface, and the workers panel.
+
+**Unverified:** the webview's appearance. Everything else here has been run
+against real binaries; nothing has ever *looked* at the chat.
+
+### If you edit the webview, read this first
+
+The chat is three plain `<script>` tags — `markdown.js`, `model.js`,
+`webview.js` — and they **share one global scope**. Two bugs in a row came from
+that, and both silently killed the entire chat (no send button, no Enter, no
+error the user could see):
+
+1. `markdown.js` exposed itself only through `module.exports`, so
+   `window.ClaudeMarkdown` was undefined and `webview.js` threw on its first
+   line.
+2. `markdown.js` and `model.js` both declared a top-level `const api` — a
+   SyntaxError that made the *second* script fail to parse entirely.
+
+Neither was visible to any unit test, because the tests import through
+`module.exports` while the browser loads script tags.
+[`test/webview-boot.test.js`](test/webview-boot.test.js) now loads all three
+together the way a browser does and drives the Enter handler to assert a
+message is actually posted. **Keep top-level names unique across those files**,
+and if you add a module, add it to that test.
 
 ## Development
 
 ```bash
 cd extension
-node --test
+npm test          # 80 tests
 ```
 
-(`node --test test/` does not reliably discover files when the repo path
-contains spaces on Windows — run bare `node --test` from `extension/`
-instead, which auto-discovers `test/*.test.js`.)
+Or `node --test` from the repo root to run these alongside the room's own
+suite in one invocation.
 
 No runtime dependencies are required. Node 22+ and a VS Code API of 1.75 or
 newer are assumed — see below for what that means in practice.
@@ -88,11 +120,22 @@ terminal or CI. What was actually checked for this pair of tasks:
   at the same count as before these two tasks, plus the new `events.test.js`
   cases.
 
-**What was NOT verified — the actual F5 walkthrough was not run.** Nobody
-has pressed F5 to launch an Extension Development Host against this build.
-The steps below are what to run by hand; until someone runs them, treat the
-webview rendering, the SSE wiring, and the tree-kill-on-close behavior as
-unverified in a real VS Code window.
+**The F5 walkthrough has since been run, in Cursor, and it found two real
+bugs.** What it established:
+
+- the extension loads and activates in Cursor (3.17.8, reporting VS Code
+  1.128.0), and the command opens the chat panel
+- the panel needs a folder open in that window — without one it correctly says
+  so rather than failing obscurely
+- **sending was broken.** Both script-loading bugs described under "If you edit
+  the webview" were found this way and nowhere else. They are fixed, and
+  `test/webview-boot.test.js` now guards the class.
+- **the layout did not match Claude Code.** It rendered as an unstyled form: a
+  bare textarea, a rectangular Send button, and a large empty area. That drove
+  the markdown renderer and the composer restyle.
+
+Still not re-confirmed by eye **after** those fixes. The steps below remain the
+thing to run; record what you see.
 
 ### Task 6 steps (chat webview + extension host)
 

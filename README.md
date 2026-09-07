@@ -8,6 +8,14 @@ The point is the **shared context window**, not a shared UI. When everyone's inp
 one context, the agent knows what the team decided and why. Nobody re-explains, nobody
 merges transcripts afterward.
 
+There are two ways to run it. The **room** below is the original: a server, a browser
+client, and seats that join over Tailscale. The **[VS Code extension](#the-vs-code-extension)**
+packages the same machinery into something you install — one chat window backed by a
+long-lived Claude Code session, which supervises the room for you and hands mechanical work
+to free-model workers. Solo by default; the shared room is still there when you want it.
+
+For how the pieces fit and why, see [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ```
 teammates' browsers ──POST /msg──────┐
       (Tailscale)  ◄──SSE /events────┤
@@ -43,7 +51,7 @@ seats that have compacted independently get re-synchronised from the room's own 
 
 ## Status
 
-Working and tested, with two honest gaps. **464 tests** (`node --test`, 463 passing, 1
+Working and tested, with three honest gaps. **549 tests** (`node --test`, 548 passing, 1
 skipped — the skip is the opt-in endurance test below), plus an opt-in endurance run
 (`ROOM_ENDURANCE=1`) that idles a real six minutes to prove seat feeds survive undici's
 300s body timeout.
@@ -55,7 +63,9 @@ What has been exercised end to end:
   cost attribution, eviction, reconnection
 - the observer, on a real conversation containing a genuine fork and walk-back
 - an OpenCode seat, driven by the real `opencode` binary against a real free model inside
-  a live standalone room — real work **and** real replies, see below for the exact scope.
+  a live standalone room — real work **and** real replies, see below for the exact scope
+- the VS Code extension's whole startup and delegation path, against the real binaries —
+  see [The VS Code extension](#the-vs-code-extension)
 
 **Not yet run for real: two seats logged into two different Anthropic accounts.** Every
 demo so far has driven the seat protocol with a stand-in rather than a second real
@@ -95,6 +105,13 @@ the brief validation doing the job it exists for.
 That was one model on one machine, and the room in that run had a single delegation in
 flight. Concurrent delegations to one seat are covered by tests but have not been run
 against a live model.
+
+**The extension's plumbing is proven; its appearance is not.** Two headless harnesses
+composed the extension's own modules against the real `server.mjs`, the real `claude`
+binary and a real OpenCode worker — covering startup, a full streaming turn, every event
+kind the parser handles, tree-kill with no strays, and a delegation whose result came back
+carrying the worker's actual words. What no automated thing has ever done is *look* at the
+chat: the webview needs a real VS Code host to render. Treat the layout as unverified.
 
 This is a personal project, not an Anthropic product. It uses
 `--dangerously-load-development-channels`, because custom channels are not on the
@@ -136,12 +153,20 @@ account they do not have.
 
 - **Node 22+** on the host. Nothing else — the only runtime dependency is `@modelcontextprotocol/sdk`.
 - **Claude Code v2.1.80+** on the host (channels shipped in .80; `prompt_id` in hook payloads needs .196+ for cost attribution, so .196+ is the real floor).
-- **Tailscale** on the host and every teammate's machine.
+- **Tailscale** on the host and every teammate's machine — **only if you are sharing the
+  room with other people**. Running solo, or running the extension, needs nothing beyond
+  loopback.
 - **Channels enabled for your org.** Pro and Max personal accounts skip this. **Team and
   Enterprise organizations must explicitly enable channels** — an Owner flips it at
   claude.ai → Admin settings → Claude Code → Channels, or sets `channelsEnabled: true` in
   managed settings. Without it the MCP server connects, its tools work, and channel messages
   silently never arrive.
+
+Not needed for the room itself, but needed for the parts built on it:
+
+- **`opencode`** on `PATH` (`npm i -g opencode-ai`) — only for OpenCode workers and
+  delegation. Nothing else uses it.
+- **VS Code 1.75+ or Cursor** — only for [the extension](#the-vs-code-extension).
 
 ## Setup
 
@@ -153,7 +178,7 @@ Five steps from a clone to a teammate typing in the room.
 git clone https://github.com/heetshah16/claude-room
 cd claude-room
 npm install          # one dependency: @modelcontextprotocol/sdk
-node --test          # optional: 464 tests, ~7s
+node --test          # optional: 549 tests, ~8s
 ```
 
 ### 2. Choose where it listens
@@ -453,6 +478,71 @@ The rendered brief also appends "report what you changed with `room_reply`" to t
 See [`docs/opencode-seat.md`](docs/opencode-seat.md) for prerequisites, the free-model
 reliability warning, `--attach`, and troubleshooting.
 
+## The VS Code extension
+
+Everything above assumes you assemble it yourself: start the server, read a token out of
+stderr, run `room-admin`, launch a seat in a second terminal, open a browser. The
+extension in [`extension/`](extension/) is that same machinery, packaged.
+
+It runs in **VS Code and Cursor** — Cursor is a VS Code fork, and the API surface used
+here is small and old (the newest is `globalStorageUri`, from 1.44). `engines.vscode` is
+`^1.75.0`, chosen because 1.74 is where activation events began being generated from
+`contributes.commands`.
+
+```
+VS Code extension host
+  ├─ room server        node src/server.mjs   standalone, on a port it chose
+  ├─ orchestrator       claude --print --input-format stream-json …
+  │                       └─ MCP stdio child: src/orchestrator-bridge.mjs
+  └─ worker(s)          node scripts/room-opencode-seat.mjs
+                          └─ opencode serve (loopback only)
+```
+
+You talk to the **orchestrator** in a chat panel. It designs, decides and verifies; it
+hands boilerplate, tests, mechanical refactors and lint fixes to a worker with the
+`delegate` tool, and the worker's result comes back into the conversation as a turn.
+
+The orchestrator is **not** a room seat. It streams to the extension's own UI rather than
+speaking through `room_reply`, so it needs exactly one thing from the room — the
+`delegate` tool — which is why the room runs standalone under the extension's control with
+a thin MCP bridge. It reuses your existing Claude Code login; nothing here handles a
+credential.
+
+### Running it
+
+```bash
+# from source, either editor
+code   --extensionDevelopmentPath="<repo>/extension"
+cursor --extensionDevelopmentPath="<repo>/extension"
+```
+
+Or open this repo and press **F5** — `.vscode/launch.json` points the Extension
+Development Host at `extension/`. Then `Ctrl+Shift+P` → **"Claude Room: Open Orchestrator
+Chat"**, and open a folder in that window first: the orchestrator needs a working
+directory.
+
+To install it properly, there is no build step:
+
+```bash
+cd extension
+npx @vscode/vsce package     # then: Extensions: Install from VSIX…
+```
+
+`opencode` must be on `PATH` for delegation to work — the chat itself does not need it.
+
+### What is built, and what is not
+
+Built: the chat with streaming prose, tool cards and rendered markdown; a model picker
+(`/model` works in headless print mode and switching genuinely takes effect); process
+supervision with tree-kill; crash recovery via `--resume`; and the delegation round trip.
+
+Not built yet, deliberately: login detection and guidance, conversation history, skill and
+slash-command completions, a settings surface, and the workers panel. Those are specified
+in [`docs/superpowers/specs/2026-09-05-orchestrator-parity-design.md`](docs/superpowers/specs/2026-09-05-orchestrator-parity-design.md).
+
+[`extension/README.md`](extension/README.md) records exactly what has and has not been
+verified, including the harness transcripts.
+
 ## The observer
 
 Off by default. `ROOM_OBSERVER=1` starts a second, **tool-less** agent that watches the room
@@ -668,14 +758,47 @@ text in front of an agent with your filesystem.
 npm test
 ```
 
-464 tests (463 passing, 1 skipped — see [Status](#status)), no network and no Claude Code
-required. The pure modules — router, ledger,
-identity, decisions, queue, turns, brief, observer, admin, seats, fanout — carry the
-load-bearing logic and are tested directly. The observer takes `runModel` as an injected seam,
-so its whole cycle is exercised without spawning a subprocess or spending a token.
+549 tests (548 passing, 1 skipped — see [Status](#status)), no network and no `claude` or
+`opencode` binary required. The pure modules — router, ledger, identity, decisions, queue,
+turns, brief, observer, admin, seats, fanout, delegation, spawn — carry the load-bearing
+logic and are tested directly. The observer takes `runModel` as an injected seam, so its
+whole cycle is exercised without spawning a subprocess or spending a token, and the
+OpenCode driver runs against an in-process fake server.
+
+One `node --test` from the repo root runs both suites: 40 room test files (ESM) and 10
+extension test files (CommonJS). Node resolves module type per nearest `package.json`, and
+`extension/package.json` deliberately has no `"type"` field — that is what keeps the two
+worlds apart in one invocation.
+
+Several bugs here were invisible to unit tests because the test exercised one path while
+production took another — a fixture inventing a field the real producer never sent, a
+module loaded through `module.exports` in tests and a `<script>` tag in production. Two
+habits came out of that and are worth keeping: **headless harnesses** that compose the real
+modules against the real binaries, and **mutation checks** that prove a test fails when the
+behaviour it names is deleted. A test that passes either way is worse than no test.
 
 ## Design notes
 
-- `docs/superpowers/specs/2026-08-19-claude-room-design.md` — the design and its decision record
-- `docs/superpowers/plans/2026-08-19-claude-room.md` — the implementation plan
-- `multiplayer-claude-code-handoff.md` — the prior exploration this supersedes
+[ARCHITECTURE.md](ARCHITECTURE.md) is the living description of how the pieces fit and
+which rules are load-bearing. Everything below is a **dated record** of what was decided
+and why, at the time it was decided — they are deliberately not kept up to date, because
+their value is showing the reasoning as it stood, including the parts that turned out to
+be wrong.
+
+| Date | Spec | Plan |
+|---|---|---|
+| 2026-08-19 | [claude-room](docs/superpowers/specs/2026-08-19-claude-room-design.md) — the room | [plan](docs/superpowers/plans/2026-08-19-claude-room.md) |
+| 2026-08-22 | [room observer](docs/superpowers/specs/2026-08-22-room-observer-design.md) | [plan](docs/superpowers/plans/2026-08-22-room-observer.md) |
+| 2026-08-25 | [agent seats](docs/superpowers/specs/2026-08-25-agent-seats-design.md) | [plan](docs/superpowers/plans/2026-08-25-agent-seats.md) |
+| 2026-09-04 | [super harness](docs/superpowers/specs/2026-09-04-super-harness-design.md) — OpenCode as a second harness, and delegation | [plan](docs/superpowers/plans/2026-09-04-super-harness.md) |
+| 2026-09-05 | [orchestrator extension](docs/superpowers/specs/2026-09-05-orchestrator-extension-design.md) — the VS Code extension | [plan](docs/superpowers/plans/2026-09-05-orchestrator-extension.md) |
+| 2026-09-05 | [orchestrator parity](docs/superpowers/specs/2026-09-05-orchestrator-parity-design.md) — making the chat feel like Claude Code | *(in progress)* |
+
+Also:
+
+- [`docs/opencode-seat.md`](docs/opencode-seat.md) — operator guide for OpenCode workers,
+  including the recorded smoke tests
+- [`extension/README.md`](extension/README.md) — what the extension's harnesses verified,
+  and what remains unseen
+- `multiplayer-claude-code-handoff.md` — the prior exploration this supersedes, kept as the
+  original context transfer from 2026-08-19
