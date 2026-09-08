@@ -18,6 +18,7 @@
   const { icon } = window.ClaudeIcons
   const { parseContextReport, verdictFor, bandsOf, fmtTokens } = window.ClaudeContext
   const { createProbeQueue } = window.ClaudeProbes
+  const { COMMANDS, filterEntries } = window.ClaudeCommands
 
   const messagesEl = document.getElementById('messages')
   const inputEl = document.getElementById('input')
@@ -35,6 +36,11 @@
   const contextLegendEl = document.getElementById('context-legend')
   const contextVerdictEl = document.getElementById('context-verdict')
   const contextTablesEl = document.getElementById('context-tables')
+  const dashEl = document.getElementById('dashboard')
+  const dashListEl = document.getElementById('dash-list')
+  const dashEmptyEl = document.getElementById('dash-empty')
+  const dashBtnEl = document.getElementById('dash-btn')
+  const attachBtnEl = document.getElementById('attach-btn')
 
   // Every probe the chat runs on its own behalf goes through one queue, so a
   // turn-end can say which probe it answered instead of two booleans guessing.
@@ -513,8 +519,118 @@
       }
     }
 
+    if (msg.type === 'skills') {
+      skillEntries = Array.isArray(msg.skills) ? msg.skills : []
+      // Re-filter in place if the menu is already open: skills arrive after a
+      // disk walk, which can easily land while someone is mid-query.
+      if (dashOpen()) openDash(currentQuery() ?? '')
+      return
+    }
     if (msg.type === 'activity') return onActivity(msg.activity)
     if (msg.type === 'fatal') return onFatal(String(msg.message ?? 'The orchestrator process has stopped.'))
+  })
+
+  // --- the command dashboard -------------------------------------------
+  //
+  // The composer IS the filter -- there is no second input to focus, tab into
+  // or lose. Typing `/` at the start opens the list, every keystroke after it
+  // narrows, and the textarea keeps DOM focus throughout. That is what makes
+  // aria-activedescendant the right mechanism: the listbox is pointed at, not
+  // moved into.
+
+  // Commands are known at load; skills arrive from the host once it has walked
+  // the disk, and may never arrive at all.
+  let skillEntries = []
+  let dashEntries = []
+  let dashIndex = 0
+
+  const dashOpen = () => !dashEl.hidden
+
+  /**
+   * The command being typed, or null when the composer is not a command.
+   *
+   * Only while it is still a single token: once there is a space the user is
+   * writing arguments, and a menu over the top of that is in the way rather
+   * than helping. A slash mid-sentence ("and/or") is prose, never a command.
+   */
+  function currentQuery() {
+    const v = inputEl.value
+    if (!v.startsWith('/')) return null
+    return v.includes(' ') ? null : v.slice(1)
+  }
+
+  function renderDash(entries) {
+    dashEntries = entries
+    if (dashIndex >= entries.length) dashIndex = 0
+    dashListEl.textContent = ''
+    entries.forEach((e, i) => {
+      const row = document.createElement('div')
+      row.className = `dash-row${i === dashIndex ? ' active' : ''}`
+      row.id = `dash-row-${i}`
+      row.setAttribute('role', 'option')
+      row.setAttribute('aria-selected', String(i === dashIndex))
+      const name = document.createElement('span')
+      name.className = 'dash-name'
+      name.textContent = e.name
+      const summary = document.createElement('span')
+      summary.className = 'dash-summary'
+      // A skill description is written by a plugin author -- third-party text,
+      // as untrusted as model output. textContent, never innerHTML.
+      summary.textContent = e.hint ? `${e.hint} — ${e.summary}` : e.summary
+      row.appendChild(name)
+      row.appendChild(summary)
+      // mousedown, not click: click fires after blur, by which time the
+      // composer has lost focus and the caret position with it.
+      row.addEventListener('mousedown', ev => { ev.preventDefault(); accept(i) })
+      dashListEl.appendChild(row)
+    })
+    dashEmptyEl.hidden = entries.length > 0
+    inputEl.setAttribute('aria-activedescendant', entries.length ? `dash-row-${dashIndex}` : '')
+  }
+
+  function openDash(query) {
+    dashEl.hidden = false
+    renderDash(filterEntries(COMMANDS.concat(skillEntries), query))
+  }
+
+  function closeDash() {
+    dashEl.hidden = true
+    dashIndex = 0
+    inputEl.setAttribute('aria-activedescendant', '')
+  }
+
+  function moveDash(delta) {
+    if (!dashEntries.length) return
+    // Wraps, so Up from the top reaches the bottom instead of doing nothing.
+    dashIndex = (dashIndex + delta + dashEntries.length) % dashEntries.length
+    renderDash(dashEntries)
+  }
+
+  function accept(i) {
+    const entry = dashEntries[i]
+    if (!entry) return
+    closeDash()
+    if (entry.sends) {
+      inputEl.value = ''
+      autoGrow()
+      appendMsg('user', entry.name)
+      vscode.postMessage({ type: 'input', text: entry.name })
+      return
+    }
+    // Insert and let the user finish the line: a skill usually needs an
+    // argument, and sending a bare skill name spends a turn to be asked for it.
+    inputEl.value = `${entry.name} `
+    inputEl.focus()
+    autoGrow()
+  }
+
+  dashBtnEl.appendChild(icon('slash', document))
+  dashBtnEl.addEventListener('click', () => {
+    if (dashOpen()) return closeDash()
+    if (!inputEl.value.startsWith('/')) inputEl.value = '/'
+    inputEl.focus()
+    autoGrow()
+    openDash(currentQuery() ?? '')
   })
 
   function send() {
@@ -535,13 +651,39 @@
   }
 
   sendEl.addEventListener('click', send)
-  inputEl.addEventListener('input', autoGrow)
+
+  inputEl.addEventListener('input', () => {
+    autoGrow()
+    const q = currentQuery()
+    if (q === null) closeDash()
+    else openDash(q)
+  })
+
   inputEl.addEventListener('keydown', e => {
+    // The open dashboard owns these keys. Enter in particular: without this
+    // the half-typed filter ("/mod") would be sent as a message.
+    if (dashOpen()) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); return moveDash(1) }
+      if (e.key === 'ArrowUp') { e.preventDefault(); return moveDash(-1) }
+      if (e.key === 'Escape') { e.preventDefault(); return closeDash() }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+        e.preventDefault()
+        return accept(dashIndex)
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       send()
     }
   })
+
+  // Establish the collapsible surfaces' state here rather than trusting the
+  // `hidden` attributes in webview.html. The script owns this state everywhere
+  // else, so letting the markup own it at boot means two sources of truth that
+  // can drift -- and a dashboard that believes it is open swallows Enter.
+  closeDash()
+  contextPanelEl.hidden = true
+  contextChipEl.setAttribute('aria-expanded', 'false')
 
   inputEl.focus()
 })()

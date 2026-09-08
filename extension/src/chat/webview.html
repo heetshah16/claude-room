@@ -38,10 +38,16 @@
     <div id="context-verdict" class="verdict" hidden></div>
     <div id="context-tables"></div>
   </div>
+  <div id="dashboard" class="dash" hidden>
+    <div id="dash-list" class="dash-list" role="listbox" aria-label="Commands and skills"></div>
+    <div id="dash-empty" class="dash-empty" hidden>No command or skill matches</div>
+  </div>
   <div class="composer">
-    <textarea id="input" rows="1" placeholder="Message the orchestrator... (Enter to send, Shift+Enter for a new line)"></textarea>
+    <textarea id="input" aria-autocomplete="list" aria-controls="dash-list" rows="1" placeholder="Message the orchestrator... (Enter to send, Shift+Enter for a new line)"></textarea>
     <div class="composer-toolbar">
       <div class="composer-toolbar-left">
+        <button id="attach-btn" class="icon-btn" type="button" aria-label="Attach a file" title="Attach a file"></button>
+        <button id="dash-btn" class="icon-btn" type="button" aria-label="Commands and skills" title="Commands and skills"></button>
         <button id="model-picker" class="chip" type="button" aria-expanded="false"
                 aria-controls="model-select" title="Change model">model: (unknown)</button>
         <select id="model-select" class="chip-select" hidden aria-label="Model"></select>
@@ -56,6 +62,7 @@
   <script nonce="{{nonce}}" src="{{iconsUri}}"></script>
   <script nonce="{{nonce}}" src="{{contextUri}}"></script>
   <script nonce="{{nonce}}" src="{{probesUri}}"></script>
+  <script nonce="{{nonce}}" src="{{commandsUri}}"></script>
   <script nonce="{{nonce}}" src="{{scriptUri}}"></script>
 </body>
 </html>

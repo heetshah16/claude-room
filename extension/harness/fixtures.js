@@ -98,6 +98,19 @@ const FIXTURES = {
     stream({ kind: 'text', text: 'Starting…\n' }),
     { type: 'fatal', message: 'orchestrator exited unexpectedly (code 1). Run "Claude Room: Restart Services" to continue.' },
   ],
+  // Real skill names and descriptions, taken from what discoverSkills finds on
+  // the development machine -- so the shot shows how actual descriptions
+  // behave in the row, not how a convenient short one does.
+  dashboard: [
+    stream({ kind: 'session', sessionId: 'fixture', tools: [], cwd: '/repo' }),
+    stream({ kind: 'turn-end', text: MODEL_PROBE_RESULT, turns: 1, costUsd: 0, isError: false }),
+    { type: 'skills', skills: [
+      { name: '/superpowers:brainstorming', summary: 'You MUST use this before any creative work - creating features, building components, adding functionality, or modifying behavior.', hint: '', sends: false },
+      { name: '/superpowers:test-driven-development', summary: 'Use when implementing any feature or bugfix, before writing implementation code', hint: '', sends: false },
+      { name: '/ui-ux-pro-max:design', summary: 'Brand identity, design tokens, UI styling, logo generation', hint: '[design-type] [context]', sends: false },
+      { name: '/claude-md-management:claude-md-improver', summary: 'Audit and improve CLAUDE.md files in repositories.', hint: '', sends: false },
+    ] },
+  ],
   'context-panel': [
     stream({ kind: 'session', sessionId: 'fixture', tools: [], cwd: '/repo' }),
     stream({ kind: 'turn-end', text: MODEL_PROBE_RESULT, turns: 1, costUsd: 0, isError: false }),
@@ -116,6 +129,7 @@ const FIXTURES = {
  */
 const INTERACTIONS = {
   'context-panel': ['context-chip'],
+  dashboard: ['dash-btn'],
 }
 
 module.exports = { FIXTURES, INTERACTIONS, resolveTheme }

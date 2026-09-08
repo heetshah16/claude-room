@@ -110,3 +110,26 @@ test('panel.js passes a uri for every script tag the html declares', () => {
     )
   }
 })
+
+test('no two chat modules declare the same top-level name', () => {
+  // Browser <script> tags share one global scope, so two files each declaring
+  // `const COMMANDS` is a SyntaxError that kills whichever loads second --
+  // taking the chat with it. This has happened three times: `const api` in two
+  // modules, and `const COMMANDS` in probes.js and commands.js.
+  //
+  // webview-boot.test.js does catch it, by failing every one of its tests at
+  // once with "Identifier X has already been declared". This names the file
+  // and the identifier instead, because that cascade buries the cause.
+  const declared = new Map() // name -> file that declared it first
+  const clashes = []
+  for (const file of modulesLoadedByHtml()) {
+    if (file === 'webview.js') continue // one IIFE; nothing of its own is global
+    const src = readFileSync(join(CHAT, file), 'utf8')
+    // Top-level only: no leading whitespace, so anything nested is ignored.
+    for (const [, name] of src.matchAll(/^(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/gm)) {
+      if (declared.has(name)) clashes.push(`${name}: ${declared.get(name)} and ${file}`)
+      else declared.set(name, file)
+    }
+  }
+  assert.deepEqual(clashes, [], `top-level names declared twice across chat modules:\n  ${clashes.join('\n  ')}`)
+})

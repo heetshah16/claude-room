@@ -14,7 +14,7 @@
 // turn-end requests another one, forever.
 'use strict'
 
-const COMMANDS = { model: '/model', context: '/context' }
+const PROBE_COMMANDS = { model: '/model', context: '/context' }
 
 /**
  * @param {{send: (text: string) => void}} deps
@@ -26,14 +26,14 @@ function createProbeQueue({ send }) {
   function dispatch() {
     if (inFlight || queued.length === 0) return
     inFlight = queued.shift()
-    send(COMMANDS[inFlight])
+    send(PROBE_COMMANDS[inFlight])
   }
 
   return {
     /** Ask for a probe. Sent now if the line is clear, queued if it is not. */
     request(name) {
       // A bare `/` would be sent to the model as a message. Fail loudly.
-      if (!COMMANDS[name]) throw new Error(`unknown probe: ${name}`)
+      if (!PROBE_COMMANDS[name]) throw new Error(`unknown probe: ${name}`)
       // Asking twice must not send twice -- the context probe is requested on
       // every real turn-end, and the chip's click asks for it too.
       if (inFlight === name || queued.includes(name)) return

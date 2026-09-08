@@ -2,15 +2,45 @@
 'use strict'
 const { test } = require('node:test')
 const assert = require('node:assert/strict')
-const { FIXTURES, resolveTheme } = require('../harness/fixtures.js')
+const { readFileSync } = require('node:fs')
+const { join } = require('node:path')
+const { FIXTURES, INTERACTIONS, resolveTheme } = require('../harness/fixtures.js')
+
+/**
+ * The message types panel.js actually posts, read from its source.
+ *
+ * Hardcoding this list meant a fixture for a new message kind was rejected as
+ * malformed the moment one was added -- the test failing rather than the thing
+ * it was testing. panel.js defines the protocol; read it from there.
+ */
+function postedTypes() {
+  const src = readFileSync(join(__dirname, '..', 'src', 'chat', 'panel.js'), 'utf8')
+  return new Set([...src.matchAll(/post\(\{\s*type:\s*'([^']+)'/g)].map(m => m[1]))
+}
 
 test('every fixture is a list of messages shaped like what panel.js posts', () => {
+  const allowed = postedTypes()
+  assert.ok(allowed.size > 0, 'expected to find the message types panel.js posts')
+
   const names = Object.keys(FIXTURES)
   assert.ok(names.length > 0, 'there must be at least one fixture')
   for (const name of names) {
     for (const msg of FIXTURES[name]) {
-      assert.ok(['stream', 'activity', 'fatal'].includes(msg.type), `${name}: bad type ${msg.type}`)
+      assert.ok(allowed.has(msg.type), `${name}: ${msg.type} is not a type panel.js posts`)
       if (msg.type === 'stream') assert.ok(typeof msg.event?.kind === 'string', `${name}: stream needs event.kind`)
+    }
+  }
+})
+
+test('every fixture the harness can click has the ids it clicks', () => {
+  // An interaction naming an element the page does not have throws inside the
+  // browser, and a screenshot of the un-clicked page looks like the feature
+  // simply did nothing.
+  const html = readFileSync(join(__dirname, '..', 'harness', 'index.html'), 'utf8')
+  for (const [fixture, ids] of Object.entries(INTERACTIONS)) {
+    assert.ok(FIXTURES[fixture], `INTERACTIONS names ${fixture}, which is not a fixture`)
+    for (const id of ids) {
+      assert.ok(html.includes(`id="${id}"`), `${fixture} clicks #${id}, which the harness page lacks`)
     }
   }
 })

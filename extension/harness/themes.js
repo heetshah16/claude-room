@@ -33,6 +33,13 @@ const COLOR_RE = /^#[0-9a-fA-F]{3,8}$/
  */
 const BUILTIN_DEFAULTS = {
   dark: {
+    // No theme in the dark_modern -> dark_plus -> dark_vs chain defines the
+    // list selection colours either, so a highlighted row rendered as no
+    // highlight at all until these were added. light_modern does define them.
+    'list.activeSelectionBackground': '#04395e',
+    'list.activeSelectionForeground': '#ffffff',
+    'list.hoverBackground': '#2a2d2e',
+    'toolbar.hoverBackground': '#5a5d5e50',
     'charts.foreground': '#cccccc',
     'charts.lines': '#808080',
     'charts.red': '#f14c4c',
@@ -43,6 +50,10 @@ const BUILTIN_DEFAULTS = {
     'charts.purple': '#b180d7',
   },
   light: {
+    'list.activeSelectionBackground': '#0060c0',
+    'list.activeSelectionForeground': '#ffffff',
+    'list.hoverBackground': '#e8e8e8',
+    'toolbar.hoverBackground': '#b8b8b850',
     'charts.foreground': '#3b3b3b',
     'charts.lines': '#808080',
     'charts.red': '#cd3131',

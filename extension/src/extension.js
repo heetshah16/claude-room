@@ -10,12 +10,14 @@ const net = require('node:net')
 const path = require('node:path')
 const fs = require('node:fs')
 const crypto = require('node:crypto')
+const os = require('node:os')
 
 const { createSupervisor } = require('./supervisor.js')
 const { roomRecipe, readOwnerToken, createRoomClient } = require('./room-client.js')
 const { orchestratorRecipe, bridgeMcpConfig, createOrchestrator } = require('./orchestrator.js')
 const { createEventRouter } = require('./events.js')
 const { createChatPanel } = require('./chat/panel.js')
+const { discoverSkills } = require('./skills.js')
 
 // extension.js lives at <repoRoot>/extension/src/extension.js. "The
 // extension's own directory" is <repoRoot>/extension; its parent is the repo
@@ -292,6 +294,18 @@ async function openChat(context) {
   // reaching the orchestrator before the panel has shown the work, and
   // keeps a "sent" delegation from being relayed back as if it were the
   // orchestrator's own answer.
+  // The `/` menu's skills, scanned off the startup path. The menu works
+  // without them -- the commands are built in -- and a slow disk or a large
+  // plugin cache must not delay the first message by even one frame.
+  setTimeout(() => {
+    try {
+      panel.postSkills(discoverSkills({ workspace: workspace.uri.fsPath, home: os.homedir() }))
+    } catch (err) {
+      // A menu without skills is still a menu. This is never fatal.
+      log(`skill discovery failed: ${err?.message ?? err}`)
+    }
+  }, 0)
+
   const roomClient = createRoomClient({ roomUrl, token })
   const router = createEventRouter({
     onWorkerActivity: a => panel.postActivity(a),

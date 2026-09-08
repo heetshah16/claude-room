@@ -292,7 +292,7 @@ details.thinking .thinking-body {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background: var(--vscode-badge-background, var(--vscode-toolbar-hoverBackground, transparent));
+  background: var(--vscode-badge-background, var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.25)));
   color: var(--vscode-badge-foreground, var(--vscode-descriptionForeground, var(--vscode-foreground)));
   border: 1px solid transparent;
   border-radius: 999px;
@@ -304,7 +304,7 @@ details.thinking .thinking-body {
 }
 
 .chip:hover {
-  background: var(--vscode-toolbar-hoverBackground, transparent);
+  background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.35));
 }
 
 /* Never removed: keyboard users have nothing else to go on. */
@@ -496,4 +496,95 @@ details.thinking .thinking-body {
 
 @media (prefers-reduced-motion: reduce) {
   * { transition-duration: 0.01ms !important; animation: none !important; }
+}
+
+/* ---- command dashboard ---------------------------------------------------
+ *
+ * Sits directly above the composer, so the list grows upward out of the text
+ * being typed. The composer is the filter -- there is no second input to
+ * focus, tab into, or lose. */
+.dash {
+  margin: 0 12px 4px 12px;
+  border: 1px solid var(--vscode-panel-border, var(--vscode-widget-border, transparent));
+  border-radius: 9px;
+  background: var(--vscode-editorWidget-background, var(--vscode-input-background));
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.dash-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+/* The fallback chain has to END in a literal. Ending it at another var is how
+ * the highlight came out invisible: no theme in the dark_modern chain defines
+ * list.activeSelectionBackground OR toolbar.hoverBackground, so both resolved
+ * to nothing and the selected row looked exactly like the others. */
+.dash-row.active {
+  background: var(--vscode-list-activeSelectionBackground,
+              var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.28)));
+  color: var(--vscode-list-activeSelectionForeground, inherit);
+}
+
+.dash-name {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.92em;
+  flex: 0 0 auto;
+}
+
+/* Truncates rather than widening the panel: a skill description is a
+ * paragraph, and the name is the part that must stay readable. */
+.dash-summary {
+  font-size: 0.85em;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* descriptionForeground against the selection background is not guaranteed to
+ * clear 4.5:1, so the active row's summary inherits instead. */
+.dash-row.active .dash-summary {
+  color: inherit;
+  opacity: 0.85;
+}
+
+.dash-empty {
+  padding: 8px 12px;
+  font-size: 0.85em;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+}
+
+/* Ghost buttons: an action, deliberately lighter than a chip, which carries
+ * state. The first screenshot of the chip row showed + and / rendered at the
+ * same weight as the model and context chips, which made actions and state
+ * indistinguishable. */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.icon-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.18));
+  color: var(--vscode-foreground);
+}
+
+.icon-btn:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
 }

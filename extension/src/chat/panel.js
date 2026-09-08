@@ -37,6 +37,7 @@ function createChatPanel({ context, onInput }) {
   const iconsUri = panel.webview.asWebviewUri(vscode.Uri.file(join(chatDir, 'icons.js')))
   const contextUri = panel.webview.asWebviewUri(vscode.Uri.file(join(chatDir, 'context.js')))
   const probesUri = panel.webview.asWebviewUri(vscode.Uri.file(join(chatDir, 'probes.js')))
+  const commandsUri = panel.webview.asWebviewUri(vscode.Uri.file(join(chatDir, 'commands.js')))
   const styleUri = panel.webview.asWebviewUri(vscode.Uri.file(join(chatDir, 'webview.css')))
   const n = nonce()
 
@@ -53,6 +54,7 @@ function createChatPanel({ context, onInput }) {
     .split('{{iconsUri}}').join(String(iconsUri))
     .split('{{contextUri}}').join(String(contextUri))
     .split('{{probesUri}}').join(String(probesUri))
+    .split('{{commandsUri}}').join(String(commandsUri))
     .split('{{styleUri}}').join(String(styleUri))
 
   panel.webview.html = html
@@ -72,6 +74,7 @@ function createChatPanel({ context, onInput }) {
     panel,
     postStream: event => post({ type: 'stream', event }),
     postActivity: activity => post({ type: 'activity', activity }),
+    postSkills: skills => post({ type: 'skills', skills }),
     postFatal: message => post({ type: 'fatal', message }),
     reveal: () => panel.reveal(vscode.ViewColumn.One),
     onDidDispose: cb => panel.onDidDispose(cb),
