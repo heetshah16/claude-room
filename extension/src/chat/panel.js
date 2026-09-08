@@ -7,6 +7,11 @@ const { randomBytes } = require('node:crypto')
 
 const nonce = () => randomBytes(16).toString('base64')
 
+// Messages from the chips that only the extension host can act on. An
+// allowlist rather than a prefix test: these reach process spawns, so an
+// unrecognised type must fall on the floor rather than be forwarded.
+const CONTROL_TYPES = new Set(['publish', 'invite', 'permission-mode', 'room-refresh'])
+
 /**
  * The chat webview: one panel, driven entirely through postMessage.
  *
@@ -17,6 +22,10 @@ const nonce = () => randomBytes(16).toString('base64')
  * enough to trust by inspection.
  */
 function createChatPanel({ context, onInput, onAttach }) {
+  // Assigned by onControl below; the room and permission chips are wired after
+  // the panel exists, because their handlers need the room client and the
+  // supervisor, which are built later in openChat.
+  let onControlMsg = null
   const extensionRoot = context.extensionUri?.fsPath ?? context.extensionPath
   const chatDir = join(extensionRoot, 'src', 'chat')
 
@@ -67,7 +76,13 @@ function createChatPanel({ context, onInput, onAttach }) {
     // attach-file (open a picker), attach-paths (dropped), attach-paste
     // (clipboard bytes). All three are the host's job: only it has a
     // filesystem and a file dialog.
-    if (typeof msg?.type === 'string' && msg.type.startsWith('attach')) onAttach?.(msg)
+    if (typeof msg?.type === 'string' && msg.type.startsWith('attach')) {
+      onAttach?.(msg)
+      return
+    }
+    // publish / invite / permission-mode / room-refresh: each restarts or
+    // queries a child process, which only the extension host can do.
+    if (CONTROL_TYPES.has(msg?.type)) onControlMsg?.(msg)
   })
 
   // The webview can already be gone (panel closed mid-turn) by the time an
@@ -80,6 +95,10 @@ function createChatPanel({ context, onInput, onAttach }) {
     postStream: event => post({ type: 'stream', event }),
     postActivity: activity => post({ type: 'activity', activity }),
     postSkills: skills => post({ type: 'skills', skills }),
+    postRoom: room => post({ type: 'room', room }),
+    postPermissionMode: mode => post({ type: 'permission-mode', mode }),
+    /** Register the handler for the chips' control messages. */
+    onControl: fn => { onControlMsg = fn },
     postAttached: a => post({ type: 'attached', path: a.path, dataUrl: a.dataUrl ?? null }),
     postFatal: message => post({ type: 'fatal', message }),
     reveal: () => panel.reveal(vscode.ViewColumn.One),

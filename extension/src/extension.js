@@ -13,12 +13,13 @@ const crypto = require('node:crypto')
 const os = require('node:os')
 
 const { createSupervisor } = require('./supervisor.js')
-const { roomRecipe, readOwnerToken, createRoomClient } = require('./room-client.js')
+const { roomRecipe, readOwnerToken, createRoomClient, PUBLISHED_HOST } = require('./room-client.js')
 const { orchestratorRecipe, bridgeMcpConfig, createOrchestrator } = require('./orchestrator.js')
 const { createEventRouter } = require('./events.js')
 const { createChatPanel } = require('./chat/panel.js')
 const { discoverSkills } = require('./skills.js')
 const { saveAttachment } = require('./attachments.js')
+const { isKnownMode, DEFAULT_MODE } = require('./permission-modes.js')
 
 // extension.js lives at <repoRoot>/extension/src/extension.js. "The
 // extension's own directory" is <repoRoot>/extension; its parent is the repo
@@ -258,6 +259,12 @@ async function openChat(context) {
   // committed before the process is even confirmed up: --resume and
   // --session-id both mint/continue the conversation at spawn time, so the
   // id to persist is already decided the moment the args are built.
+  // Persisted per workspace, like the session id: a permission mode chosen
+  // once should still be in force after a restart, and silently reverting to
+  // the default would be the kind of quiet safety change nobody notices.
+  const PERMISSION_KEY = 'claudeRoom.permissionMode'
+  let permissionMode = context.workspaceState.get(PERMISSION_KEY) ?? DEFAULT_MODE
+
   const SESSION_KEY = 'claudeRoom.sessionId'
   const priorSessionId = context.workspaceState.get(SESSION_KEY) ?? null
   const sessionId = crypto.randomUUID()
@@ -271,6 +278,7 @@ async function openChat(context) {
     priorSessionId,
     workspace: workspace.uri.fsPath,
     mcpConfigPath,
+    permissionMode,
   }))
 
   // `orchestrator` is assigned below, after `panel` — the two need each
@@ -348,6 +356,105 @@ async function openChat(context) {
     onDelegationResult: d => orchestrator.relay(d),
   })
   const stopFeed = subscribeToRoomEvents(roomClient, router)
+
+  // --- the room chip and the permission chip ---------------------------
+  //
+  // Both work by restarting a child. Publishing restarts the ROOM with a
+  // different bind address on the same port and state dir; changing the
+  // permission mode restarts the ORCHESTRATOR with --permission-mode and
+  // --resume. Neither tears down the chat.
+
+  let published = false
+
+  /** Send the webview everything its room popover renders. */
+  async function postRoom(extra = {}) {
+    const state = await roomClient.adminState()
+    panel.postRoom({
+      published,
+      // Taken from a join link rather than recomputed here: the room is the
+      // only thing that knows which address it decided to advertise.
+      advertised: state?.members?.[0]?.joinUrl ?? null,
+      // null adminState means the call failed, not that the room is empty --
+      // so send null and let the popover say it does not know.
+      members: state
+        ? state.members.map(m => ({ id: m.id, name: m.name, role: m.role }))
+        : null,
+      ...extra,
+    })
+  }
+
+  async function republish(next) {
+    panel.postRoom({ busy: true, published })
+    try {
+      supervisor.start('room', roomRecipe({
+        repoRoot: REPO_ROOT,
+        stateDir,
+        port,
+        host: next ? PUBLISHED_HOST : '127.0.0.1',
+      }))
+      await waitForRoomUp(roomUrl)
+      published = next
+    } catch (err) {
+      // The room not coming back is the one failure here that matters, and it
+      // must not be silent: the chat would keep accepting input against it.
+      vscode.window.showErrorMessage(`Claude Room: the room did not restart — ${err?.message ?? err}`)
+      log(`republish failed: ${err?.stack ?? err}`)
+    }
+    // The SSE feed reconnects on its own existing retry loop, so nothing else
+    // needs doing here.
+    await postRoom({ busy: false })
+  }
+
+  async function invite({ name, role }) {
+    const r = await roomClient.invite({ name, role })
+    if (!r?.ok) {
+      vscode.window.showErrorMessage(`Claude Room: could not invite ${name} — ${r?.errors?.[0] ?? 'unknown error'}`)
+      return
+    }
+    // The token IS the identity, so it goes to the clipboard rather than into
+    // the transcript, where it would be visible to anyone reading over a
+    // shoulder or scrolling back.
+    await vscode.env.clipboard.writeText(r.joinUrl)
+    vscode.window.showInformationMessage(`Claude Room: join link for ${name} copied to the clipboard.`)
+    await postRoom()
+  }
+
+  async function setPermissionMode(mode) {
+    // Already gated in orchestratorRecipe, but refusing here too means a bad
+    // value never reaches a process spawn at all.
+    if (!isKnownMode(mode)) return
+    permissionMode = mode
+    await context.workspaceState.update(PERMISSION_KEY, mode)
+    const prior = context.workspaceState.get(SESSION_KEY) ?? sessionId
+    try {
+      const proc = supervisor.start('orchestrator', orchestratorRecipe({
+        repoRoot: REPO_ROOT, roomUrl, token,
+        sessionId: crypto.randomUUID(),
+        priorSessionId: prior,
+        workspace: workspace.uri.fsPath,
+        mcpConfigPath,
+        permissionMode,
+      }))
+      // Reassign the SAME binding the panel's onInput closes over. Building a
+      // second panel here would leave the first one wired to a dead process.
+      orchestrator = createOrchestrator({ child: proc.child, onEvent: e => panel.postStream(e) })
+      if (session) session.orchestrator = orchestrator
+    } catch (err) {
+      vscode.window.showErrorMessage(`Claude Room: could not switch permission mode — ${err?.message ?? err}`)
+      log(`permission mode change failed: ${err?.stack ?? err}`)
+    }
+    panel.postPermissionMode(permissionMode)
+  }
+
+  panel.onControl(async msg => {
+    if (msg.type === 'publish') return republish(!!msg.published)
+    if (msg.type === 'invite') return invite({ name: String(msg.name ?? ''), role: String(msg.role ?? 'member') })
+    if (msg.type === 'permission-mode') return setPermissionMode(String(msg.mode ?? ''))
+    if (msg.type === 'room-refresh') return postRoom()
+  })
+
+  panel.postPermissionMode(permissionMode)
+  postRoom().catch(err => log(`room state failed: ${err?.message ?? err}`))
 
   panel.onDidDispose(() => {
     stopFeed()
