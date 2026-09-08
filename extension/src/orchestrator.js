@@ -2,6 +2,7 @@
 'use strict'
 const { join } = require('node:path')
 const { createStreamParser } = require('./stream.js')
+const { isKnownMode } = require('./permission-modes.js')
 
 const SYSTEM_PROMPT = `You are the orchestrator in a room that also has cheap worker seats.
 
@@ -30,9 +31,22 @@ When you delegate, say so in your reply. Your live output is visible only to the
  */
 function orchestratorRecipe({
   repoRoot, roomUrl, token, sessionId, priorSessionId, workspace, mcpConfigPath,
-  env = process.env, claudePath = 'claude',
+  permissionMode = null, env = process.env, claudePath = 'claude',
 }) {
   const resumeArgs = priorSessionId ? ['--resume', priorSessionId] : ['--session-id', sessionId]
+
+  // `/permissions` does not work in print mode, so the only way to change the
+  // permission mode is this flag plus a restart -- which is why the chip
+  // restarts with `--resume` rather than trying to switch in place.
+  //
+  // Refused rather than passed through: this string arrives from the webview
+  // and is spliced straight into a command line.
+  if (permissionMode && !isKnownMode(permissionMode)) {
+    throw new Error(`unknown permission mode: ${permissionMode}`)
+  }
+  // Omitted entirely when unset. Passing the CLI's own default explicitly
+  // would silently pin it if that default ever changed.
+  const permissionArgs = permissionMode ? ['--permission-mode', permissionMode] : []
   return {
     cmd: claudePath,
     args: [
@@ -41,6 +55,7 @@ function orchestratorRecipe({
       '--output-format', 'stream-json',
       '--verbose',
       ...resumeArgs,
+      ...permissionArgs,
       '--append-system-prompt', SYSTEM_PROMPT,
       '--mcp-config', mcpConfigPath,
       '--add-dir', workspace,

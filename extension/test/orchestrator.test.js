@@ -104,3 +104,47 @@ test('a worker result is relayed as a turn the orchestrator can tell apart from 
   assert.match(text, /added mul/)
   assert.match(text, /worker/i, 'the orchestrator must be able to tell this is not the human')
 })
+
+// --- permission mode -------------------------------------------------------
+
+const BASE = {
+  repoRoot: '/repo', roomUrl: 'http://room', token: 'tok',
+  sessionId: 'sess-1', workspace: '/ws', mcpConfigPath: '/cfg/mcp.json',
+}
+
+test('a permission mode reaches the command line', () => {
+  // /permissions is verified NOT to work in print mode, so this flag plus a
+  // restart is the only way to change the mode at all.
+  const { args } = orchestratorRecipe({ ...BASE, permissionMode: 'plan' })
+  const at = args.indexOf('--permission-mode')
+  assert.ok(at !== -1, 'the flag must be present')
+  assert.equal(args[at + 1], 'plan')
+})
+
+test('no permission mode means no flag at all, not an empty one', () => {
+  // `--permission-mode ""` is an error, and passing the CLI's own default
+  // explicitly would silently pin it if that default ever changed.
+  const { args } = orchestratorRecipe(BASE)
+  assert.ok(!args.includes('--permission-mode'))
+})
+
+test('an unknown permission mode is refused rather than passed through', () => {
+  // This string arrives from the webview and is spliced into argv.
+  assert.throws(
+    () => orchestratorRecipe({ ...BASE, permissionMode: '--dangerously-skip-permissions' }),
+    /permission mode/,
+  )
+})
+
+test('a mode the CLI accepts but we do not offer is still refused', () => {
+  assert.throws(() => orchestratorRecipe({ ...BASE, permissionMode: 'dontAsk' }), /permission mode/)
+})
+
+test('changing permission mode resumes the conversation rather than losing it', () => {
+  const { args } = orchestratorRecipe({
+    ...BASE, sessionId: 'new', priorSessionId: 'old', permissionMode: 'auto',
+  })
+  assert.ok(args.includes('--resume'))
+  assert.equal(args[args.indexOf('--resume') + 1], 'old')
+  assert.ok(args.includes('--permission-mode'))
+})
