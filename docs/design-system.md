@@ -185,9 +185,21 @@ time; Esc closes it and restores focus.
 | Model | model list | built; restyled to match |
 | Context | breakdown panel | §6 |
 
-Chips are 22px tall, 11px label, `--vscode-badge-background` at rest. State is
-carried by a leading icon *and* the label text, never by colour alone —
-`◉ Room · Published` differs from `○ Room · Local` in glyph, word and hue.
+**Actions and state must not look alike.** `+` and `/` are *ghost icon buttons*
+— transparent at rest, background on hover. The room, permission, model and
+context controls are *chips* — pill-shaped, `--vscode-badge-background` at rest,
+because each carries state to read. The first screenshot of this row rendered
+all six as chips and the difference vanished.
+
+Chips are 22px tall with an 11px label. State is carried by a leading icon
+*and* the label text, never by colour alone — `◉ Room · Published` differs from
+`○ Room · Local` in glyph, word and hue.
+
+**A `var()` fallback chain must end in a literal.** Ending one at another
+`var()` is how a selected row came out with no highlight at all: no theme in
+the `dark_modern` chain defines `list.activeSelectionBackground` *or*
+`toolbar.hoverBackground`, so both resolved to nothing and the highlighted row
+looked exactly like the others.
 
 ### Attachments
 
@@ -206,10 +218,23 @@ deliberately not on this path.
 3. Host writes it under `globalStorageUri/attachments/<uuid>.png`.
 4. Host posts the path back; the composer inserts it and shows a thumbnail chip.
 
-The thumbnail previews from a `data:` URI, which the CSP already permits
-(`img-src {{cspSource}} https: data:`). Pasted *text* is left entirely alone.
+The thumbnail previews from the same bytes the webview sent, as a `data:` URI —
+which the CSP already permits (`img-src {{cspSource}} https: data:`) — so it
+costs no second read of the file just written. Pasted *text* is left entirely
+alone; intercepting it would break the most common paste there is.
+
 Attachment chips sit in a strip above the textarea, each removable with an `×`,
-and clear when the message sends.
+and clear when the message sends so a file never rides along on the next one.
+Paths are prefixed onto the message on their own lines, ahead of the typed
+text: the model is told where the files are before it is told what to do with
+them.
+
+**Nothing user-supplied reaches the path.** The filename is a uuid and the
+extension comes from a lookup table, never from the mime string — that string
+is clipboard data, and deriving a filename from it is a path traversal.
+Malformed base64 is refused before anything touches the disk, because
+`Buffer.from` silently drops what it cannot decode and would otherwise leave a
+truncated image to be discovered much later.
 
 ### Command dashboard
 
@@ -217,19 +242,33 @@ Opens on `⁄` or on `/` typed at position 0. A popover anchored above the
 composer: a filter field, then results grouped under **Commands** and
 **Skills**.
 
-- Arrow keys move a highlight, Enter accepts, Esc closes, and the input keeps
-  DOM focus throughout with `aria-activedescendant` pointing at the highlighted
-  row. The list is `role="listbox"`, rows are `role="option"`.
-- **Only print-mode-verified commands appear.** `/model` and `/context` are
-  verified to work; `/status` is verified not to. A command whose headless
-  behaviour has not been checked is omitted, because offering one that answers
-  "isn't available in this environment" is worse than not offering it.
-- Skills come from scanning `SKILL.md` frontmatter in the workspace and
-  user-level skill directories, listing `name` and `description`. If nothing is
-  found the group is empty rather than an error — the directory layout is not a
-  published contract.
-- Selecting a skill *inserts* it and leaves the caret at the end. Skills
-  usually need an argument, so sending immediately would be wrong.
+- **The composer is the filter.** There is no second input to focus, tab into
+  or lose. A space closes the menu — arguments are being written by then, and
+  the menu is in the way. A slash mid-sentence never opens it, because
+  "and/or" is prose.
+- Arrow keys move a highlight, Enter accepts, Esc closes without eating what
+  was typed, and the textarea keeps DOM focus throughout with
+  `aria-activedescendant` pointing at the highlighted row. The list is
+  `role="listbox"`, rows are `role="option"`. Rows accept **`mousedown`, not
+  `click`** — click fires after blur, by which time the caret is gone.
+- **Only print-mode-verified commands appear.** Probed against 2.1.216 on
+  2026-09-08: `/model`, `/context`, `/cost` and `/mcp` work. `/help`,
+  `/status`, `/permissions` and `/todos` answer "isn't available in this
+  environment" or "Unknown command"; `/agents` answers only to say its wizard
+  was removed. A command whose headless behaviour has not been checked is
+  omitted — a dead menu item fails in a way the user cannot diagnose.
+- **Skills are scanned from the plugin cache as well as the two documented
+  directories.** On the development machine neither `.claude/skills` nor
+  `~/.claude/skills` exists, and all 28 `SKILL.md` files live under
+  `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`, invoked as
+  `plugin:skill`. Scanning only the documented pair finds nothing at all.
+  Names are deduplicated: 28 files yield 22 skills, because one plugin ships
+  six of its skills at two paths inside a single version.
+- If nothing is found the group is empty rather than an error — the layout is
+  not a published contract.
+- Selecting a skill *inserts* it and leaves the caret at the end, showing its
+  `argument-hint` in the row. Skills usually need an argument, so sending
+  immediately would spend a turn being asked for one.
 
 ---
 
@@ -487,7 +526,13 @@ look broken:
 
 Before any surface is called done:
 
-- [ ] No hex literal in `webview.css`; every colour is a `var(--vscode-*)` with a fallback
+- [ ] No hex literal in `webview.css`; every colour is a `var(--vscode-*)` whose
+      fallback chain ends in a **literal**, not another `var()`
+- [ ] The script sets its own initial open/closed state at boot rather than
+      inheriting it from a `hidden` attribute — two owners of one piece of
+      state drift, and a dashboard that believes it is open swallows Enter
+- [ ] No two chat modules declare the same top-level name (they share one
+      global scope; `chat-globals.test.js` enforces this)
 - [ ] No emoji used as an icon
 - [ ] No `innerHTML`, anywhere, on any path
 - [ ] Every interactive element has a visible focus ring
