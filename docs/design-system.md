@@ -344,22 +344,49 @@ carry:
 ### Why a bar and not a donut
 
 A donut is legible to about five slices. Past that the guidance is explicit:
-switch to a 100% stacked bar. So the bar carries **six bands** — System,
-Deferred, MCP, Skills, Memory, Messages — mapped onto the six
-`--vscode-charts-*` tokens, with free space left unfilled and outlined rather
-than coloured.
+switch to a 100% stacked bar. So the bar carries **six bands**, mapped onto the
+six `--vscode-charts-*` tokens:
 
-The table underneath is not decoration. It is the accessible equivalent of the
-bar and carries the exact values, because a bar alone conveys information by
-colour and length only.
+| Band | Categories folded into it |
+|---|---|
+| System prompt | System prompt |
+| Tools | System tools, System tools (deferred) |
+| MCP tools | MCP tools |
+| Skills | Skills, Custom agents |
+| Memory files | Memory files |
+| Messages | Messages, Autocompact buffer |
+
+The grouping is the question people actually ask. An earlier version put the
+system prompt in the same band as the system tools, which drew the two of them
+in one colour and erased the distinction the panel exists to show.
+
+**The bar is normalised to what is loaded, not to the window.** 100% stacked
+means 100%: it always fills. Scaled against a one-million-token window, a 20k
+context is a two-pixel sliver in which no proportion is legible at all — and
+*what* is filling the context is the question the panel answers. *How full* the
+window is is already on the chip and in the header line.
+
+The legend and the tables underneath are not decoration. They are the
+accessible equivalent of the bar and carry the exact values, because a bar
+alone conveys information by colour and length only.
 
 ### The verdict line
 
-One sentence of plain language derived from thresholds, because the request was
-"so the user can know if things are not working optimally" — and a percentage
-does not answer that. Examples: a skills block over 15% of used context, a
-deferred-tools block larger than everything else combined, a memory file over
-5k.
+One sentence of plain language derived from thresholds, because a percentage
+does not answer "is this working optimally". Two rules, in order:
+
+1. **A memory file over 5k** is named first — even when it is not the largest
+   thing on the bar. "Tools are big" is true and useless; you cannot shrink
+   them. A fat `CLAUDE.md` is something the reader owns and can edit today.
+2. **A band over 35% of what is loaded**, named with its share.
+
+It reasons over **bands, not raw categories** — over what the reader is
+actually looking at. Judged by category, the panel stayed silent about a block
+plainly taking 64% of the bar, because that block was two categories and
+neither crossed the threshold alone.
+
+Most reports get no verdict, and that is correct: a line on every report trains
+people to ignore the one that matters.
 
 ### Refresh
 
@@ -445,6 +472,18 @@ across sessions.
 ---
 
 ## 9. Checklist
+
+Run `node extension/harness/shoot.js` and look at the PNGs it writes. That
+harness loads the real stylesheet and the real chat scripts against theme
+tokens generated from the installed editor, so what it shows is what ships.
+Two things it had to learn the hard way, both of which made correct layouts
+look broken:
+
+- Chrome silently refuses a window narrower than ~500px, and on a scaled
+  display `--window-size` is device pixels while layout is CSS pixels. So the
+  harness pins the width in CSS and passes `--force-device-scale-factor=1`.
+- A panel that only opens on click has to be clicked, or the shot is of a
+  collapsed panel.
 
 Before any surface is called done:
 
