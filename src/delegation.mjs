@@ -155,7 +155,19 @@ export function createDelegator({
 
       // The delegation record: what makes the seat's eventual answer
       // attributable, and what carries `class` out to the room's event stream.
-      const record = { id: r.message.id, task: String(input.task), class: input.class, at: now() }
+      // `spec` is kept, not just rendered. renderDelegation flattens files,
+      // tests and do_not_touch into prose for the model, and that prose is the
+      // wrong shape for a person: seeing a brief AS fields is what makes a
+      // thin one visibly thin -- which is the whole reason validateDelegation
+      // is strict about them. Defaulted to {} so a consumer never has to guess
+      // between "no files" and "the field is missing".
+      const record = {
+        id: r.message.id,
+        task: String(input.task),
+        class: input.class,
+        spec: input.spec ?? {},
+        at: now(),
+      }
       pending.add(record)
       bus.publish('delegation', { ...record, to: handle, state: 'sent' })
 
