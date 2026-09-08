@@ -96,6 +96,17 @@ function createRoomClient({ roomUrl, token, fetchImpl = fetch }) {
     // and paraphrasing it would leave the orchestrator unable to repair the brief.
     delegate: input => post('/api/delegate', input),
 
+    /**
+     * Address a seat directly, as a person in the room.
+     *
+     * Goes through /msg, the room's normal path, which means it QUEUES: the
+     * room runs one turn per destination and Queue.submit gates a seat on
+     * being online, never on being idle. So this lands after whatever the seat
+     * is already doing -- which the detail view says before you send, not
+     * after.
+     */
+    say: (handle, text) => post('/msg', { text: `@${handle} ${text}` }),
+
     // --- admin (owner-only) ---
     //
     // adminState returns null rather than an empty roster when the call fails:

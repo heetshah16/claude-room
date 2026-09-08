@@ -21,6 +21,15 @@ const { join } = require('node:path')
 const DEFAULT_TURN_TIMEOUT_MS = 300_000
 
 /**
+ * How many transcript entries a worker keeps.
+ *
+ * Bounded because a worker lives as long as the chat does and a busy one
+ * produces a row per tool call. The most recent entries are the ones worth
+ * having, so the oldest are dropped.
+ */
+const MAX_TRANSCRIPT = 500
+
+/**
  * argv for `scripts/room-opencode-seat.mjs`.
  *
  * `model` and `timeout` are omitted when unset so the launcher's own defaults
@@ -81,6 +90,12 @@ function createWorkerPool({
 
   const snapshot = () => [...workers.values()].map(w => ({ ...w }))
 
+  /** Append to a worker's transcript, dropping the oldest past the bound. */
+  function record(w, entry) {
+    w.transcript.push(entry)
+    if (w.transcript.length > MAX_TRANSCRIPT) w.transcript.splice(0, w.transcript.length - MAX_TRANSCRIPT)
+  }
+
   function changed() {
     const list = snapshot()
     for (const fn of listeners) {
@@ -139,6 +154,12 @@ function createWorkerPool({
       lastTool: null,
       deadlineAt: null,
       startedAt: now(),
+      // What the orchestrator actually asked for, kept as fields rather than
+      // as the prose the model received. Outlives the delegation: "what was it
+      // asked to do" is still the question after the answer arrives.
+      brief: null,
+      transcript: [],
+      toolsUsed: [],
     })
     changed()
     return handle
@@ -171,6 +192,20 @@ function createWorkerPool({
 
     list: snapshot,
 
+    /**
+     * Everything the detail view shows for one worker, or null.
+     *
+     * `toolsUsed` is what this worker HAS used, not what it could: the
+     * launcher picks opencode's port internally, so its declared /config is
+     * not reachable from here. What it has actually reached for is both
+     * obtainable and the more honest answer.
+     */
+    detail(handle) {
+      const w = workers.get(handle)
+      if (!w) return null
+      return { ...w, transcript: [...w.transcript], toolsUsed: [...w.toolsUsed] }
+    },
+
     onChange(fn) {
       listeners.add(fn)
       return () => listeners.delete(fn)
@@ -198,10 +233,20 @@ function createWorkerPool({
           // whether a stalled free model gets killed, and therefore the only
           // one worth counting down.
           w.deadlineAt = now() + timeoutMs
-        } else if (data.state === 'done' || data.state === 'abandoned') {
+          w.brief = { id: data.id, task: data.task ?? null, class: data.class ?? null, spec: data.spec ?? {} }
+          record(w, { kind: 'brief', text: data.task ?? '', at: now() })
+        } else if (data.state === 'done') {
           w.state = 'idle'
           w.task = null
           w.deadlineAt = null
+          record(w, { kind: 'reply', text: data.text ?? '', at: now() })
+        } else if (data.state === 'abandoned') {
+          w.state = 'idle'
+          w.task = null
+          w.deadlineAt = null
+          // Recorded rather than left as a silent stop: a worker that simply
+          // goes quiet is indistinguishable from one still thinking.
+          record(w, { kind: 'abandoned', text: `abandoned: ${data.reason ?? 'unknown reason'}`, at: now() })
         }
         changed()
         return
@@ -211,11 +256,17 @@ function createWorkerPool({
         // A worker producing activity is plainly past starting, whatever the
         // launcher has got round to reporting.
         if (w.state === 'starting') w.state = 'busy'
-        if (data.tool) w.lastTool = data.tool
+        if (data.tool) {
+          w.lastTool = data.tool
+          if (data.kind !== 'tool-end') {
+            record(w, { kind: 'tool', tool: data.tool, input: data.input ?? null, at: now() })
+            if (!w.toolsUsed.includes(data.tool)) w.toolsUsed.push(data.tool)
+          }
+        }
         changed()
       }
     },
   }
 }
 
-module.exports = { workerRecipe, nextHandle, createWorkerPool, DEFAULT_TURN_TIMEOUT_MS }
+module.exports = { workerRecipe, nextHandle, createWorkerPool, DEFAULT_TURN_TIMEOUT_MS, MAX_TRANSCRIPT }

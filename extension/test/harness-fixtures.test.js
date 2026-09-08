@@ -7,15 +7,22 @@ const { join } = require('node:path')
 const { FIXTURES, INTERACTIONS, PAGES, resolveTheme } = require('../harness/fixtures.js')
 
 /**
- * The message types panel.js actually posts, read from its source.
+ * The message types the host actually posts into a webview, read from source.
  *
  * Hardcoding this list meant a fixture for a new message kind was rejected as
  * malformed the moment one was added -- the test failing rather than the thing
- * it was testing. panel.js defines the protocol; read it from there.
+ * it was testing. These three files define the protocol between the extension
+ * host and its three webviews; read it from them.
  */
+const HOST_FILES = ['panel.js', 'worker-panel.js', 'workers-view.js']
+
 function postedTypes() {
-  const src = readFileSync(join(__dirname, '..', 'src', 'chat', 'panel.js'), 'utf8')
-  return new Set([...src.matchAll(/post\(\{\s*type:\s*'([^']+)'/g)].map(m => m[1]))
+  const types = new Set()
+  for (const file of HOST_FILES) {
+    const src = readFileSync(join(__dirname, '..', 'src', 'chat', file), 'utf8')
+    for (const [, t] of src.matchAll(/post(?:Message)?\(\{\s*type:\s*'([^']+)'/g)) types.add(t)
+  }
+  return types
 }
 
 test('every fixture is a list of messages shaped like what panel.js posts', () => {

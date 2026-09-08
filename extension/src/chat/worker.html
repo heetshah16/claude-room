@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!--
+  Same strict CSP as the chat panel. Everything rendered here comes from
+  outside the extension: the brief is written by the orchestrator (a model),
+  the tool names and inputs by a free model, and the reply by that same worker.
+  All of it goes through textContent.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src {{cspSource}}; style-src {{cspSource}}; font-src {{cspSource}}; script-src 'nonce-{{nonce}}';">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{styleUri}}">
+<title>Worker</title>
+</head>
+<body>
+  <div class="worker-header">
+    <div class="worker-header-main">
+      <span id="w-dot" class="worker-dot" aria-hidden="true"></span>
+      <span id="w-title" class="worker-title"></span>
+      <span id="w-status" class="worker-status"></span>
+      <button id="w-interrupt" class="chip destructive" type="button" hidden
+              title="Abort the running turn">Interrupt</button>
+    </div>
+    <div id="w-sub" class="worker-header-sub"></div>
+  </div>
+
+  <div id="w-brief" class="panel" hidden>
+    <div class="panel-head">
+      <span class="panel-title">Brief from orchestrator</span>
+      <span id="w-class" class="panel-total"></span>
+    </div>
+    <div id="w-task" class="brief-task"></div>
+    <div id="w-fields" class="brief-fields"></div>
+  </div>
+
+  <details id="w-tools" class="detail" hidden>
+    <summary id="w-tools-summary"></summary>
+    <div id="w-tools-list" class="detail-row"></div>
+  </details>
+
+  <div id="messages" class="messages">
+    <div id="empty-state" class="empty-state">
+      <div class="empty-state-title">Nothing yet</div>
+      <div class="empty-state-hint">This worker has not been given anything to do.</div>
+    </div>
+  </div>
+
+  <div class="composer">
+    <div id="w-queued" class="queued" hidden></div>
+    <textarea id="input" rows="1" placeholder="Message this worker…"></textarea>
+    <div class="composer-toolbar">
+      <div class="composer-toolbar-left">
+        <span id="w-hint" class="queued-hint"></span>
+      </div>
+      <button id="send" class="send-btn" type="button" aria-label="Send" title="Send">&uarr;</button>
+    </div>
+  </div>
+
+  <script nonce="{{nonce}}" src="{{iconsUri}}"></script>
+  <script nonce="{{nonce}}" src="{{formatUri}}"></script>
+  <script nonce="{{nonce}}" src="{{scriptUri}}"></script>
+</body>
+</html>

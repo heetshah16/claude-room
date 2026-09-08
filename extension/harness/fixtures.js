@@ -110,6 +110,43 @@ const FIXTURES = {
   // Real skill names and descriptions, taken from what discoverSkills finds on
   // the development machine -- so the shot shows how actual descriptions
   // behave in a row, not how a conveniently short one does.
+  'worker-detail': [
+    { type: 'worker', worker: {
+      handle: 'worker-1', state: 'busy', model: 'opencode/mimo-v2.5-free',
+      worktree: 'C:/repo/.worktrees/worker-1',
+      task: 'Add tests for parser.mjs',
+      deadlineAt: Date.now() + 134_000,
+      brief: {
+        id: 'd1', class: 'execution', task: 'Add tests for parser.mjs covering the empty-input path',
+        spec: {
+          files: ['src/parser.mjs', 'test/parser.test.mjs'],
+          tests: ['node --test test/parser.test.mjs'],
+          do_not_touch: ['src/server.mjs'],
+        },
+      },
+      toolsUsed: ['read', 'glob', 'write'],
+      transcript: [
+        { kind: 'brief', text: 'Add tests for parser.mjs covering the empty-input path' },
+        { kind: 'tool', tool: 'glob', input: { pattern: 'src/parser*.mjs' } },
+        { kind: 'tool', tool: 'read', input: { file_path: 'src/parser.mjs' } },
+        { kind: 'tool', tool: 'write', input: { file_path: 'test/parser.test.mjs' } },
+      ],
+    } },
+  ],
+  'worker-thin-brief': [
+    { type: 'worker', worker: {
+      handle: 'worker-2', state: 'idle', model: 'opencode/mimo-v2.5-free',
+      worktree: 'C:/repo/.worktrees/worker-2', task: null, deadlineAt: null,
+      // A reasoning brief has no files and no tests, and is SUPPOSED to look
+      // sparse here -- that is what the card exists to make visible.
+      brief: { id: 'd2', class: 'reasoning', task: 'Think about whether the cache belongs in the parser', spec: {} },
+      toolsUsed: [],
+      transcript: [
+        { kind: 'brief', text: 'Think about whether the cache belongs in the parser' },
+        { kind: 'reply', text: 'It does not. The parser is called from two places that cache differently…' },
+      ],
+    } },
+  ],
   workers: [
     { type: 'workers', workers: [
       { handle: 'worker-1', state: 'busy', model: 'opencode/mimo-v2.5-free',
@@ -168,6 +205,8 @@ const FIXTURES = {
  * surface in the product, and the one where a long worktree path does damage.
  */
 const PAGES = {
+  'worker-detail': { file: 'worker.html', widths: [{ name: 'wide', px: 760 }] },
+  'worker-thin-brief': { file: 'worker.html', widths: [{ name: 'wide', px: 760 }] },
   workers: { file: 'workers.html', widths: [{ name: 'sidebar', px: 300 }, { name: 'wide', px: 420 }] },
   'workers-empty': { file: 'workers.html', widths: [{ name: 'sidebar', px: 300 }] },
 }

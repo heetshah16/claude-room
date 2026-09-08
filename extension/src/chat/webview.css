@@ -852,3 +852,89 @@ body.sidebar {
   white-space: nowrap;
   min-width: 0;
 }
+
+/* ---- the worker detail tab ----------------------------------------------- */
+
+.worker-header {
+  padding: 10px 16px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border, var(--vscode-widget-border, transparent));
+}
+
+.worker-header-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.worker-header-sub {
+  margin-top: 3px;
+  padding-left: 15px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.82em;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  overflow-wrap: anywhere;
+}
+
+/* The header's dot follows the same rule as the sidebar's: decorative, with
+ * the status word beside it carrying the same fact. */
+body.worker-busy .worker-dot {
+  background: var(--vscode-charts-green, #89d185);
+  border-color: var(--vscode-charts-green, #89d185);
+}
+
+body.worker-starting .worker-dot {
+  background: var(--vscode-charts-yellow, #cca700);
+  border-color: var(--vscode-charts-yellow, #cca700);
+}
+
+/* Interrupt sits at the right of the header, never in the flow of the
+ * transcript: it discards work the orchestrator is waiting on, so it must be
+ * reached deliberately. */
+.worker-header-main .chip { margin-left: auto; }
+
+.brief-task {
+  font-size: 0.95em;
+  margin-bottom: 6px;
+}
+
+.brief-fields { display: grid; gap: 2px; }
+
+.brief-field {
+  display: flex;
+  gap: 10px;
+  font-size: 0.85em;
+}
+
+.brief-key {
+  flex: 0 0 58px;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+}
+
+.brief-value {
+  font-family: var(--vscode-editor-font-family, monospace);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+/* Anything typed at a busy worker waits for the room's queue, so it is shown
+ * waiting. A message the sender believes landed is the worst failure this
+ * system can have. */
+.queued {
+  border-left: 2px solid var(--vscode-charts-yellow, #cca700);
+  padding: 4px 0 4px 8px;
+  margin-bottom: 6px;
+  font-size: 0.9em;
+}
+
+.queued-row + .queued-row { margin-top: 4px; }
+
+.queued-note {
+  display: block;
+  font-size: 0.85em;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+}
+
+.queued-hint {
+  font-size: 0.82em;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+}

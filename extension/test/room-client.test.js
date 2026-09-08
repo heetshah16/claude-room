@@ -146,3 +146,19 @@ test('rotate and remove name the member they act on', async () => {
   assert.match(calls[1][0], /\/api\/admin\/remove/)
   assert.deepEqual(calls[1][1], { memberId: 'm2' })
 })
+
+test('addressing a seat goes through the room, mentioning it by handle', async () => {
+  // /msg is the room's normal path, which is what makes this QUEUE behind
+  // whatever the seat is already doing rather than interrupting it.
+  let sent = null
+  const client = createRoomClient({
+    roomUrl: 'http://127.0.0.1:1', token: 'tok',
+    fetchImpl: async (url, init) => {
+      sent = { url: String(url), body: JSON.parse(init.body) }
+      return { ok: true, json: async () => ({ ok: true, addressed: true }) }
+    },
+  })
+  await client.say('worker-1', 'also cover the empty case')
+  assert.match(sent.url, /\/msg\?/)
+  assert.equal(sent.body.text, '@worker-1 also cover the empty case')
+})

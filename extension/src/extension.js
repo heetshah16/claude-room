@@ -22,6 +22,7 @@ const { saveAttachment } = require('./attachments.js')
 const { isKnownMode, DEFAULT_MODE } = require('./chat/permissions.js')
 const { createWorkerPool } = require('./workers.js')
 const { createWorkersView } = require('./chat/workers-view.js')
+const { createWorkerPanel } = require('./chat/worker-panel.js')
 
 // extension.js lives at <repoRoot>/extension/src/extension.js. "The
 // extension's own directory" is <repoRoot>/extension; its parent is the repo
@@ -33,6 +34,7 @@ let supervisor = null
 let output = null
 let session = null // { panel } — the live chat session, if one is open
 let activeWorkersView = null // the sidebar, which outlives any one session
+let activeOpenWorker = null // opens a worker's tab, once a chat exists
 
 function log(msg) {
   output?.appendLine(String(msg))
@@ -69,6 +71,15 @@ function activate(context) {
     vscode.window.registerWebviewViewProvider('claudeRoom.workers', workersView.provider),
     vscode.commands.registerCommand('claudeRoom.openChat', () => openChat(context)),
     vscode.commands.registerCommand('claudeRoom.restart', () => restart(context)),
+    vscode.commands.registerCommand('claudeRoom.openWorker', handle => {
+      // The sidebar exists before any chat does, so clicking a worker with no
+      // session must say so rather than doing nothing at all.
+      if (!activeOpenWorker) {
+        vscode.window.showInformationMessage('Claude Room: open the orchestrator chat first.')
+        return
+      }
+      activeOpenWorker(String(handle ?? ''))
+    }),
     output,
     { dispose: () => supervisor?.stopAll() },
   )
@@ -377,10 +388,40 @@ async function openChat(context) {
   // The worker fleet. Nothing is spawned here: a chat-only session should pay
   // no worktree, no process, and should not need `opencode` on PATH at all.
   const pool = createWorkerPool({ roomClient, supervisor, repoRoot: REPO_ROOT, roomUrl, log })
+  // One tab per worker, opened on demand from the sidebar and kept fed by the
+  // same onChange every other surface uses.
+  const workerPanels = new Map()
+
+  function pushWorker(handle) {
+    const p = workerPanels.get(handle)
+    if (p) p.postWorker(pool.detail(handle))
+  }
+
+  function openWorker(handle) {
+    const existing = workerPanels.get(handle)
+    if (existing) return existing.reveal()
+    const wp = createWorkerPanel({
+      context,
+      handle,
+      onSay: (h, text) => roomClient.say(h, text),
+      onInterrupt: h => log(`interrupt requested for ${h}`),
+      onRefresh: h => pushWorker(h),
+    })
+    wp.onDidDispose(() => workerPanels.delete(handle))
+    workerPanels.set(handle, wp)
+    pushWorker(handle)
+  }
+
   pool.onChange(list => {
     panel.postWorkers(list)
     activeWorkersView?.postWorkers(list)
+    // A worker whose tab is open sees every change, not only the ones that
+    // happen to arrive while it is focused.
+    for (const handle of workerPanels.keys()) pushWorker(handle)
   })
+
+  session = session ?? null
+  activeOpenWorker = openWorker
 
   const router = createEventRouter({
     onWorkerActivity: a => panel.postActivity(a),

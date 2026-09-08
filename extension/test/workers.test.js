@@ -224,3 +224,75 @@ test('applying a room event notifies listeners, so the sidebar follows along', a
   pool.applyRoomEvent('delegation', { to: 'worker-1', state: 'sent', task: 't', id: 'd1' })
   assert.deepEqual(seen, ['busy'])
 })
+
+// --- what the detail view shows --------------------------------------------
+
+test('the brief is kept as fields, which is what makes a thin one look thin', async () => {
+  const pool = await poolWithOne()
+  pool.applyRoomEvent('delegation', {
+    to: 'worker-1', state: 'sent', id: 'd1', task: 'Add tests', class: 'execution',
+    spec: { files: ['src/parser.mjs'], tests: ['node --test'], do_not_touch: ['src/server.mjs'] },
+  })
+  const d = pool.detail('worker-1')
+  assert.equal(d.brief.task, 'Add tests')
+  assert.equal(d.brief.class, 'execution')
+  assert.deepEqual(d.brief.spec.files, ['src/parser.mjs'])
+})
+
+test('the brief survives the delegation finishing, so it can still be read', async () => {
+  // The question "what was it actually asked to do" outlives the answer.
+  const pool = await poolWithOne()
+  pool.applyRoomEvent('delegation', { to: 'worker-1', state: 'sent', id: 'd1', task: 'Add tests', class: 'execution', spec: {} })
+  pool.applyRoomEvent('delegation', { to: 'worker-1', state: 'done', id: 'd1', text: 'added 4 cases' })
+  assert.equal(pool.detail('worker-1').brief.task, 'Add tests')
+})
+
+test('tool calls and the reply land in the transcript, in order', async () => {
+  const pool = await poolWithOne()
+  pool.applyRoomEvent('delegation', { to: 'worker-1', state: 'sent', id: 'd1', task: 'Add tests', class: 'execution', spec: {} })
+  pool.applyRoomEvent('activity', { handle: 'worker-1', kind: 'tool-start', tool: 'read', input: { file_path: 'src/parser.mjs' } })
+  pool.applyRoomEvent('activity', { handle: 'worker-1', kind: 'tool-start', tool: 'write', input: { file_path: 'test/parser.test.mjs' } })
+  pool.applyRoomEvent('delegation', { to: 'worker-1', state: 'done', id: 'd1', text: 'added 4 cases' })
+
+  assert.deepEqual(pool.detail('worker-1').transcript.map(e => [e.kind, e.tool ?? e.text]), [
+    ['brief', 'Add tests'],
+    ['tool', 'read'],
+    ['tool', 'write'],
+    ['reply', 'added 4 cases'],
+  ])
+})
+
+test('an abandoned delegation is recorded as such, not as a silent stop', async () => {
+  const pool = await poolWithOne()
+  pool.applyRoomEvent('delegation', { to: 'worker-1', state: 'sent', id: 'd1', task: 't', class: 'reasoning', spec: {} })
+  pool.applyRoomEvent('delegation', { to: 'worker-1', state: 'abandoned', id: 'd1', reason: 'feed dropped' })
+  const last = pool.detail('worker-1').transcript.at(-1)
+  assert.equal(last.kind, 'abandoned')
+  assert.match(last.text, /feed dropped/)
+})
+
+test('the transcript is bounded, so a long-lived worker cannot grow without limit', async () => {
+  const pool = await poolWithOne()
+  for (let i = 0; i < 600; i++) {
+    pool.applyRoomEvent('activity', { handle: 'worker-1', kind: 'tool-start', tool: `t${i}` })
+  }
+  const t = pool.detail('worker-1').transcript
+  assert.ok(t.length <= 500, `transcript grew to ${t.length}`)
+  assert.equal(t.at(-1).tool, 't599', 'the most recent entries are the ones kept')
+})
+
+test('detail for an unknown handle is null rather than an empty shell', async () => {
+  const pool = await poolWithOne()
+  assert.equal(pool.detail('ghost'), null)
+})
+
+test('the tools a worker has actually used are collected', async () => {
+  // Not a declared capability list: the launcher picks opencode's port
+  // internally, so its /config is not reachable from here. What it HAS used is
+  // both reachable and more honest.
+  const pool = await poolWithOne()
+  pool.applyRoomEvent('activity', { handle: 'worker-1', kind: 'tool-start', tool: 'read' })
+  pool.applyRoomEvent('activity', { handle: 'worker-1', kind: 'tool-start', tool: 'write' })
+  pool.applyRoomEvent('activity', { handle: 'worker-1', kind: 'tool-start', tool: 'read' })
+  assert.deepEqual(pool.detail('worker-1').toolsUsed, ['read', 'write'])
+})
