@@ -1171,6 +1171,13 @@ git commit -m "feat(chat): one queue for the /model and /context self-probes"
 - Consumes: `parseContextReport`, `verdictFor` (Task 4); `createProbeQueue`
   (Task 5); `icon` (Task 3).
 
+**Also fixes, found by the first harness screenshot:** `showModelOptions` sets
+`modelPickerEl.hidden = list.length > 0`, so once the session-start probe
+answers, the styled chip is replaced *permanently* by a bare native `<select>`.
+That is what the composer looks like on every launch today. The select must
+become a popover the chip owns, not a replacement for it: keep the chip
+visible showing the current model, and reveal the list on click.
+
 - [ ] **Step 1: Add the markup**
 
 In `webview.html`, replace the `composer-toolbar-left` block with:

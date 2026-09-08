@@ -4,3 +4,6 @@ node_modules/
 .demo-room/
 .showcase-room/
 .trace-room/
+extension/harness/shots/
+extension/harness/theme.css
+extension/harness/replay.js
