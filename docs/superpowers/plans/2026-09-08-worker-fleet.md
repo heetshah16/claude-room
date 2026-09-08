@@ -63,8 +63,21 @@ A `tool` part:
 A `step-finish` part carries `cost` and `tokens: {total, input, output,
 reasoning}` — real per-step accounting, not an estimate.
 
-`message.part.updated` delivers exactly these objects under `properties.part`,
-verified for a `text` part; a `tool` part rides the same envelope.
+`message.part.updated` delivers exactly these objects under `properties.part`.
+Verified live for a tool call: **one call arrives as three frames**, and the
+statuses matter.
+
+```
+1  status: "pending"     input: {}                    raw: ""
+2  status: "running"     input: { pattern: "*.txt" }  time.start
+3  status: "completed"   input: {…}  output: "…"      metadata.count
+```
+
+**The `pending` frame carries an empty input.** A classifier that treats
+"anything not completed" as the start of a tool call fires on `pending` with no
+arguments, and then the dedup by `callID` suppresses the `running` frame that
+actually carries them — every row in the sidebar would show a tool with no
+input. So `pending` is ignored, `running` starts, and `completed`/`error` ends.
 
 **Minting a worker seat is one call.** `POST /api/admin/invite` with
 `{ name, kind: 'agent', handle, ownerId, delegatable: true }` returns
@@ -130,6 +143,20 @@ test('a tool part becomes a tool-start, so the room can see the work', () => {
   assert.equal(a.callId, 'call_1')
   assert.equal(a.tool, 'glob')
   assert.deepEqual(a.input, { pattern: '**/math.js' })
+})
+
+test('a pending tool part is ignored -- its input has not been written yet', () => {
+  // Verified live: one call arrives pending (input {}), then running (input
+  // populated), then completed. Starting on pending would deduplicate away the
+  // frame that carries the arguments.
+  const ev = {
+    type: 'message.part.updated',
+    properties: {
+      sessionID: 'ses_a',
+      part: { type: 'tool', callID: 'call_1', tool: 'glob', state: { status: 'pending', input: {}, raw: '' } },
+    },
+  }
+  assert.equal(actionForOpencodeEvent(ev, 'ses_a').type, 'ignore')
 })
 
 test('a completed tool part becomes a tool-end', () => {
@@ -251,6 +278,11 @@ In `src/opencode.mjs`, before the final `return { type: 'ignore' }`:
     if (status === 'completed' || status === 'error') {
       return { type: 'tool-end', callId: part.callID, tool: part.tool, isError: status === 'error' }
     }
+    // `pending` is announced before the model has finished writing the
+    // arguments -- its input is {}. Starting there and then deduplicating by
+    // callID would suppress the `running` frame that actually carries them,
+    // and every tool row would show no input at all.
+    if (status !== 'running') return { type: 'ignore' }
     return { type: 'tool-start', callId: part.callID, tool: part.tool, input: part.state?.input ?? {} }
   }
 ```
