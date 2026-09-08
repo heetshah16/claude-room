@@ -106,3 +106,48 @@ test('starting a name twice replaces the old child rather than leaking it', () =
   assert.deepEqual(killed, [1], 'the first child must be reaped')
   assert.equal(sup.status('room').pid, 2)
 })
+
+// --- restarting a child in place -------------------------------------------
+//
+// Publishing the room and changing the permission mode both work by starting
+// the same name again with different arguments. Neither may look like a crash.
+
+test('starting a name that is already running replaces it, killing the old tree', () => {
+  const h = harness()
+  const first = h.sup.start('room', { cmd: 'node', args: [], opts: { env: { ROOM_HOST: '127.0.0.1' } } })
+  h.sup.start('room', { cmd: 'node', args: [], opts: { env: { ROOM_HOST: '0.0.0.0' } } })
+
+  assert.deepEqual(h.killed, [first.pid], 'the old room must be reaped, not orphaned')
+  assert.equal(h.spawned.length, 2)
+  assert.equal(h.spawned[1].opts.env.ROOM_HOST, '0.0.0.0')
+})
+
+test('replacing a child does not report the old one as having crashed', () => {
+  // Without this the chat shows "room exited unexpectedly" every single time
+  // the user publishes, which reads as the feature being broken.
+  const oldChild = fakeChild(1)
+  const newChild = fakeChild(2)
+  const h = harness({ children: [oldChild, newChild] })
+  const exits = []
+  h.sup.on('exit', e => exits.push(e))
+
+  h.sup.start('room', { cmd: 'node', args: [], opts: {} })
+  h.sup.start('room', { cmd: 'node', args: [], opts: {} })
+  oldChild.emit('exit', 0) // the replaced process finally dies
+
+  assert.deepEqual(exits, [], 'a replaced child is not a crash')
+})
+
+test('the replacement is still watched, so a real crash after one is reported', () => {
+  const oldChild = fakeChild(1)
+  const newChild = fakeChild(2)
+  const h = harness({ children: [oldChild, newChild] })
+  const exits = []
+  h.sup.on('exit', e => exits.push(e))
+
+  h.sup.start('room', { cmd: 'node', args: [], opts: {} })
+  h.sup.start('room', { cmd: 'node', args: [], opts: {} })
+  newChild.emit('exit', 1)
+
+  assert.deepEqual(exits, [{ name: 'room', code: 1 }], 'the live child must still be watched')
+})
