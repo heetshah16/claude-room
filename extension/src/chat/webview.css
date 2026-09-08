@@ -6,6 +6,17 @@
 
 * { box-sizing: border-box; }
 
+/* `hidden` is how every toggle in this file works -- the empty state, the
+ * fatal banner, the rate-limit banner, the status line, the model select.
+ * But the attribute only carries the user-agent's `display: none`, which any
+ * author rule beats: `.empty-state { display: flex }` silently defeated it,
+ * so hideEmptyState() never hid anything and the empty state sat behind every
+ * conversation. Caught by the first harness screenshot, having survived every
+ * unit test -- the tests assert `hidden` is set, and it was.
+ *
+ * One rule, stated once, rather than a `[hidden]` variant per component. */
+[hidden] { display: none !important; }
+
 html, body {
   height: 100%;
   margin: 0;
