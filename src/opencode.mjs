@@ -106,6 +106,38 @@ export function actionForOpencodeEvent(ev, sessionId) {
     if (st === 'retry') return { type: 'retry', attempt: p.status?.attempt ?? 0 }
     return { type: 'busy' }
   }
+
+  // A tool call the worker is making.
+  //
+  // The room already has a route for this -- /seat/hook/PreToolUse, the same
+  // one a Claude seat's own hooks use -- so the entire activity pipeline
+  // downstream already exists: handleHook tags it with this seat's handle,
+  // publishes it on the bus, and the extension's SSE router forwards it. What
+  // was missing was only that this event was thrown away here.
+  //
+  // Everything else stays ignored on purpose. A single real turn emitted 20
+  // `reasoning` parts and 20 `step-*` parts, and the worker's prose already
+  // reaches the room through room_reply -- mirroring it would duplicate every
+  // reply and drown the feed.
+  if (type === 'message.part.updated' && p.part?.type === 'tool') {
+    const part = p.part
+    // Without a callID nothing can be deduplicated or matched to its finish.
+    if (!part.callID) return { type: 'ignore' }
+
+    const status = part.state?.status
+    if (status === 'completed' || status === 'error') {
+      return { type: 'tool-end', callId: part.callID, tool: part.tool, isError: status === 'error' }
+    }
+    // Verified against the real binary: one call arrives as three frames --
+    // `pending`, then `running`, then `completed` -- and `pending` is
+    // announced before the model has finished writing the arguments, with
+    // `input: {}` and `raw: ""`. Starting there and then deduplicating by
+    // callID would suppress the `running` frame that actually carries them,
+    // and every tool row would show a tool with no input.
+    if (status !== 'running') return { type: 'ignore' }
+    return { type: 'tool-start', callId: part.callID, tool: part.tool, input: part.state?.input ?? {} }
+  }
+
   return { type: 'ignore' }
 }
 
@@ -216,7 +248,10 @@ export function createOpenCodeSeat({
       const id = await ensureSession()
       const { text: context } = pending.drain()
 
-      turn = { promptId, timer: null }
+      // `tools` is the per-turn dedup set: message.part.updated fires several
+      // times for one call, and without this one tool call becomes several
+      // identical rows in the room's activity feed.
+      turn = { promptId, timer: null, tools: new Set() }
       turn.timer = setTimer(() => { void onDeadline(promptId) }, turnTimeoutMs)
       // Injected fakes in tests won't have unref; the real setTimeout does.
       // Without it, a real un-fired deadline timer keeps the process alive
@@ -278,6 +313,23 @@ export function createOpenCodeSeat({
       await finish(promptId)
       return
     }
+    // A worker's tool call, on its way to the room's activity feed. Posted to
+    // the SAME hook route a Claude seat's own hooks use, so everything
+    // downstream -- turn attribution, the handle tag, the bus event, the
+    // extension's SSE router -- already works without change.
+    if (action.type === 'tool-start') {
+      if (turn.tools.has(action.callId)) return
+      turn.tools.add(action.callId)
+      await post(`${roomUrl}/seat/hook/PreToolUse?token=${encodeURIComponent(token)}`,
+        { token, prompt_id: promptId, tool_name: action.tool, tool_input: action.input })
+      return
+    }
+    if (action.type === 'tool-end') {
+      await post(`${roomUrl}/seat/hook/PostToolUse?token=${encodeURIComponent(token)}`,
+        { token, prompt_id: promptId, tool_name: action.tool })
+      return
+    }
+
     if (action.type === 'end-turn') await finish(promptId)
   }
 

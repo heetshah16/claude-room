@@ -215,3 +215,107 @@ test('a finish that resumes after its turn was replaced must not end the replace
     'only the first turn was ever closed',
   )
 })
+
+// --- a worker's tool calls reach the room ----------------------------------
+//
+// Before this, the room saw a worker only when it started and when it finally
+// replied: the driver classified every non-session.* event as ignore, so
+// several minutes of real work looked like silence.
+
+const toolPart = (state, over = {}) => ({
+  type: 'message.part.updated',
+  properties: {
+    sessionID: 'ses_a',
+    part: { type: 'tool', callID: 'call_1', tool: 'glob', state, ...over },
+  },
+})
+
+test('a running tool call reaches the room as a PreToolUse hook', async () => {
+  const r = recorder()
+  const seat = seatOf(r)
+  await seat.onRoomEvent(turn('find the parser'))
+  await seat.onOpencodeEvent(toolPart({ status: 'running', input: { pattern: '*.mjs' } }))
+
+  const hooks = r.find(/\/seat\/hook\/PreToolUse/)
+  assert.equal(hooks.length, 1, 'the room must be told the worker used a tool')
+  assert.equal(hooks[0].body.tool_name, 'glob')
+  assert.deepEqual(hooks[0].body.tool_input, { pattern: '*.mjs' })
+  assert.ok(hooks[0].body.prompt_id, 'the hook must name the turn it belongs to')
+  assert.equal(hooks[0].body.token, 'tok', 'the seat token authenticates the hook')
+})
+
+test('the pending frame does not consume the call, so its arguments still arrive', async () => {
+  // Verified against the real binary: pending arrives first with input {}.
+  // Reporting it and then deduplicating by callID would mean the room only
+  // ever saw a tool with no arguments.
+  const r = recorder()
+  const seat = seatOf(r)
+  await seat.onRoomEvent(turn('find the parser'))
+  await seat.onOpencodeEvent(toolPart({ status: 'pending', input: {}, raw: '' }))
+  assert.equal(r.find(/PreToolUse/).length, 0, 'pending is not a start')
+
+  await seat.onOpencodeEvent(toolPart({ status: 'running', input: { pattern: '*.mjs' } }))
+  const hooks = r.find(/PreToolUse/)
+  assert.equal(hooks.length, 1)
+  assert.deepEqual(hooks[0].body.tool_input, { pattern: '*.mjs' })
+})
+
+test('one tool call produces one start, however many times its part updates', async () => {
+  const r = recorder()
+  const seat = seatOf(r)
+  await seat.onRoomEvent(turn('find the parser'))
+  for (let i = 0; i < 5; i++) {
+    await seat.onOpencodeEvent(toolPart({ status: 'running', input: { pattern: '*' } }))
+  }
+  assert.equal(r.find(/PreToolUse/).length, 1)
+})
+
+test('two different calls are two rows, not one', async () => {
+  const r = recorder()
+  const seat = seatOf(r)
+  await seat.onRoomEvent(turn('do it'))
+  await seat.onOpencodeEvent(toolPart({ status: 'running', input: {} }))
+  await seat.onOpencodeEvent(toolPart({ status: 'running', input: {} }, { callID: 'call_2', tool: 'read' }))
+  assert.deepEqual(r.find(/PreToolUse/).map(c => c.body.tool_name), ['glob', 'read'])
+})
+
+test('a completed tool call closes the row with a PostToolUse hook', async () => {
+  const r = recorder()
+  const seat = seatOf(r)
+  await seat.onRoomEvent(turn('do it'))
+  await seat.onOpencodeEvent(toolPart({ status: 'running', input: {} }))
+  await seat.onOpencodeEvent(toolPart({ status: 'completed', input: {}, output: 'one.txt' }))
+  assert.equal(r.find(/PostToolUse/).length, 1)
+})
+
+test('a tool call outside any turn is dropped, not filed under the previous one', async () => {
+  const r = recorder()
+  const seat = seatOf(r)
+  await seat.onOpencodeEvent(toolPart({ status: 'running', input: {} }))
+  assert.equal(r.find(/PreToolUse/).length, 0)
+})
+
+test('the dedup set is per turn, so the same call id can recur in a later turn', async () => {
+  // callIDs are only unique within a session's turn; a fleet-wide set would
+  // silently swallow the second turn's first tool call.
+  const r = recorder()
+  const seat = seatOf(r)
+  await seat.onRoomEvent(turn('first'))
+  await seat.onOpencodeEvent(toolPart({ status: 'running', input: {} }))
+  await seat.onOpencodeEvent({ type: 'session.idle', properties: { sessionID: 'ses_a' } })
+
+  await seat.onRoomEvent(turn('second'))
+  await seat.onOpencodeEvent(toolPart({ status: 'running', input: {} }))
+  assert.equal(r.find(/PreToolUse/).length, 2)
+})
+
+test('reporting a tool call never ends the turn', async () => {
+  // Only session.idle, an error or the deadline may close a turn. A tool hook
+  // that closed one would free the seat while it was still working.
+  const r = recorder()
+  const seat = seatOf(r)
+  await seat.onRoomEvent(turn('do it'))
+  await seat.onOpencodeEvent(toolPart({ status: 'running', input: {} }))
+  await seat.onOpencodeEvent(toolPart({ status: 'completed', input: {} }))
+  assert.equal(r.find(/\/seat\/hook\/Stop/).length, 0)
+})

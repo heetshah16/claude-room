@@ -101,3 +101,114 @@ test('unknown event types are ignored rather than crashing the driver', () => {
   assert.equal(actionForOpencodeEvent({ type: 'file.edited', properties: {} }, 'ses_a').type, 'ignore')
   assert.equal(actionForOpencodeEvent(null, 'ses_a').type, 'ignore')
 })
+
+// --- tool parts ------------------------------------------------------------
+//
+// Shapes captured from opencode 1.18.29 on 2026-09-08: a live tool call, and
+// stored session logs. One call arrives as three frames -- pending, running,
+// completed -- and only `running` carries the arguments.
+
+test('a running tool part becomes a tool-start, so the room can see the work', () => {
+  const ev = {
+    type: 'message.part.updated',
+    properties: {
+      sessionID: 'ses_a',
+      part: {
+        type: 'tool', callID: 'call_1', tool: 'glob',
+        state: { status: 'running', input: { pattern: '*.txt' } },
+      },
+    },
+  }
+  const a = actionForOpencodeEvent(ev, 'ses_a')
+  assert.equal(a.type, 'tool-start')
+  assert.equal(a.callId, 'call_1')
+  assert.equal(a.tool, 'glob')
+  assert.deepEqual(a.input, { pattern: '*.txt' })
+})
+
+test('a pending tool part is ignored -- its input has not been written yet', () => {
+  // Verified live: pending arrives with input {} and raw "". Starting there
+  // and deduplicating by callID would suppress the running frame that actually
+  // carries the arguments, and every tool row would show none.
+  const ev = {
+    type: 'message.part.updated',
+    properties: {
+      sessionID: 'ses_a',
+      part: { type: 'tool', callID: 'call_1', tool: 'glob', state: { status: 'pending', input: {}, raw: '' } },
+    },
+  }
+  assert.equal(actionForOpencodeEvent(ev, 'ses_a').type, 'ignore')
+})
+
+test('a completed tool part becomes a tool-end', () => {
+  const ev = {
+    type: 'message.part.updated',
+    properties: {
+      sessionID: 'ses_a',
+      part: {
+        type: 'tool', callID: 'call_1', tool: 'glob',
+        state: { status: 'completed', input: { pattern: '*.txt' }, output: 'one.txt\ntwo.txt' },
+      },
+    },
+  }
+  const a = actionForOpencodeEvent(ev, 'ses_a')
+  assert.equal(a.type, 'tool-end')
+  assert.equal(a.callId, 'call_1')
+  assert.equal(a.isError, false)
+})
+
+test('a failed tool part is reported as an error, not as a plain finish', () => {
+  const ev = {
+    type: 'message.part.updated',
+    properties: {
+      sessionID: 'ses_a',
+      part: { type: 'tool', callID: 'c', tool: 'bash', state: { status: 'error', error: 'boom' } },
+    },
+  }
+  const a = actionForOpencodeEvent(ev, 'ses_a')
+  assert.equal(a.type, 'tool-end')
+  assert.equal(a.isError, true)
+})
+
+test('a text part is still ignored -- only room_reply carries the worker words', () => {
+  // Mirroring text here would duplicate every reply the seat already sends
+  // through room_reply, which is the only channel to the room.
+  const ev = {
+    type: 'message.part.updated',
+    properties: { sessionID: 'ses_a', part: { type: 'text', text: 'thinking out loud' } },
+  }
+  assert.equal(actionForOpencodeEvent(ev, 'ses_a').type, 'ignore')
+})
+
+test('reasoning and step parts are ignored, so the room is not flooded', () => {
+  // A single real turn emitted 20 reasoning parts and 20 step parts.
+  for (const type of ['reasoning', 'step-start', 'step-finish', 'patch']) {
+    const ev = { type: 'message.part.updated', properties: { sessionID: 'ses_a', part: { type } } }
+    assert.equal(actionForOpencodeEvent(ev, 'ses_a').type, 'ignore', `${type} must be ignored`)
+  }
+})
+
+test('another session\u2019s tool part is ignored', () => {
+  // One opencode server hosts many sessions; acting on another one's parts
+  // would attribute work to the wrong seat.
+  const ev = {
+    type: 'message.part.updated',
+    properties: {
+      sessionID: 'ses_other',
+      part: { type: 'tool', callID: 'c', tool: 'glob', state: { status: 'running' } },
+    },
+  }
+  assert.equal(actionForOpencodeEvent(ev, 'ses_a').type, 'ignore')
+})
+
+test('a tool part with no callID is ignored rather than emitted unidentifiable', () => {
+  // Without a callID nothing can be deduplicated or matched to its finish.
+  const ev = {
+    type: 'message.part.updated',
+    properties: {
+      sessionID: 'ses_a',
+      part: { type: 'tool', tool: 'glob', state: { status: 'running', input: {} } },
+    },
+  }
+  assert.equal(actionForOpencodeEvent(ev, 'ses_a').type, 'ignore')
+})
