@@ -333,11 +333,28 @@ mimo-v2.5-free · .worktrees/worker-1
 **The brief card renders the validated delegation record** — `class`, `task`,
 `files`, `tests`, `do_not_touch` — as labelled fields, not the flat prose
 `renderDelegation` produces for the model. Seeing the brief as structure is what
-makes a bad brief visible as a bad brief.
+makes a bad brief visible as a bad brief: a `reasoning` brief renders with a
+task and no fields, and is *supposed* to look sparse.
+
+This required a room change. The delegation record carried only `id`, `task`,
+`class` and a timestamp — the spec survived nowhere but in the prose — so
+`src/delegation.mjs` now keeps `spec` on the record. The view cannot show what
+it cannot receive.
 
 **Capabilities** come from OpenCode's own `GET /config` and the tool parts in
 `GET /session/:id/message`, so the card reports what the worker actually has
 rather than what we assume it has.
+
+**The worker's live tool calls reach the room through a route that already
+existed.** `actionForOpencodeEvent` classified every non-`session.*` event as
+`ignore`, so the room saw a worker twice: when it started and when it replied.
+A tool part now becomes a `POST /seat/hook/PreToolUse` — the same hook a Claude
+seat's own hooks use — and everything downstream already worked.
+
+One tool call arrives as three frames: `pending` (input `{}`), `running` (input
+populated), `completed`. Only `running` starts a row; treating "not completed"
+as the start would report the call before its arguments existed, and the
+per-call dedup would then swallow the frame that carried them.
 
 **Input queues; it does not interrupt.** The room runs one turn per destination,
 and `Queue.submit` gates a seat on being *online*, never on being *busy*. A
