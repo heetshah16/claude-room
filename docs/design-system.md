@@ -191,7 +191,9 @@ context controls are *chips* — pill-shaped, `--vscode-badge-background` at res
 because each carries state to read. The first screenshot of this row rendered
 all six as chips and the difference vanished.
 
-Chips are 22px tall with an 11px label. State is carried by a leading icon
+Chips are 22px tall with an 11px label, `white-space: nowrap`, and the row
+wraps — a chip breaks as a whole or not at all, or "Accept edits" becomes two
+lines at a sidebar width. State is carried by a leading icon
 *and* the label text, never by colour alone — `◉ Room · Published` differs from
 `○ Room · Local` in glyph, word and hue.
 
@@ -489,9 +491,24 @@ which `advertiseHost` already implements. The popover shows the exact address
 before you commit, because "publish" on shared office wifi means something
 different from "publish" on a tailnet.
 
-**Invite** mints a named join link with a role through `POST /api/admin/invite`.
-The token *is* the identity, so the UI says so plainly next to the copy button
-and offers `rotate` on any member.
+**The address is the whole decision**, so it is shown for both states — before
+the button is pressed, not only after. The header carries the state word
+(`published` / `local only`); the line under the button carries the address.
+Putting the address in both read as two different facts.
+
+**Invite** mints a named join link through `POST /api/admin/invite` and puts it
+on the **clipboard**, never into the transcript — a transcript is scrolled back
+through and read over shoulders, and the token *is* the identity.
+
+For the same reason the popover shows only the *host* part of a join link, and
+parses it out with a regex rather than `new URL(...).host`: the link carries a
+token in its query string, and nothing here should be one slip away from
+rendering it. A test asserts the token never appears anywhere, and fails if the
+raw link is rendered.
+
+**A roster that could not be read says so.** `null` members renders as "could
+not read the roster", never as an empty list — claiming nobody is in the room
+when the call merely failed is a confident lie about who can read it.
 
 ### Permission chip
 
@@ -502,11 +519,22 @@ it.
 
 Changing the mode **restarts the orchestrator with `--resume <sessionId>`**, so
 the conversation survives. That path is already built and already used for crash
-recovery. The chip shows a brief "reconnecting…" state rather than pretending
-the switch is instantaneous.
+recovery. Verified on 2.1.216: `--permission-mode` is accepted alongside
+`--print`.
 
-`Bypass all` is styled as destructive, requires a confirm, and never persists
-across sessions.
+**`dontAsk` is deliberately not offered.** The CLI accepts it; its exact
+behaviour cannot be stated accurately here, and describing a safety setting
+with an invented summary is worse than omitting it — the same rule the
+slash-command registry follows, applied harder. It stays reachable through
+`settings.json`.
+
+`Bypass all` is marked **by the word "(unsafe)" as well as by colour**, and
+takes two clicks: the first arms it, the second commits. The arming clears
+whenever the popover closes, so a pending confirmation can never be satisfied
+by an unrelated click later.
+
+The mode **persists per workspace**, like the session id. Silently reverting to
+the default after a restart is the kind of quiet safety change nobody notices.
 
 ---
 
