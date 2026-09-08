@@ -737,3 +737,118 @@ details.thinking .thinking-body {
 }
 
 .dash-row.destructive.active .dash-name { color: inherit; }
+
+/* ---- the workers sidebar -------------------------------------------------
+ *
+ * Roughly 300px wide in practice, which is the tightest surface in the
+ * product: everything here truncates rather than widening. */
+body.sidebar {
+  display: block;
+  height: auto;
+  padding: 8px 10px;
+}
+
+.side-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.side-summary {
+  font-size: 0.85em;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  margin: 2px 0 8px;
+}
+
+.side-empty {
+  font-size: 0.85em;
+  line-height: 1.5;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+}
+
+.worker {
+  padding: 6px 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-bottom: 2px;
+}
+
+.worker:hover { background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.12)); }
+
+.worker:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
+.worker-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Decorative. The status word beside it carries the same fact, because a dot
+ * that is the only signal excludes anyone who cannot separate the hues. */
+.worker-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 1px solid var(--vscode-descriptionForeground, rgba(127, 127, 127, 0.8));
+}
+
+.worker-busy .worker-dot {
+  background: var(--vscode-charts-green, #89d185);
+  border-color: var(--vscode-charts-green, #89d185);
+}
+
+.worker-starting .worker-dot {
+  background: var(--vscode-charts-yellow, #cca700);
+  border-color: var(--vscode-charts-yellow, #cca700);
+}
+
+.worker-title {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.92em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* The status is never squeezed out by a long handle: it is the thing being
+ * looked for. */
+.worker-status {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 0.85em;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+}
+
+.worker-sub,
+.worker-task {
+  font-size: 0.82em;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  margin-top: 2px;
+  padding-left: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.worker-sub { font-family: var(--vscode-editor-font-family, monospace); }
+
+.worker-task {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--vscode-foreground);
+  padding-left: 10px;
+}
+
+.worker-task span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}

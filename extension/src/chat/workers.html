@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!--
+  Same strict CSP as the chat panel, and for the same reason: a worker's
+  handle, model, worktree path and task all originate outside this extension,
+  and the task in particular is written by the orchestrator, a model. Every one
+  of them is rendered with textContent.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src {{cspSource}}; style-src {{cspSource}}; font-src {{cspSource}}; script-src 'nonce-{{nonce}}';">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{styleUri}}">
+<title>Workers</title>
+</head>
+<body class="sidebar">
+  <div class="side-head">
+    <span class="panel-title">Workers</span>
+    <span class="side-actions">
+      <button id="worker-add" class="icon-btn" type="button" aria-label="Add a worker" title="Add a worker"></button>
+    </span>
+  </div>
+  <!--
+    One atomic status region for the whole view, announcing something
+    meaningful ("2 workers, 1 busy") rather than a bare number, and never one
+    live region per row competing to speak.
+  -->
+  <div id="worker-summary" class="side-summary" role="status" aria-atomic="true"></div>
+  <div id="worker-list" class="worker-list"></div>
+  <div id="worker-empty" class="side-empty" hidden>
+    No workers yet. One starts automatically when you send your first message.
+  </div>
+  <script nonce="{{nonce}}" src="{{iconsUri}}"></script>
+  <script nonce="{{nonce}}" src="{{formatUri}}"></script>
+  <script nonce="{{nonce}}" src="{{scriptUri}}"></script>
+</body>
+</html>

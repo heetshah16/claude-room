@@ -110,6 +110,20 @@ const FIXTURES = {
   // Real skill names and descriptions, taken from what discoverSkills finds on
   // the development machine -- so the shot shows how actual descriptions
   // behave in a row, not how a conveniently short one does.
+  workers: [
+    { type: 'workers', workers: [
+      { handle: 'worker-1', state: 'busy', model: 'opencode/mimo-v2.5-free',
+        worktree: 'C:/repo/.worktrees/worker-1', task: 'Add tests for parser.mjs, verify with node --test',
+        lastTool: 'glob', deadlineAt: Date.now() + 134_000 },
+      { handle: 'worker-2', state: 'idle', model: 'opencode/mimo-v2.5-free',
+        worktree: 'C:/repo/.worktrees/worker-2', task: null, lastTool: null, deadlineAt: null },
+      { handle: 'worker-3', state: 'starting', model: null, worktree: null,
+        task: null, lastTool: null, deadlineAt: null },
+    ] },
+  ],
+  'workers-empty': [
+    { type: 'workers', workers: [] },
+  ],
   room: [
     stream({ kind: 'session', sessionId: 'fixture', tools: [], cwd: '/repo' }),
     stream({ kind: 'turn-end', text: MODEL_PROBE_RESULT, turns: 1, costUsd: 0, isError: false }),
@@ -149,32 +163,25 @@ const FIXTURES = {
 }
 
 /**
+ * Fixtures that render a page other than index.html, and the widths that page
+ * is worth looking at. The sidebar is about 300px in practice -- the tightest
+ * surface in the product, and the one where a long worktree path does damage.
+ */
+const PAGES = {
+  workers: { file: 'workers.html', widths: [{ name: 'sidebar', px: 300 }, { name: 'wide', px: 420 }] },
+  'workers-empty': { file: 'workers.html', widths: [{ name: 'sidebar', px: 300 }] },
+}
+
+/**
  * Element ids to click after a fixture is replayed, so a panel that only opens
  * on demand can be screenshotted at all. A fixture not listed here is shot
  * exactly as it lands.
  */
 const INTERACTIONS = {
   'context-panel': ['context-chip'],
-  room: [
-    stream({ kind: 'session', sessionId: 'fixture', tools: [], cwd: '/repo' }),
-    stream({ kind: 'turn-end', text: MODEL_PROBE_RESULT, turns: 1, costUsd: 0, isError: false }),
-    { type: 'permission-mode', mode: 'acceptEdits' },
-    // Published, with a tailnet address -- advertiseHost prefers 100.64/10.
-    { type: 'room', room: { published: true, advertised: 'http://100.84.12.7:51820/?token=REDACTED', members: [
-      { id: 'm0', name: 'you', role: 'owner' },
-      { id: 'm1', name: 'ana', role: 'member' },
-      { id: 'm2', name: 'sam', role: 'viewer' },
-    ] } },
-  ],
-  'permission-modes': [
-    stream({ kind: 'session', sessionId: 'fixture', tools: [], cwd: '/repo' }),
-    stream({ kind: 'turn-end', text: MODEL_PROBE_RESULT, turns: 1, costUsd: 0, isError: false }),
-    { type: 'permission-mode', mode: 'acceptEdits' },
-    { type: 'room', room: { published: false, advertised: null, members: [{ id: 'm0', name: 'you', role: 'owner' }] } },
-  ],
   dashboard: ['dash-btn'],
   room: ['room-chip'],
   'permission-modes': ['permission-chip'],
 }
 
-module.exports = { FIXTURES, INTERACTIONS, resolveTheme }
+module.exports = { FIXTURES, INTERACTIONS, PAGES, resolveTheme }

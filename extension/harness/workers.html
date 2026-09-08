@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!--
+  Same strict CSP as the chat panel, and for the same reason: a worker's
+  handle, model, worktree path and task all originate outside this extension,
+  and the task in particular is written by the orchestrator, a model. Every one
+  of them is rendered with textContent.
+-->
+
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="./theme.css">
+<link rel="stylesheet" href="../src/chat/webview.css">
+<link rel="stylesheet" href="./viewport.css">
+<title>Workers</title>
+</head>
+<body class="sidebar">
+  <div class="side-head">
+    <span class="panel-title">Workers</span>
+    <span class="side-actions">
+      <button id="worker-add" class="icon-btn" type="button" aria-label="Add a worker" title="Add a worker"></button>
+    </span>
+  </div>
+  <!--
+    One atomic status region for the whole view, announcing something
+    meaningful ("2 workers, 1 busy") rather than a bare number, and never one
+    live region per row competing to speak.
+  -->
+  <div id="worker-summary" class="side-summary" role="status" aria-atomic="true"></div>
+  <div id="worker-list" class="worker-list"></div>
+  <div id="worker-empty" class="side-empty" hidden>
+    No workers yet. One starts automatically when you send your first message.
+  </div>
+  <script>window.acquireVsCodeApi = () => ({ postMessage() {}, getState: () => null, setState() {} })</script>
+  <script src="../src/chat/icons.js"></script>
+  <script src="../src/chat/workers-format.js"></script>
+  <script src="../src/chat/workers-webview.js"></script>
+  <script src="./replay.js"></script>
+</body>
+</html>

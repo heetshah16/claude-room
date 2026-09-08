@@ -21,6 +21,7 @@ const { discoverSkills } = require('./skills.js')
 const { saveAttachment } = require('./attachments.js')
 const { isKnownMode, DEFAULT_MODE } = require('./chat/permissions.js')
 const { createWorkerPool } = require('./workers.js')
+const { createWorkersView } = require('./chat/workers-view.js')
 
 // extension.js lives at <repoRoot>/extension/src/extension.js. "The
 // extension's own directory" is <repoRoot>/extension; its parent is the repo
@@ -31,6 +32,7 @@ const REPO_ROOT = path.join(__dirname, '..', '..')
 let supervisor = null
 let output = null
 let session = null // { panel } — the live chat session, if one is open
+let activeWorkersView = null // the sidebar, which outlives any one session
 
 function log(msg) {
   output?.appendLine(String(msg))
@@ -53,7 +55,18 @@ function activate(context) {
     if (name === 'room') session?.stopFeed?.()
   })
 
+  // Registered at activation, not per chat: the sidebar exists whether or not
+  // a chat is open, and a view registered later would never appear.
+  const workersView = createWorkersView({
+    context,
+    onAdd: () => session?.pool?.add().catch(err => log(`add worker failed: ${err?.message ?? err}`)),
+    onOpen: handle => vscode.commands.executeCommand('claudeRoom.openWorker', handle),
+    onRefresh: () => workersView.postWorkers(session?.pool?.list() ?? []),
+  })
+  activeWorkersView = workersView
+
   context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider('claudeRoom.workers', workersView.provider),
     vscode.commands.registerCommand('claudeRoom.openChat', () => openChat(context)),
     vscode.commands.registerCommand('claudeRoom.restart', () => restart(context)),
     output,
@@ -364,7 +377,10 @@ async function openChat(context) {
   // The worker fleet. Nothing is spawned here: a chat-only session should pay
   // no worktree, no process, and should not need `opencode` on PATH at all.
   const pool = createWorkerPool({ roomClient, supervisor, repoRoot: REPO_ROOT, roomUrl, log })
-  pool.onChange(list => panel.postWorkers(list))
+  pool.onChange(list => {
+    panel.postWorkers(list)
+    activeWorkersView?.postWorkers(list)
+  })
 
   const router = createEventRouter({
     onWorkerActivity: a => panel.postActivity(a),

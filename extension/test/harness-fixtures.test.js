@@ -4,7 +4,7 @@ const { test } = require('node:test')
 const assert = require('node:assert/strict')
 const { readFileSync } = require('node:fs')
 const { join } = require('node:path')
-const { FIXTURES, INTERACTIONS, resolveTheme } = require('../harness/fixtures.js')
+const { FIXTURES, INTERACTIONS, PAGES, resolveTheme } = require('../harness/fixtures.js')
 
 /**
  * The message types panel.js actually posts, read from its source.
@@ -32,16 +32,28 @@ test('every fixture is a list of messages shaped like what panel.js posts', () =
   }
 })
 
+/** The harness page a fixture renders on. */
+const pageFor = fixture =>
+  readFileSync(join(__dirname, '..', 'harness', PAGES[fixture]?.file ?? 'index.html'), 'utf8')
+
 test('every fixture the harness can click has the ids it clicks', () => {
   // An interaction naming an element the page does not have throws inside the
   // browser, and a screenshot of the un-clicked page looks like the feature
-  // simply did nothing.
-  const html = readFileSync(join(__dirname, '..', 'harness', 'index.html'), 'utf8')
+  // simply did nothing. Checked against the fixture's OWN page: fixtures no
+  // longer all render index.html.
   for (const [fixture, ids] of Object.entries(INTERACTIONS)) {
     assert.ok(FIXTURES[fixture], `INTERACTIONS names ${fixture}, which is not a fixture`)
+    const html = pageFor(fixture)
     for (const id of ids) {
-      assert.ok(html.includes(`id="${id}"`), `${fixture} clicks #${id}, which the harness page lacks`)
+      assert.ok(html.includes(`id="${id}"`), `${fixture} clicks #${id}, which its page lacks`)
     }
+  }
+})
+
+test('every fixture that names a page names one that exists', () => {
+  for (const [fixture, page] of Object.entries(PAGES)) {
+    assert.ok(FIXTURES[fixture], `PAGES names ${fixture}, which is not a fixture`)
+    assert.doesNotThrow(() => pageFor(fixture), `${fixture} names a missing page: ${page.file}`)
   }
 })
 

@@ -18,7 +18,7 @@ const { execFile } = require('node:child_process')
 const { existsSync, mkdirSync, writeFileSync } = require('node:fs')
 const { join } = require('node:path')
 const { promisify } = require('node:util')
-const { FIXTURES, INTERACTIONS, resolveTheme } = require('./fixtures.js')
+const { FIXTURES, INTERACTIONS, PAGES, resolveTheme } = require('./fixtures.js')
 const { themeToCss, BUILTIN_DEFAULTS } = require('./themes.js')
 
 const run = promisify(execFile)
@@ -100,7 +100,8 @@ async function main() {
           'for (const id of ' + JSON.stringify(INTERACTIONS[fixture] || []) +
           ') document.getElementById(id).click()\n',
       )
-      for (const width of WIDTHS) {
+      const page = PAGES[fixture] ?? { file: 'index.html', widths: WIDTHS }
+      for (const width of page.widths ?? WIDTHS) {
         writeFileSync(join(HERE, 'viewport.css'), `html { width: ${width.px}px; }\n`)
         const out = join(outDir, `${fixture}-${theme.name}-${width.name}.png`)
         await run(chrome, [
@@ -111,7 +112,7 @@ async function main() {
           `--screenshot=${out}`,
           `--window-size=${Math.max(width.px, MIN_WINDOW_PX)},760`,
           '--virtual-time-budget=2000',
-          fileUrl(join(HERE, 'index.html')),
+          fileUrl(join(HERE, page.file)),
         ])
         process.stdout.write(`${out}\n`)
       }

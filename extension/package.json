@@ -24,7 +24,25 @@
         "command": "claudeRoom.restart",
         "title": "Claude Room: Restart Services"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "claudeRoom",
+          "title": "Claude Room",
+          "icon": "media/room.svg"
+        }
+      ]
+    },
+    "views": {
+      "claudeRoom": [
+        {
+          "id": "claudeRoom.workers",
+          "name": "Workers",
+          "type": "webview"
+        }
+      ]
+    }
   },
   "scripts": {
     "test": "node --test"
