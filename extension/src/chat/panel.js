@@ -98,6 +98,7 @@ function createChatPanel({ context, onInput, onAttach }) {
     postActivity: activity => post({ type: 'activity', activity }),
     postSkills: skills => post({ type: 'skills', skills }),
     postRoom: room => post({ type: 'room', room }),
+    postWorkers: workers => post({ type: 'workers', workers }),
     postPermissionMode: mode => post({ type: 'permission-mode', mode }),
     /** Register the handler for the chips' control messages. */
     onControl: fn => { onControlMsg = fn },

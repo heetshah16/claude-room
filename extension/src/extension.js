@@ -20,6 +20,7 @@ const { createChatPanel } = require('./chat/panel.js')
 const { discoverSkills } = require('./skills.js')
 const { saveAttachment } = require('./attachments.js')
 const { isKnownMode, DEFAULT_MODE } = require('./chat/permissions.js')
+const { createWorkerPool } = require('./workers.js')
 
 // extension.js lives at <repoRoot>/extension/src/extension.js. "The
 // extension's own directory" is <repoRoot>/extension; its parent is the repo
@@ -323,7 +324,15 @@ async function openChat(context) {
   let orchestrator
   const panel = createChatPanel({
     context,
-    onInput: text => orchestrator?.send(text),
+    onInput: text => {
+      orchestrator?.send(text)
+      // The last moment before a delegation is possible. `delegate` fails for
+      // a handle that is not ONLINE, so a worker cannot be started in response
+      // to one -- by then the orchestrator has already been told the handle
+      // does not exist. A turn takes seconds, so a worker started here is
+      // normally online before it is needed.
+      pool.ensureOne().catch(err => log(`worker start failed: ${err?.message ?? err}`))
+    },
     onAttach: handleAttach,
   })
   orchestrator = createOrchestrator({
@@ -351,9 +360,18 @@ async function openChat(context) {
   }, 0)
 
   const roomClient = createRoomClient({ roomUrl, token })
+
+  // The worker fleet. Nothing is spawned here: a chat-only session should pay
+  // no worktree, no process, and should not need `opencode` on PATH at all.
+  const pool = createWorkerPool({ roomClient, supervisor, repoRoot: REPO_ROOT, roomUrl, log })
+  pool.onChange(list => panel.postWorkers(list))
+
   const router = createEventRouter({
     onWorkerActivity: a => panel.postActivity(a),
     onDelegationResult: d => orchestrator.relay(d),
+    // One subscription, one ordering: the pool observes the same stream the
+    // panel does rather than opening a second.
+    onRoomEvent: (event, data) => pool.applyRoomEvent(event, data),
   })
   const stopFeed = subscribeToRoomEvents(roomClient, router)
 
@@ -458,10 +476,13 @@ async function openChat(context) {
 
   panel.onDidDispose(() => {
     stopFeed()
+    // Every worker holds a worktree and an `opencode serve`; leaving them
+    // behind orphans both.
+    pool.stopAll()
     if (session?.panel === panel) session = null
   })
 
-  session = { panel, orchestrator, roomClient, stopFeed, roomUrl, token, stateDir }
+  session = { panel, orchestrator, roomClient, stopFeed, roomUrl, token, stateDir, pool }
 }
 
 module.exports = { activate, deactivate }

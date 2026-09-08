@@ -31,7 +31,17 @@ function normalizeActivity(data) {
   return { ...data, handle: data.dest }
 }
 
-function createEventRouter({ onWorkerActivity, onDelegationResult }) {
+/**
+ * @param {{onWorkerActivity: Function, onDelegationResult: Function,
+ *          onRoomEvent?: Function}} deps
+ *
+ * `onRoomEvent` sees EVERY frame, including the ones the panel has no use for
+ * and the ones this router does not recognise at all. The worker pool needs
+ * `delegation` in all its states; the panel needs two of them. Giving the pool
+ * its own SSE subscription would give the two consumers different orderings,
+ * and one ordering is the property this file exists to preserve.
+ */
+function createEventRouter({ onWorkerActivity, onDelegationResult, onRoomEvent = null }) {
   function handleDelegation(data) {
     const { id, to: handle, state, task, text, reason } = data ?? {}
     if (state === 'sent') {
@@ -57,8 +67,15 @@ function createEventRouter({ onWorkerActivity, onDelegationResult }) {
 
   return {
     handle(event, data) {
-      if (event === 'delegation') return handleDelegation(data)
-      if (event === 'activity') return onWorkerActivity(normalizeActivity(data))
+      // Normalised once, here, so neither consumer has to guess whether a
+      // seat's handle arrived as `dest` or as `handle`.
+      const normalized = event === 'activity' ? normalizeActivity(data) : data
+      // The observer is told first and unconditionally: it must not depend on
+      // whether this router happens to recognise the event.
+      onRoomEvent?.(event, normalized)
+
+      if (event === 'delegation') return handleDelegation(normalized)
+      if (event === 'activity') return onWorkerActivity(normalized)
       // Any other room event — an unknown or future SSE event type — is
       // dropped rather than crashing the extension host. The room's stream
       // is allowed to grow event types this router does not yet know.
