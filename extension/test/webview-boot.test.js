@@ -309,3 +309,107 @@ test('the attach button asks the host to open a picker', () => {
   boot.fire(boot.get('attach-btn'), 'click')
   assert.ok(boot.posted.some(m => m.type === 'attach-file'))
 })
+
+// --- the room and permission chips -----------------------------------------
+
+test('only one chip-owned popover is open at a time', () => {
+  // Two open at once would stack over the composer and hide what is typed.
+  const boot = bootWebview()
+  boot.fire(boot.get('context-chip'), 'click')
+  assert.equal(boot.get('context-panel').hidden, false)
+  boot.fire(boot.get('room-chip'), 'click')
+  assert.equal(boot.get('room-panel').hidden, false)
+  assert.equal(boot.get('context-panel').hidden, true)
+  boot.fire(boot.get('permission-chip'), 'click')
+  assert.equal(boot.get('permission-panel').hidden, false)
+  assert.equal(boot.get('room-panel').hidden, true)
+})
+
+test('opening the room popover asks the host for a fresh roster', () => {
+  const boot = bootWebview()
+  boot.fire(boot.get('room-chip'), 'click')
+  assert.ok(boot.posted.some(m => m.type === 'room-refresh'))
+})
+
+test('publishing asks the host, naming the state being moved to', () => {
+  const boot = bootWebview()
+  boot.handleMessage({ data: { type: 'room', room: { published: false, advertised: null, members: [] } } })
+  boot.fire(boot.get('publish-btn'), 'click')
+  assert.ok(boot.posted.some(m => m.type === 'publish' && m.published === true))
+})
+
+test('the room chip reports published state in words, not only colour', () => {
+  const boot = bootWebview()
+  boot.handleMessage({ data: { type: 'room', room: {
+    published: true, advertised: 'http://100.1.2.3:8787/?token=SECRET', members: [],
+  } } })
+  assert.match(boot.get('room-chip').textContent, /Published/)
+})
+
+test('a join token never reaches the panel, only the host part does', () => {
+  // The token IS the identity. It goes to the clipboard, never on screen.
+  const boot = bootWebview()
+  boot.handleMessage({ data: { type: 'room', room: {
+    published: true, advertised: 'http://100.1.2.3:8787/?token=SECRETTOKEN', members: [],
+  } } })
+  const rendered = JSON.stringify([boot.get('room-address'), boot.get('room-state'), boot.get('room-chip')])
+  assert.ok(!rendered.includes('SECRETTOKEN'), 'the token must not be rendered anywhere')
+  assert.ok(rendered.includes('100.1.2.3:8787'), 'the address itself should be shown')
+})
+
+test('a failed roster says so rather than claiming the room is empty', () => {
+  // null members means the call failed. "Nobody is here" would be a confident
+  // lie about who can read the room.
+  const boot = bootWebview()
+  boot.handleMessage({ data: { type: 'room', room: { published: false, advertised: null, members: null } } })
+  assert.match(JSON.stringify(boot.get('room-members')), /could not read the roster/)
+})
+
+test('a member name is rendered as text, never as markup', () => {
+  const boot = bootWebview()
+  boot.handleMessage({ data: { type: 'room', room: { published: false, advertised: null, members: [
+    { id: '1', name: '<img src=x onerror=alert(1)>', role: 'member' },
+  ] } } })
+  assert.ok(JSON.stringify(boot.get('room-members')).includes('<img src=x onerror=alert(1)>'),
+    'the name must survive as literal text')
+})
+
+test('choosing an ordinary permission mode tells the host at once', () => {
+  const boot = bootWebview()
+  boot.fire(boot.get('permission-chip'), 'click')
+  const rows = boot.get('permission-list').children
+  boot.fire(rows[0], 'click') // auto
+  assert.ok(boot.posted.some(m => m.type === 'permission-mode' && m.mode === 'auto'))
+})
+
+test('bypassing every permission check is never one click', () => {
+  const boot = bootWebview()
+  boot.fire(boot.get('permission-chip'), 'click')
+  const rows = [...boot.get('permission-list').children]
+  const bypass = rows[rows.length - 1] // bypassPermissions is last
+  boot.fire(bypass, 'click')
+  assert.ok(!boot.posted.some(m => m.type === 'permission-mode'), 'one click must not enable bypass')
+
+  // The second click, on the re-rendered row, confirms.
+  const armed = [...boot.get('permission-list').children].at(-1)
+  boot.fire(armed, 'click')
+  assert.ok(boot.posted.some(m => m.type === 'permission-mode' && m.mode === 'bypassPermissions'))
+})
+
+test('reopening the popover disarms a pending confirmation', () => {
+  // Otherwise an armed destructive row waits to be satisfied by an unrelated
+  // click much later.
+  const boot = bootWebview()
+  boot.fire(boot.get('permission-chip'), 'click')
+  boot.fire([...boot.get('permission-list').children].at(-1), 'click') // arm
+  boot.fire(boot.get('permission-chip'), 'click') // close
+  boot.fire(boot.get('permission-chip'), 'click') // reopen
+  boot.fire([...boot.get('permission-list').children].at(-1), 'click')
+  assert.ok(!boot.posted.some(m => m.type === 'permission-mode'), 'the confirmation must not survive a reopen')
+})
+
+test('the permission chip shows the mode the host reports', () => {
+  const boot = bootWebview()
+  boot.handleMessage({ data: { type: 'permission-mode', mode: 'plan' } })
+  assert.equal(boot.get('permission-chip').textContent, 'Plan')
+})

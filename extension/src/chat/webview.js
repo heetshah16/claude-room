@@ -19,6 +19,7 @@
   const { parseContextReport, verdictFor, bandsOf, fmtTokens } = window.ClaudeContext
   const { createProbeQueue } = window.ClaudeProbes
   const { COMMANDS, filterEntries } = window.ClaudeCommands
+  const { PERMISSION_MODES, DEFAULT_MODE, modeById } = window.ClaudePermissions
 
   const messagesEl = document.getElementById('messages')
   const inputEl = document.getElementById('input')
@@ -41,6 +42,17 @@
   const dashEmptyEl = document.getElementById('dash-empty')
   const dashBtnEl = document.getElementById('dash-btn')
   const attachBtnEl = document.getElementById('attach-btn')
+  const roomChipEl = document.getElementById('room-chip')
+  const roomPanelEl = document.getElementById('room-panel')
+  const roomStateEl = document.getElementById('room-state')
+  const roomAddressEl = document.getElementById('room-address')
+  const roomNoteEl = document.getElementById('room-note')
+  const roomMembersEl = document.getElementById('room-members')
+  const publishBtnEl = document.getElementById('publish-btn')
+  const inviteBtnEl = document.getElementById('invite-btn')
+  const permissionChipEl = document.getElementById('permission-chip')
+  const permissionPanelEl = document.getElementById('permission-panel')
+  const permissionListEl = document.getElementById('permission-list')
 
   // Every probe the chat runs on its own behalf goes through one queue, so a
   // turn-end can say which probe it answered instead of two booleans guessing.
@@ -264,7 +276,7 @@
   let modelOptions = []
 
   function setCurrentModel(model) {
-    modelPickerEl.textContent = `model: ${model}`
+    modelPickerEl.textContent = model
   }
 
   function showModelOptions(list) {
@@ -400,12 +412,36 @@
     contextTablesEl.appendChild(d)
   }
 
+  // --- popovers ---------------------------------------------------------
+  //
+  // Exactly one chip-owned popover is open at a time. Two open at once would
+  // stack over the composer and hide what is being typed.
+  const POPOVERS = [
+    [contextChipEl, contextPanelEl],
+    [roomChipEl, roomPanelEl],
+    [permissionChipEl, permissionPanelEl],
+  ]
+
+  function closePopovers(except) {
+    for (const [chip, panelEl] of POPOVERS) {
+      if (panelEl === except) continue
+      panelEl.hidden = true
+      chip.setAttribute('aria-expanded', 'false')
+    }
+  }
+
+  /** @returns {boolean} whether the popover ended up open. */
+  function togglePopover(chip, panelEl) {
+    const opening = panelEl.hidden
+    closePopovers(opening ? panelEl : null)
+    panelEl.hidden = !opening
+    chip.setAttribute('aria-expanded', String(opening))
+    return opening
+  }
+
   contextChipEl.addEventListener('click', () => {
-    const opening = contextPanelEl.hidden
-    contextPanelEl.hidden = !opening
-    contextChipEl.setAttribute('aria-expanded', String(opening))
     // Opening is a request to see current numbers, not stale ones.
-    if (opening) probes.request('context')
+    if (togglePopover(contextChipEl, contextPanelEl)) probes.request('context')
   })
 
   // --- turn lifecycle ----------------------------------------------------
@@ -519,6 +555,16 @@
       }
     }
 
+    if (msg.type === 'room') {
+      room = { ...room, ...msg.room }
+      renderRoom()
+      return
+    }
+    if (msg.type === 'permission-mode') {
+      permissionMode = msg.mode || DEFAULT_MODE
+      renderPermissionMode()
+      return
+    }
     if (msg.type === 'attached') {
       attached.push({ path: String(msg.path), dataUrl: msg.dataUrl ?? null })
       renderAttachments()
@@ -534,6 +580,135 @@
     }
     if (msg.type === 'activity') return onActivity(msg.activity)
     if (msg.type === 'fatal') return onFatal(String(msg.message ?? 'The orchestrator process has stopped.'))
+  })
+
+  // --- the room chip ----------------------------------------------------
+
+  let room = { published: false, advertised: null, members: null, busy: false }
+
+  /** The host part of a join link, which is what "published to" actually means. */
+  function hostOf(joinUrl) {
+    if (!joinUrl) return null
+    // Deliberately not `new URL(...).host`: the link carries a token in its
+    // query string, and nothing here should be one slip away from rendering it.
+    const m = /^https?:\/\/([^/?#]+)/.exec(String(joinUrl))
+    return m ? m[1] : null
+  }
+
+  function renderRoom() {
+    const where = hostOf(room.advertised)
+    roomChipEl.textContent = room.busy
+      ? 'Room · …'
+      : `Room · ${room.published ? 'Published' : 'Local'}`
+
+    // The header carries the STATE, the line under the button carries the
+    // ADDRESS. Putting the address in both read as two different facts.
+    roomStateEl.textContent = room.busy ? 'restarting…' : room.published ? 'published' : 'local only'
+
+    publishBtnEl.textContent = room.published ? 'Make local again' : 'Publish to this network'
+    publishBtnEl.disabled = room.busy
+
+    // The address is the whole decision: "publish" on shared office wifi means
+    // something very different from "publish" on a tailnet, and this is what
+    // tells them apart. Shown for both states so it is legible before the
+    // button is pressed, not only after.
+    roomAddressEl.textContent = room.published
+      ? (where ?? 'address unknown')
+      : '127.0.0.1 — reachable only from this machine'
+    roomAddressEl.hidden = false
+    roomNoteEl.textContent = room.busy
+      ? 'The chat keeps going.'
+      : 'Restarts the room (about a second). The chat keeps going.'
+
+    roomMembersEl.textContent = ''
+    if (room.members === null) {
+      // null means the roster call FAILED. Saying "nobody is here" would be a
+      // confident lie about who can read the room.
+      const unknown = document.createElement('div')
+      unknown.className = 'room-member muted'
+      unknown.textContent = room.busy ? 'checking…' : 'could not read the roster'
+      roomMembersEl.appendChild(unknown)
+      return
+    }
+    for (const m of room.members) {
+      const row = document.createElement('div')
+      row.className = 'room-member'
+      const name = document.createElement('span')
+      // A member name is typed by a person and arrives over HTTP. textContent.
+      name.textContent = m.name
+      const role = document.createElement('span')
+      role.className = 'room-role'
+      role.textContent = m.role
+      row.appendChild(name)
+      row.appendChild(role)
+      roomMembersEl.appendChild(row)
+    }
+  }
+
+  roomChipEl.addEventListener('click', () => {
+    if (togglePopover(roomChipEl, roomPanelEl)) vscode.postMessage({ type: 'room-refresh' })
+  })
+
+  publishBtnEl.addEventListener('click', () => {
+    if (room.busy) return
+    vscode.postMessage({ type: 'publish', published: !room.published })
+  })
+
+  inviteBtnEl.addEventListener('click', () => {
+    // The host owns the prompt: a webview cannot show a native input box, and
+    // a bespoke one here would be a worse version of one VS Code already has.
+    vscode.postMessage({ type: 'invite', role: 'member' })
+  })
+
+  // --- the permission chip ----------------------------------------------
+
+  let permissionMode = DEFAULT_MODE
+  // Cleared whenever the popover closes, so a confirmation never survives to
+  // be satisfied by an unrelated click later.
+  let armedDestructive = null
+
+  function renderPermissionMode() {
+    const mode = modeById(permissionMode)
+    permissionChipEl.textContent = mode ? mode.label : permissionMode
+    permissionChipEl.classList.toggle('destructive', !!mode?.destructive)
+
+    permissionListEl.textContent = ''
+    for (const m of PERMISSION_MODES) {
+      const row = document.createElement('div')
+      const armed = armedDestructive === m.id
+      row.className = `dash-row${m.id === permissionMode ? ' active' : ''}${m.destructive ? ' destructive' : ''}`
+      row.setAttribute('role', 'option')
+      row.setAttribute('aria-selected', String(m.id === permissionMode))
+      const name = document.createElement('span')
+      name.className = 'dash-name'
+      // Marked by a word as well as by colour, per the accessibility floor.
+      name.textContent = m.destructive ? `${m.label} (unsafe)` : m.label
+      const summary = document.createElement('span')
+      summary.className = 'dash-summary'
+      summary.textContent = armed ? 'Click again to confirm' : m.summary
+      row.appendChild(name)
+      row.appendChild(summary)
+      row.addEventListener('click', () => choosePermissionMode(m))
+      permissionListEl.appendChild(row)
+    }
+  }
+
+  function choosePermissionMode(mode) {
+    // Bypassing every permission check must never be one click away.
+    if (mode.destructive && armedDestructive !== mode.id) {
+      armedDestructive = mode.id
+      renderPermissionMode()
+      return
+    }
+    armedDestructive = null
+    closePopovers(null)
+    vscode.postMessage({ type: 'permission-mode', mode: mode.id })
+  }
+
+  permissionChipEl.addEventListener('click', () => {
+    armedDestructive = null
+    togglePopover(permissionChipEl, permissionPanelEl)
+    renderPermissionMode()
   })
 
   // --- the command dashboard -------------------------------------------
@@ -772,9 +947,10 @@
   // else, so letting the markup own it at boot means two sources of truth that
   // can drift -- and a dashboard that believes it is open swallows Enter.
   closeDash()
+  closePopovers(null)
   renderAttachments()
-  contextPanelEl.hidden = true
-  contextChipEl.setAttribute('aria-expanded', 'false')
+  renderRoom()
+  renderPermissionMode()
 
   inputEl.focus()
 })()

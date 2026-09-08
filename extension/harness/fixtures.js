@@ -110,6 +110,23 @@ const FIXTURES = {
   // Real skill names and descriptions, taken from what discoverSkills finds on
   // the development machine -- so the shot shows how actual descriptions
   // behave in a row, not how a conveniently short one does.
+  room: [
+    stream({ kind: 'session', sessionId: 'fixture', tools: [], cwd: '/repo' }),
+    stream({ kind: 'turn-end', text: MODEL_PROBE_RESULT, turns: 1, costUsd: 0, isError: false }),
+    { type: 'permission-mode', mode: 'acceptEdits' },
+    // Published, with a tailnet address -- advertiseHost prefers 100.64/10.
+    { type: 'room', room: { published: true, advertised: 'http://100.84.12.7:51820/?token=REDACTED', members: [
+      { id: 'm0', name: 'you', role: 'owner' },
+      { id: 'm1', name: 'ana', role: 'member' },
+      { id: 'm2', name: 'sam', role: 'viewer' },
+    ] } },
+  ],
+  'permission-modes': [
+    stream({ kind: 'session', sessionId: 'fixture', tools: [], cwd: '/repo' }),
+    stream({ kind: 'turn-end', text: MODEL_PROBE_RESULT, turns: 1, costUsd: 0, isError: false }),
+    { type: 'permission-mode', mode: 'acceptEdits' },
+    { type: 'room', room: { published: false, advertised: null, members: [{ id: 'm0', name: 'you', role: 'owner' }] } },
+  ],
   dashboard: [
     stream({ kind: 'session', sessionId: 'fixture', tools: [], cwd: '/repo' }),
     stream({ kind: 'turn-end', text: MODEL_PROBE_RESULT, turns: 1, costUsd: 0, isError: false }),
@@ -138,7 +155,26 @@ const FIXTURES = {
  */
 const INTERACTIONS = {
   'context-panel': ['context-chip'],
+  room: [
+    stream({ kind: 'session', sessionId: 'fixture', tools: [], cwd: '/repo' }),
+    stream({ kind: 'turn-end', text: MODEL_PROBE_RESULT, turns: 1, costUsd: 0, isError: false }),
+    { type: 'permission-mode', mode: 'acceptEdits' },
+    // Published, with a tailnet address -- advertiseHost prefers 100.64/10.
+    { type: 'room', room: { published: true, advertised: 'http://100.84.12.7:51820/?token=REDACTED', members: [
+      { id: 'm0', name: 'you', role: 'owner' },
+      { id: 'm1', name: 'ana', role: 'member' },
+      { id: 'm2', name: 'sam', role: 'viewer' },
+    ] } },
+  ],
+  'permission-modes': [
+    stream({ kind: 'session', sessionId: 'fixture', tools: [], cwd: '/repo' }),
+    stream({ kind: 'turn-end', text: MODEL_PROBE_RESULT, turns: 1, costUsd: 0, isError: false }),
+    { type: 'permission-mode', mode: 'acceptEdits' },
+    { type: 'room', room: { published: false, advertised: null, members: [{ id: 'm0', name: 'you', role: 'owner' }] } },
+  ],
   dashboard: ['dash-btn'],
+  room: ['room-chip'],
+  'permission-modes': ['permission-chip'],
 }
 
 module.exports = { FIXTURES, INTERACTIONS, resolveTheme }

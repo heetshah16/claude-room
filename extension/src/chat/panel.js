@@ -47,6 +47,7 @@ function createChatPanel({ context, onInput, onAttach }) {
   const contextUri = panel.webview.asWebviewUri(vscode.Uri.file(join(chatDir, 'context.js')))
   const probesUri = panel.webview.asWebviewUri(vscode.Uri.file(join(chatDir, 'probes.js')))
   const commandsUri = panel.webview.asWebviewUri(vscode.Uri.file(join(chatDir, 'commands.js')))
+  const permissionsUri = panel.webview.asWebviewUri(vscode.Uri.file(join(chatDir, 'permissions.js')))
   const styleUri = panel.webview.asWebviewUri(vscode.Uri.file(join(chatDir, 'webview.css')))
   const n = nonce()
 
@@ -64,6 +65,7 @@ function createChatPanel({ context, onInput, onAttach }) {
     .split('{{contextUri}}').join(String(contextUri))
     .split('{{probesUri}}').join(String(probesUri))
     .split('{{commandsUri}}').join(String(commandsUri))
+    .split('{{permissionsUri}}').join(String(permissionsUri))
     .split('{{styleUri}}').join(String(styleUri))
 
   panel.webview.html = html

@@ -281,7 +281,9 @@ details.thinking .thinking-body {
 .composer-toolbar-left {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
+  min-width: 0;
 }
 
 /* Chips: the composer's toolbar row. Each is a small pill showing live state
@@ -292,6 +294,10 @@ details.thinking .thinking-body {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  /* A chip wraps as a whole or not at all. Without this the row breaks
+   * mid-label at a sidebar width and "Accept edits" becomes two lines. */
+  white-space: nowrap;
+  flex: 0 0 auto;
   background: var(--vscode-badge-background, var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.25)));
   color: var(--vscode-badge-foreground, var(--vscode-descriptionForeground, var(--vscode-foreground)));
   border: 1px solid transparent;
@@ -648,3 +654,86 @@ details.thinking .thinking-body {
   outline-offset: 1px;
   opacity: 1;
 }
+
+/* ---- room and permission popovers ---------------------------------------- */
+
+.panel-sep {
+  height: 1px;
+  margin: 10px 0;
+  background: var(--vscode-panel-border, var(--vscode-widget-border, rgba(127, 127, 127, 0.3)));
+}
+
+/* Full-width actions inside a popover: publish, invite. Distinct from a chip,
+ * which reports state, and from a ghost icon button, which is a bare action. */
+.wide-btn {
+  display: block;
+  width: 100%;
+  margin: 8px 0 0;
+  padding: 5px 10px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 4px;
+  background: var(--vscode-button-secondaryBackground, rgba(127, 127, 127, 0.22));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  font-family: inherit;
+  font-size: 0.9em;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.wide-btn:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(127, 127, 127, 0.34));
+}
+
+.wide-btn:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
+.wide-btn:disabled { opacity: 0.55; cursor: default; }
+
+/* The advertised address, shown before anything is committed: "publish" on
+ * shared office wifi means something very different from "publish" on a
+ * tailnet, and the address is what tells them apart. */
+.room-address {
+  margin-top: 6px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+}
+
+.room-note {
+  margin-top: 4px;
+  font-size: 0.8em;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+}
+
+.room-members { margin-top: 4px; }
+
+.room-member {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 0;
+  font-size: 0.9em;
+}
+
+.room-member.muted { color: var(--vscode-descriptionForeground, var(--vscode-foreground)); }
+
+.room-role {
+  flex: 0 0 auto;
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+}
+
+/* Destructive is carried by a word ("unsafe") as well as by colour -- roughly
+ * one man in twelve cannot separate the red from the rest. */
+.dash-row.destructive .dash-name,
+.chip.destructive {
+  color: var(--vscode-errorForeground, #f14c4c);
+}
+
+.chip.destructive {
+  background: var(--vscode-inputValidation-errorBackground, rgba(241, 76, 76, 0.18));
+}
+
+.dash-row.destructive.active .dash-name { color: inherit; }

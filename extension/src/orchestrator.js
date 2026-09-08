@@ -2,7 +2,7 @@
 'use strict'
 const { join } = require('node:path')
 const { createStreamParser } = require('./stream.js')
-const { isKnownMode } = require('./permission-modes.js')
+const { isKnownMode } = require('./chat/permissions.js')
 
 const SYSTEM_PROMPT = `You are the orchestrator in a room that also has cheap worker seats.
 

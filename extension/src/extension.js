@@ -19,7 +19,7 @@ const { createEventRouter } = require('./events.js')
 const { createChatPanel } = require('./chat/panel.js')
 const { discoverSkills } = require('./skills.js')
 const { saveAttachment } = require('./attachments.js')
-const { isKnownMode, DEFAULT_MODE } = require('./permission-modes.js')
+const { isKnownMode, DEFAULT_MODE } = require('./chat/permissions.js')
 
 // extension.js lives at <repoRoot>/extension/src/extension.js. "The
 // extension's own directory" is <repoRoot>/extension; its parent is the repo

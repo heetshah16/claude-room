@@ -2,7 +2,7 @@
 'use strict'
 const { test } = require('node:test')
 const assert = require('node:assert/strict')
-const { PERMISSION_MODES, DEFAULT_MODE, isKnownMode } = require('../src/permission-modes.js')
+const { PERMISSION_MODES, DEFAULT_MODE, isKnownMode } = require('../src/chat/permissions.js')
 
 // The CLI's own choice list, read off `claude --help` on 2.1.216 (2026-09-08).
 const CLI_CHOICES = ['acceptEdits', 'auto', 'bypassPermissions', 'manual', 'dontAsk', 'plan']
