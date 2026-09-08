@@ -362,3 +362,9 @@ details.thinking .thinking-body {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* Drawn icons sit inline with their label. `flex: 0 0 auto` keeps a long
+ * tool name from squeezing the glyph, which is what happens by default when
+ * the row runs out of room. */
+.icon { flex: 0 0 auto; }
+.card-name { display: inline-flex; align-items: center; gap: 6px; }

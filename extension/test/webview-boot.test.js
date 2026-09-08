@@ -61,6 +61,10 @@ function bootWebview() {
   const document = {
     getElementById: get,
     createElement: tag => fakeElement(tag),
+    // icons.js builds real <svg> nodes, which only render when created in the
+    // SVG namespace -- so the fake document has to offer the namespaced call
+    // too, or webview.js throws at its first tool row.
+    createElementNS: (ns, tag) => Object.assign(fakeElement(tag), { ns }),
     createDocumentFragment: () => fakeElement('#fragment'),
     createTextNode: text => ({ nodeType: 3, textContent: text }),
     body: fakeElement('body'),
@@ -78,7 +82,8 @@ function bootWebview() {
   vm.createContext(sandbox)
 
   // Load in the same order webview.html does.
-  for (const f of ['markdown.js', 'model.js', 'webview.js']) {
+  // The same list, and the same order, webview.html loads.
+  for (const f of ['markdown.js', 'model.js', 'icons.js', 'webview.js']) {
     vm.runInContext(readFileSync(join(CHAT, f), 'utf8'), sandbox, { filename: f })
   }
   return { elements, get, posted }

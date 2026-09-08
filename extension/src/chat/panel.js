@@ -34,6 +34,7 @@ function createChatPanel({ context, onInput }) {
   const scriptUri = panel.webview.asWebviewUri(vscode.Uri.file(join(chatDir, 'webview.js')))
   const markdownUri = panel.webview.asWebviewUri(vscode.Uri.file(join(chatDir, 'markdown.js')))
   const modelUri = panel.webview.asWebviewUri(vscode.Uri.file(join(chatDir, 'model.js')))
+  const iconsUri = panel.webview.asWebviewUri(vscode.Uri.file(join(chatDir, 'icons.js')))
   const styleUri = panel.webview.asWebviewUri(vscode.Uri.file(join(chatDir, 'webview.css')))
   const n = nonce()
 
@@ -47,6 +48,7 @@ function createChatPanel({ context, onInput }) {
     .split('{{scriptUri}}').join(String(scriptUri))
     .split('{{markdownUri}}').join(String(markdownUri))
     .split('{{modelUri}}').join(String(modelUri))
+    .split('{{iconsUri}}').join(String(iconsUri))
     .split('{{styleUri}}').join(String(styleUri))
 
   panel.webview.html = html

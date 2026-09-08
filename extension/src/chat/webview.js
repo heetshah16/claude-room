@@ -15,6 +15,7 @@
   const vscode = acquireVsCodeApi()
   const { renderMarkdown } = window.ClaudeMarkdown
   const { parseModelList, isRealModel } = window.ClaudeModel
+  const { icon } = window.ClaudeIcons
 
   const messagesEl = document.getElementById('messages')
   const inputEl = document.getElementById('input')
@@ -153,7 +154,11 @@
     const title = document.createElement('summary')
     title.className = 'card-title'
     const name = document.createElement('span')
-    name.textContent = `\u{1F527} ${ev.name}` // wrench
+    name.className = 'card-name'
+    name.appendChild(icon('wrench', document))
+    const nameText = document.createElement('span')
+    nameText.textContent = ev.name
+    name.appendChild(nameText)
     const summary = document.createElement('span')
     summary.className = 'card-summary'
     summary.textContent = summariseInput(ev.input)
@@ -324,7 +329,17 @@
     card.className = 'card activity'
     const title = document.createElement('div')
     title.className = 'card-title'
-    title.textContent = activityTitle(activity)
+    // A worker's tool call gets the same drawn wrench a local tool call does,
+    // so the two read as the same kind of event happening in two places.
+    if (activity?.tool) {
+      title.classList.add('card-name')
+      title.appendChild(icon('wrench', document))
+      const t = document.createElement('span')
+      t.textContent = `@${activity.handle ?? 'worker'} – ${activity.tool}`
+      title.appendChild(t)
+    } else {
+      title.textContent = activityTitle(activity)
+    }
     card.appendChild(title)
     if (activity && (activity.input || activity.task)) {
       const body = document.createElement('div')
@@ -336,10 +351,11 @@
     maybeScrollToBottom()
   }
 
+  // Only the text-only cases. A tool activity is built with an icon by the
+  // caller, because a title that is a node cannot be returned as a string.
   function activityTitle(a) {
     if (!a) return 'Worker activity'
     if (a.kind === 'delegation-sent') return `→ delegated to @${a.handle}`
-    if (a.tool) return `\u{1F527} @${a.handle ?? 'worker'} – ${a.tool}`
     return `Worker activity: @${a.handle ?? 'unknown'}`
   }
 
