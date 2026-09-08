@@ -519,6 +519,12 @@
       }
     }
 
+    if (msg.type === 'attached') {
+      attached.push({ path: String(msg.path), dataUrl: msg.dataUrl ?? null })
+      renderAttachments()
+      inputEl.focus()
+      return
+    }
     if (msg.type === 'skills') {
       skillEntries = Array.isArray(msg.skills) ? msg.skills : []
       // Re-filter in place if the menu is already open: skills arrive after a
@@ -633,12 +639,96 @@
     openDash(currentQuery() ?? '')
   })
 
+  // --- attachments ------------------------------------------------------
+  //
+  // A picked or dropped file already has a path, and a path is all the
+  // orchestrator needs. A pasted image does not, so the host writes one and
+  // hands the path back.
+
+  const attachmentsEl = document.getElementById('attachments')
+  const attached = [] // { path, dataUrl }
+
+  function renderAttachments() {
+    attachmentsEl.textContent = ''
+    attachmentsEl.hidden = attached.length === 0
+    attached.forEach((a, i) => {
+      const chip = document.createElement('span')
+      chip.className = 'attachment'
+      if (a.dataUrl) {
+        const img = document.createElement('img')
+        img.className = 'attachment-thumb'
+        // The CSP permits data: for img-src. This is the only place the
+        // webview renders bytes rather than text.
+        img.src = a.dataUrl
+        img.alt = ''
+        chip.appendChild(img)
+      }
+      const label = document.createElement('span')
+      label.className = 'attachment-name'
+      label.textContent = a.path.split(/[\\/]/).pop()
+      chip.appendChild(label)
+
+      const remove = document.createElement('button')
+      remove.className = 'attachment-remove'
+      remove.type = 'button'
+      remove.setAttribute('aria-label', `Remove ${label.textContent}`)
+      remove.appendChild(icon('x', document))
+      remove.addEventListener('click', () => {
+        attached.splice(i, 1)
+        renderAttachments()
+        inputEl.focus()
+      })
+      chip.appendChild(remove)
+      attachmentsEl.appendChild(chip)
+    })
+  }
+
+  attachBtnEl.appendChild(icon('plus', document))
+  attachBtnEl.addEventListener('click', () => vscode.postMessage({ type: 'attach-file' }))
+
+  // Pasted IMAGES become files. Pasted text is left entirely alone ---
+  // intercepting it would break the most common paste there is.
+  inputEl.addEventListener('paste', e => {
+    const items = [...(e.clipboardData?.items ?? [])].filter(i => i.type?.startsWith('image/'))
+    if (!items.length) return
+    e.preventDefault()
+    for (const item of items) {
+      const file = item.getAsFile()
+      if (!file) continue
+      const reader = new FileReader()
+      reader.onload = () => {
+        // A data URL is "data:<mime>;base64,<payload>"; the host wants the payload.
+        const url = String(reader.result)
+        vscode.postMessage({
+          type: 'attach-paste',
+          mime: file.type,
+          base64: url.slice(url.indexOf(',') + 1),
+        })
+      }
+      reader.readAsDataURL(file)
+    }
+  })
+
+  // Dropping a file onto the window is the same gesture as picking one.
+  document.addEventListener('dragover', e => e.preventDefault())
+  document.addEventListener('drop', e => {
+    e.preventDefault()
+    const paths = [...(e.dataTransfer?.files ?? [])].map(f => f.path).filter(Boolean)
+    if (paths.length) vscode.postMessage({ type: 'attach-paths', paths })
+  })
+
   function send() {
-    const text = inputEl.value.trim()
-    if (!text) return
+    const typed = inputEl.value.trim()
+    // Paths go first, on their own lines: the model is told where the files
+    // are before it is told what to do with them.
+    const prefix = attached.map(a => a.path).join('\n')
+    const text = prefix ? `${prefix}\n${typed}` : typed
+    if (!text.trim()) return
     appendMsg('user', text)
     vscode.postMessage({ type: 'input', text })
     inputEl.value = ''
+    attached.length = 0
+    renderAttachments()
     autoGrow()
   }
 
@@ -682,6 +772,7 @@
   // else, so letting the markup own it at boot means two sources of truth that
   // can drift -- and a dashboard that believes it is open swallows Enter.
   closeDash()
+  renderAttachments()
   contextPanelEl.hidden = true
   contextChipEl.setAttribute('aria-expanded', 'false')
 

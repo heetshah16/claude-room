@@ -252,3 +252,60 @@ test('Enter still sends normally when the dashboard is closed', () => {
   boot.fire(input, 'keydown', { key: 'Enter', shiftKey: false, preventDefault() {} })
   assert.ok(boot.posted.some(m => m.type === 'input' && m.text === 'hello there'))
 })
+
+// --- attachments -----------------------------------------------------------
+
+test('an attachment from the host appears in the strip', () => {
+  const boot = bootWebview()
+  assert.equal(boot.get('attachments').hidden, true, 'the strip starts hidden')
+  boot.handleMessage({ data: { type: 'attached', path: '/repo/notes.md', dataUrl: null } })
+  assert.equal(boot.get('attachments').hidden, false)
+})
+
+test('attachment paths are prefixed onto the message, on their own lines', () => {
+  // The model has to be told where the file is before it is told what to do
+  // with it, and a path buried mid-sentence is not that.
+  const boot = bootWebview()
+  boot.handleMessage({ data: { type: 'attached', path: '/repo/notes.md', dataUrl: null } })
+  const input = boot.get('input')
+  input.value = 'summarise this'
+  boot.fire(input, 'keydown', { key: 'Enter', shiftKey: false, preventDefault() {} })
+  const sent = boot.posted.find(m => m.type === 'input')
+  assert.equal(sent.text, '/repo/notes.md\nsummarise this')
+})
+
+test('an attachment alone is sendable, with no typed text at all', () => {
+  const boot = bootWebview()
+  boot.handleMessage({ data: { type: 'attached', path: '/repo/shot.png', dataUrl: null } })
+  const input = boot.get('input')
+  input.value = ''
+  boot.fire(input, 'keydown', { key: 'Enter', shiftKey: false, preventDefault() {} })
+  assert.ok(boot.posted.some(m => m.type === 'input' && m.text.includes('/repo/shot.png')))
+})
+
+test('sending clears the strip, so the next message does not resend the file', () => {
+  const boot = bootWebview()
+  boot.handleMessage({ data: { type: 'attached', path: '/repo/notes.md', dataUrl: null } })
+  const input = boot.get('input')
+  input.value = 'one'
+  boot.fire(input, 'keydown', { key: 'Enter', shiftKey: false, preventDefault() {} })
+  input.value = 'two'
+  boot.fire(input, 'keydown', { key: 'Enter', shiftKey: false, preventDefault() {} })
+  const second = boot.posted.filter(m => m.type === 'input')[1]
+  assert.equal(second.text, 'two', 'the attachment must not ride along on the next message')
+  assert.equal(boot.get('attachments').hidden, true)
+})
+
+test('an empty composer with no attachments still sends nothing', () => {
+  const boot = bootWebview()
+  const input = boot.get('input')
+  input.value = '   '
+  boot.fire(input, 'keydown', { key: 'Enter', shiftKey: false, preventDefault() {} })
+  assert.equal(boot.posted.filter(m => m.type === 'input').length, 0)
+})
+
+test('the attach button asks the host to open a picker', () => {
+  const boot = bootWebview()
+  boot.fire(boot.get('attach-btn'), 'click')
+  assert.ok(boot.posted.some(m => m.type === 'attach-file'))
+})

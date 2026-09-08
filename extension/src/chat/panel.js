@@ -16,7 +16,7 @@ const nonce = () => randomBytes(16).toString('base64')
  * eventually tested) without pulling in `vscode`, and this file stays thin
  * enough to trust by inspection.
  */
-function createChatPanel({ context, onInput }) {
+function createChatPanel({ context, onInput, onAttach }) {
   const extensionRoot = context.extensionUri?.fsPath ?? context.extensionPath
   const chatDir = join(extensionRoot, 'src', 'chat')
 
@@ -62,7 +62,12 @@ function createChatPanel({ context, onInput }) {
   panel.webview.onDidReceiveMessage(msg => {
     if (msg?.type === 'input' && typeof msg.text === 'string' && msg.text.trim()) {
       onInput(msg.text)
+      return
     }
+    // attach-file (open a picker), attach-paths (dropped), attach-paste
+    // (clipboard bytes). All three are the host's job: only it has a
+    // filesystem and a file dialog.
+    if (typeof msg?.type === 'string' && msg.type.startsWith('attach')) onAttach?.(msg)
   })
 
   // The webview can already be gone (panel closed mid-turn) by the time an
@@ -75,6 +80,7 @@ function createChatPanel({ context, onInput }) {
     postStream: event => post({ type: 'stream', event }),
     postActivity: activity => post({ type: 'activity', activity }),
     postSkills: skills => post({ type: 'skills', skills }),
+    postAttached: a => post({ type: 'attached', path: a.path, dataUrl: a.dataUrl ?? null }),
     postFatal: message => post({ type: 'fatal', message }),
     reveal: () => panel.reveal(vscode.ViewColumn.One),
     onDidDispose: cb => panel.onDidDispose(cb),

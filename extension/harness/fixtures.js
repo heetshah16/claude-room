@@ -98,9 +98,18 @@ const FIXTURES = {
     stream({ kind: 'text', text: 'Starting…\n' }),
     { type: 'fatal', message: 'orchestrator exited unexpectedly (code 1). Run "Claude Room: Restart Services" to continue.' },
   ],
+  attachments: [
+    stream({ kind: 'session', sessionId: 'fixture', tools: [], cwd: '/repo' }),
+    stream({ kind: 'turn-end', text: MODEL_PROBE_RESULT, turns: 1, costUsd: 0, isError: false }),
+    // A pasted image: carries a thumbnail, because the host hands back the
+    // same bytes the webview sent rather than re-reading the file.
+    { type: 'attached', path: 'C:/store/attachments/8f2a-41bc.png', dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==' },
+    // A picked file: a path and no preview.
+    { type: 'attached', path: '/repo/docs/superpowers/specs/2026-09-05-orchestrator-parity-design.md', dataUrl: null },
+  ],
   // Real skill names and descriptions, taken from what discoverSkills finds on
   // the development machine -- so the shot shows how actual descriptions
-  // behave in the row, not how a convenient short one does.
+  // behave in a row, not how a conveniently short one does.
   dashboard: [
     stream({ kind: 'session', sessionId: 'fixture', tools: [], cwd: '/repo' }),
     stream({ kind: 'turn-end', text: MODEL_PROBE_RESULT, turns: 1, costUsd: 0, isError: false }),

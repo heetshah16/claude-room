@@ -588,3 +588,63 @@ details.thinking .thinking-body {
   outline: 1px solid var(--vscode-focusBorder);
   outline-offset: 2px;
 }
+
+/* ---- attachments ---------------------------------------------------------
+ *
+ * A strip above the textarea, inside the composer card. Wraps rather than
+ * widening the composer, which at a 380px sidebar width it otherwise would. */
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 0 4px;
+}
+
+.attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 2px 4px 2px 6px;
+  border-radius: 4px;
+  font-size: 0.85em;
+  background: var(--vscode-badge-background, rgba(127, 127, 127, 0.25));
+  color: var(--vscode-badge-foreground, inherit);
+}
+
+.attachment-thumb {
+  width: 20px;
+  height: 20px;
+  object-fit: cover;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+
+/* A long filename truncates; the remove button must never be pushed out of
+ * reach by one. */
+.attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.attachment-remove {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.attachment-remove:hover { opacity: 1; }
+
+.attachment-remove:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+  opacity: 1;
+}

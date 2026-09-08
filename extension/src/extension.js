@@ -18,6 +18,7 @@ const { orchestratorRecipe, bridgeMcpConfig, createOrchestrator } = require('./o
 const { createEventRouter } = require('./events.js')
 const { createChatPanel } = require('./chat/panel.js')
 const { discoverSkills } = require('./skills.js')
+const { saveAttachment } = require('./attachments.js')
 
 // extension.js lives at <repoRoot>/extension/src/extension.js. "The
 // extension's own directory" is <repoRoot>/extension; its parent is the repo
@@ -277,10 +278,45 @@ async function openChat(context) {
   // a value that exists yet. Both are assigned synchronously before either
   // callback can actually fire, so by the time a message arrives on either
   // side the other half is always ready.
+  const attachmentsDir = path.join(storageDir, 'attachments')
+
+  /**
+   * The three ways a file reaches the composer.
+   *
+   * A picked or dropped file keeps its own path — the orchestrator holds Read
+   * and Glob, so a path is all it needs, and copying the bytes would only
+   * create a second stale copy. A pasted image has no path, so one is made.
+   */
+  async function handleAttach(msg) {
+    try {
+      if (msg.type === 'attach-file') {
+        const picked = await vscode.window.showOpenDialog({ canSelectMany: true, openLabel: 'Attach' })
+        for (const uri of picked ?? []) panel.postAttached({ path: uri.fsPath })
+        return
+      }
+      if (msg.type === 'attach-paths') {
+        for (const p of msg.paths ?? []) panel.postAttached({ path: String(p) })
+        return
+      }
+      if (msg.type === 'attach-paste') {
+        const file = saveAttachment({ dir: attachmentsDir, mime: msg.mime, base64: msg.base64 })
+        // The thumbnail reuses the bytes the webview already sent rather than
+        // reading the file back off disk to show what it just handed over.
+        panel.postAttached({ path: file, dataUrl: `data:${msg.mime};base64,${msg.base64}` })
+      }
+    } catch (err) {
+      // An attachment that silently fails to attach is the worst outcome: the
+      // user believes the file is on the message and it is not.
+      vscode.window.showErrorMessage(`Claude Room: could not attach that file — ${err?.message ?? err}`)
+      log(`attach failed: ${err?.stack ?? err}`)
+    }
+  }
+
   let orchestrator
   const panel = createChatPanel({
     context,
     onInput: text => orchestrator?.send(text),
+    onAttach: handleAttach,
   })
   orchestrator = createOrchestrator({
     child: orchProc.child,
