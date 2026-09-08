@@ -4,15 +4,33 @@
   "description": "Chat with an orchestrating Claude that delegates mechanical work to free-model workers.",
   "version": "0.0.1",
   "private": true,
-  "engines": { "vscode": "^1.75.0", "node": ">=22" },
-  "categories": ["AI", "Other"],
+  "engines": {
+    "vscode": "^1.75.0",
+    "node": ">=22"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
   "activationEvents": [],
   "main": "./src/extension.js",
   "contributes": {
     "commands": [
-      { "command": "claudeRoom.openChat", "title": "Claude Room: Open Orchestrator Chat" },
-      { "command": "claudeRoom.restart", "title": "Claude Room: Restart Services" }
+      {
+        "command": "claudeRoom.openChat",
+        "title": "Claude Room: Open Orchestrator Chat"
+      },
+      {
+        "command": "claudeRoom.restart",
+        "title": "Claude Room: Restart Services"
+      }
     ]
   },
-  "scripts": { "test": "node --test" }
+  "scripts": {
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.1.0"
+  }
 }
