@@ -34,6 +34,45 @@ const MODEL_PROBE_RESULT =
   'Current model: Opus 5\n' +
   'Usage: /model <name>. Available: sonnet, opus, haiku, fable, best, opusplan, default, or a full model ID.'
 
+// The real `/context` report, captured verbatim from `claude --print
+// "/context"` version 2.1.216 on 2026-09-08. The same text drives
+// test/context.test.js, so the screenshot and the parser tests agree on what
+// the binary actually emits.
+const CONTEXT_REPORT = [
+  '## Context Usage',
+  '',
+  '**Model:** claude-opus-4-8',
+  '**Tokens:** 20.2k / 1m (2%)',
+  '',
+  '### Estimated usage by category',
+  '',
+  '| Category | Tokens | Percentage |',
+  '|----------|--------|------------|',
+  '| System prompt | 2.8k | 0.3% |',
+  '| System tools | 12.4k | 1.2% |',
+  '| System tools (deferred) | 11.3k | 1.1% |',
+  '| MCP tools | 4.1k | 0.4% |',
+  '| Memory files | 1.6k | 0.2% |',
+  '| Skills | 3.7k | 0.4% |',
+  '| Messages | 1.3k | 0.1% |',
+  '| Free space | 975.7k | 97.6% |',
+  '',
+  '### Memory Files',
+  '',
+  '| Type | Path | Tokens |',
+  '|------|------|--------|',
+  '| Project | CLAUDE.md | 1.6k |',
+  '',
+  '### Skills',
+  '',
+  '| Skill | Source | Tokens |',
+  '|-------|--------|--------|',
+  '| superpowers:brainstorming | Plugin (superpowers) | ~80 |',
+  '| ui-ux-pro-max:design | Plugin (ui-ux-pro-max) | ~210 |',
+  '| dataviz | Built-in | ~380 |',
+  '| claude-api | Built-in | ~360 |',
+].join('\n')
+
 const FIXTURES = {
   conversation: [
     stream({ kind: 'session', sessionId: 'fixture', tools: [], cwd: '/repo' }),
@@ -59,6 +98,24 @@ const FIXTURES = {
     stream({ kind: 'text', text: 'Starting…\n' }),
     { type: 'fatal', message: 'orchestrator exited unexpectedly (code 1). Run "Claude Room: Restart Services" to continue.' },
   ],
+  'context-panel': [
+    stream({ kind: 'session', sessionId: 'fixture', tools: [], cwd: '/repo' }),
+    stream({ kind: 'turn-end', text: MODEL_PROBE_RESULT, turns: 1, costUsd: 0, isError: false }),
+    stream({ kind: 'text', text: 'Added the empty-input cases and verified them.' }),
+    // A real turn ending, which is what asks for a context refresh...
+    stream({ kind: 'turn-end', text: '', turns: 3, costUsd: 0.0212, isError: false }),
+    // ...and then the answer to that request.
+    stream({ kind: 'turn-end', text: CONTEXT_REPORT, turns: 1, costUsd: 0, isError: false }),
+  ],
 }
 
-module.exports = { FIXTURES, resolveTheme }
+/**
+ * Element ids to click after a fixture is replayed, so a panel that only opens
+ * on demand can be screenshotted at all. A fixture not listed here is shot
+ * exactly as it lands.
+ */
+const INTERACTIONS = {
+  'context-panel': ['context-chip'],
+}
+
+module.exports = { FIXTURES, INTERACTIONS, resolveTheme }

@@ -25,12 +25,28 @@
     </div>
   </div>
   <div id="status" class="status" hidden></div>
+  <div id="context-panel" class="panel" hidden role="region" aria-label="Context usage">
+    <div class="panel-head">
+      <span class="panel-title">Context</span>
+      <span id="context-total" class="panel-total"></span>
+    </div>
+    <!-- The bar is decorative: the legend below carries the same numbers as
+         text, because length and hue alone convey nothing to a screen reader
+         or to anyone who cannot separate two of the six colours. -->
+    <div id="context-bar" class="bar" aria-hidden="true"></div>
+    <div id="context-legend" class="legend"></div>
+    <div id="context-verdict" class="verdict" hidden></div>
+    <div id="context-tables"></div>
+  </div>
   <div class="composer">
     <textarea id="input" rows="1" placeholder="Message the orchestrator... (Enter to send, Shift+Enter for a new line)"></textarea>
     <div class="composer-toolbar">
       <div class="composer-toolbar-left">
-        <button id="model-picker" class="model-chip" type="button" title="Change model">model: (unknown)</button>
-        <select id="model-select" hidden></select>
+        <button id="model-picker" class="chip" type="button" aria-expanded="false"
+                aria-controls="model-select" title="Change model">model: (unknown)</button>
+        <select id="model-select" class="chip-select" hidden aria-label="Model"></select>
+        <button id="context-chip" class="chip" type="button" aria-expanded="false"
+                aria-controls="context-panel" title="Context usage">context: &mdash;</button>
       </div>
       <button id="send" class="send-btn" type="button" aria-label="Send" title="Send">&uarr;</button>
     </div>
@@ -38,6 +54,8 @@
   <script nonce="{{nonce}}" src="{{markdownUri}}"></script>
   <script nonce="{{nonce}}" src="{{modelUri}}"></script>
   <script nonce="{{nonce}}" src="{{iconsUri}}"></script>
+  <script nonce="{{nonce}}" src="{{contextUri}}"></script>
+  <script nonce="{{nonce}}" src="{{probesUri}}"></script>
   <script nonce="{{nonce}}" src="{{scriptUri}}"></script>
 </body>
 </html>

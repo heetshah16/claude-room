@@ -284,10 +284,14 @@ details.thinking .thinking-body {
   gap: 6px;
 }
 
-/* Model picker: restyled as a small pill/chip inside the composer's own
- * toolbar row -- it shows the live model tracked from the stream and opens
- * a dropdown of whatever `/model`'s own output reports as available. */
-#model-picker {
+/* Chips: the composer's toolbar row. Each is a small pill showing live state
+ * -- the model, the context budget -- and each opens something. One rule for
+ * all of them so the row reads as one control surface rather than as several
+ * unrelated widgets. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   background: var(--vscode-badge-background, var(--vscode-toolbar-hoverBackground, transparent));
   color: var(--vscode-badge-foreground, var(--vscode-descriptionForeground, var(--vscode-foreground)));
   border: 1px solid transparent;
@@ -296,13 +300,20 @@ details.thinking .thinking-body {
   font-family: inherit;
   font-size: 0.85em;
   cursor: pointer;
+  transition: background 120ms ease;
 }
 
-#model-picker:hover {
+.chip:hover {
   background: var(--vscode-toolbar-hoverBackground, transparent);
 }
 
-#model-select {
+/* Never removed: keyboard users have nothing else to go on. */
+.chip:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
+.chip-select {
   background: var(--vscode-dropdown-background, var(--vscode-input-background));
   color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground));
   border: 1px solid var(--vscode-dropdown-border, var(--vscode-input-border));
@@ -368,3 +379,121 @@ details.thinking .thinking-body {
  * the row runs out of room. */
 .icon { flex: 0 0 auto; }
 .card-name { display: inline-flex; align-items: center; gap: 6px; }
+
+/* ---- context panel -------------------------------------------------------
+ *
+ * Sits above the composer, revealed by the context chip. A 100% stacked bar
+ * rather than a donut: /context reports nine categories, and a part-to-whole
+ * display stops being readable somewhere around six slices. Six bands, six
+ * chart tokens -- the one VS Code family meant for quantitative display. */
+.panel {
+  margin: 0 12px 8px 12px;
+  padding: 12px;
+  border: 1px solid var(--vscode-panel-border, var(--vscode-widget-border, transparent));
+  border-radius: 9px;
+  background: var(--vscode-editorWidget-background, var(--vscode-input-background));
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.panel-title {
+  font-size: 0.78em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+}
+
+.panel-total {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.85em;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+}
+
+.bar {
+  display: flex;
+  height: 10px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--vscode-input-background, transparent);
+  border: 1px solid var(--vscode-panel-border, var(--vscode-widget-border, transparent));
+}
+
+/* Six bands, six chart tokens -- the one VS Code family meant for
+ * quantitative display, and the reason the band count is six. */
+.seg-prompt   { background: var(--vscode-charts-blue,   #3794ff); }
+.seg-tools    { background: var(--vscode-charts-purple, #b180d7); }
+.seg-mcp      { background: var(--vscode-charts-orange, #d18616); }
+.seg-skills   { background: var(--vscode-charts-yellow, #cca700); }
+.seg-memory   { background: var(--vscode-charts-green,  #89d185); }
+.seg-messages { background: var(--vscode-charts-red,    #f14c4c); }
+
+/* Also the accessible reading of the bar: it repeats every value as text,
+ * because colour and length alone convey nothing to a screen reader or to
+ * anyone who cannot separate two of the six hues. */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 8px;
+  font-size: 0.85em;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+
+.verdict {
+  margin-top: 10px;
+  padding-top: 10px;
+  font-size: 0.92em;
+  border-top: 1px solid var(--vscode-panel-border, var(--vscode-widget-border, transparent));
+}
+
+.detail {
+  margin-top: 8px;
+  font-size: 0.85em;
+}
+
+.detail summary {
+  cursor: pointer;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+}
+
+.detail-row {
+  display: flex;
+  gap: 12px;
+  padding: 2px 0 2px 16px;
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+/* The name takes the slack and wraps; the numbers stay put and stay aligned. */
+.detail-row span:first-child {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.detail-row span:not(:first-child) {
+  flex: 0 0 auto;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition-duration: 0.01ms !important; animation: none !important; }
+}

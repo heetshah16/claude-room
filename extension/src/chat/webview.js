@@ -16,6 +16,8 @@
   const { renderMarkdown } = window.ClaudeMarkdown
   const { parseModelList, isRealModel } = window.ClaudeModel
   const { icon } = window.ClaudeIcons
+  const { parseContextReport, verdictFor, bandsOf, fmtTokens } = window.ClaudeContext
+  const { createProbeQueue } = window.ClaudeProbes
 
   const messagesEl = document.getElementById('messages')
   const inputEl = document.getElementById('input')
@@ -26,6 +28,19 @@
   const modelPickerEl = document.getElementById('model-picker')
   const modelSelectEl = document.getElementById('model-select')
   const emptyStateEl = document.getElementById('empty-state')
+  const contextChipEl = document.getElementById('context-chip')
+  const contextPanelEl = document.getElementById('context-panel')
+  const contextTotalEl = document.getElementById('context-total')
+  const contextBarEl = document.getElementById('context-bar')
+  const contextLegendEl = document.getElementById('context-legend')
+  const contextVerdictEl = document.getElementById('context-verdict')
+  const contextTablesEl = document.getElementById('context-tables')
+
+  // Every probe the chat runs on its own behalf goes through one queue, so a
+  // turn-end can say which probe it answered instead of two booleans guessing.
+  const probes = createProbeQueue({
+    send: text => vscode.postMessage({ type: 'input', text }),
+  })
 
   // Shown only until the first thing is appended to the conversation --
   // hidden here rather than left to a CSS :empty rule because #messages
@@ -90,9 +105,9 @@
   }
 
   function onText(text) {
-    // A model-list probe's answer must not appear as a chat message -- it
-    // is parsed for the picker (in onTurnEnd) and nothing else.
-    if (awaitingModelList) return
+    // A probe's answer must not appear as a chat message -- it is parsed in
+    // onTurnEnd and nothing else. The chat asked for it, not the user.
+    if (probes.suppressing()) return
     if (!currentBubble) {
       currentBubble = appendMsg('assistant', '')
       currentBubbleText = ''
@@ -234,13 +249,20 @@
   // orchestrator to run a bare `/model`, whose result text is parsed for
   // the available list rather than a hardcoded table, so it can't drift
   // from what the installed binary actually supports.
-  let awaitingModelList = false
+  // The known option list, populated by the probe. Held rather than rendered
+  // immediately: the select is a popover the chip owns, not a replacement for
+  // it. An earlier version set `modelPickerEl.hidden = list.length > 0`, so
+  // once the session-start probe answered, the composer showed a bare native
+  // dropdown instead of the chip -- on every launch, permanently. The first
+  // harness screenshot is what made that obvious.
+  let modelOptions = []
 
   function setCurrentModel(model) {
     modelPickerEl.textContent = `model: ${model}`
   }
 
   function showModelOptions(list) {
+    modelOptions = list
     modelSelectEl.textContent = ''
     for (const name of list) {
       const opt = document.createElement('option')
@@ -248,21 +270,36 @@
       opt.textContent = name
       modelSelectEl.appendChild(opt)
     }
-    modelSelectEl.hidden = list.length === 0
-    modelPickerEl.hidden = list.length > 0
+  }
+
+  function closeModelOptions() {
+    modelSelectEl.hidden = true
+    modelPickerEl.hidden = false
+    modelPickerEl.setAttribute('aria-expanded', 'false')
   }
 
   modelPickerEl.addEventListener('click', () => {
-    awaitingModelList = true
-    vscode.postMessage({ type: 'input', text: '/model' })
+    // Nothing to choose from yet: ask, and the answer populates the list for
+    // the next click rather than opening an empty menu now.
+    if (modelOptions.length === 0) {
+      probes.request('model')
+      return
+    }
+    modelSelectEl.hidden = false
+    modelPickerEl.hidden = true
+    modelPickerEl.setAttribute('aria-expanded', 'true')
+    modelSelectEl.focus()
   })
 
   modelSelectEl.addEventListener('change', () => {
     const chosen = modelSelectEl.value
-    modelSelectEl.hidden = true
-    modelPickerEl.hidden = false
+    closeModelOptions()
     if (chosen) vscode.postMessage({ type: 'input', text: `/model ${chosen}` })
   })
+
+  // Dismissing without choosing must restore the chip, or the composer is
+  // stuck showing a dropdown the user already declined.
+  modelSelectEl.addEventListener('blur', closeModelOptions)
 
   function onModel(model) {
     if (isRealModel(model)) setCurrentModel(model)
@@ -278,36 +315,123 @@
   function onSessionEstablished() {
     if (modelProbeSent) return
     modelProbeSent = true
-    awaitingModelList = true
-    vscode.postMessage({ type: 'input', text: '/model' })
+    probes.request('model')
   }
+
+  // --- context panel ---------------------------------------------------
+
+  function renderContext(report) {
+    // Not a context report: leave the last good one on screen rather than
+    // blanking the panel, which would read as the feature being broken.
+    if (!report) return
+
+    contextChipEl.textContent = `context: ${fmtTokens(report.usedTokens)} · ${report.pct}%`
+    contextTotalEl.textContent =
+      `${fmtTokens(report.usedTokens)} of ${fmtTokens(report.totalTokens)} · ${report.pct}% used`
+
+    // The bar is normalised to what is LOADED, not to the window. Scaled
+    // against a 1m window a 20k context is a two-pixel sliver in which no
+    // proportion is legible -- and "what is filling my context" is the whole
+    // question. How full the window is is already on the chip and in the line
+    // above; this bar answers the other question.
+    const bands = bandsOf(report)
+    contextBarEl.textContent = ''
+    for (const band of bands) {
+      const seg = document.createElement('div')
+      seg.className = `seg seg-${band.key}`
+      seg.style.width = `${band.share * 100}%`
+      contextBarEl.appendChild(seg)
+    }
+
+    // Also the accessible reading of the bar, which is why it carries the
+    // numbers and the shares rather than just the names.
+    contextLegendEl.textContent = ''
+    for (const band of bands) {
+      const item = document.createElement('span')
+      item.className = 'legend-item'
+      const sw = document.createElement('i')
+      sw.className = `swatch seg-${band.key}`
+      const label = document.createElement('span')
+      label.textContent = `${band.label} ${fmtTokens(band.tokens)} · ${Math.round(band.share * 100)}%`
+      item.appendChild(sw)
+      item.appendChild(label)
+      contextLegendEl.appendChild(item)
+    }
+
+    const verdict = verdictFor(report)
+    contextVerdictEl.hidden = !verdict
+    contextVerdictEl.textContent = verdict || ''
+
+    contextTablesEl.textContent = ''
+    // Six bands is what the bar can carry; the exact nine categories live one
+    // disclosure away, which is where the system-tools-versus-deferred split
+    // actually matters.
+    appendDetail('All categories', report.categories
+      .slice()
+      .sort((a, b) => b.tokens - a.tokens)
+      .map(c => [c.label, '', fmtTokens(c.tokens)]))
+    appendDetail('Skills', report.skills.map(s => [s.name, s.source, fmtTokens(s.tokens)]))
+    appendDetail('Memory files', report.memoryFiles.map(f => [f.path, f.type, fmtTokens(f.tokens)]))
+  }
+
+  function appendDetail(title, rows) {
+    if (!rows.length) return
+    const d = document.createElement('details')
+    d.className = 'detail'
+    const s = document.createElement('summary')
+    s.textContent = `${title} · ${rows.length}`
+    d.appendChild(s)
+    for (const cols of rows) {
+      const row = document.createElement('div')
+      row.className = 'detail-row'
+      for (const text of cols) {
+        const cell = document.createElement('span')
+        cell.textContent = text
+        row.appendChild(cell)
+      }
+      d.appendChild(row)
+    }
+    contextTablesEl.appendChild(d)
+  }
+
+  contextChipEl.addEventListener('click', () => {
+    const opening = contextPanelEl.hidden
+    contextPanelEl.hidden = !opening
+    contextChipEl.setAttribute('aria-expanded', String(opening))
+    // Opening is a request to see current numbers, not stale ones.
+    if (opening) probes.request('context')
+  })
 
   // --- turn lifecycle ----------------------------------------------------
 
   function onTurnEnd(ev) {
-    // If the picker requested the list (by click, or the session-start
-    // probe above), this turn's text is the answer to a bare `/model` —
-    // parse it for the current model and the option list instead of
-    // treating it as a normal reply. onText already refused to render it as
-    // a bubble, and this must not fall through to the "turn ended" system
-    // line either: it is not a conversational turn, so nothing belongs in
-    // the transcript for it (and doing so would dismiss the empty state
-    // before the user has sent anything).
-    if (awaitingModelList) {
-      awaitingModelList = false
-      const { current, available } = parseModelList(ev.text ?? '')
-      if (current) setCurrentModel(current)
-      if (available.length) showModelOptions(available)
-      endBubble()
-      currentThinkingBody = null
-      setStatus('')
-      return
-    }
+    // Which probe, if any, this turn answered. A probe's turn is not a
+    // conversational turn: onText already refused to render its output, and
+    // nothing belongs in the transcript for it either -- a "turn ended" line
+    // would dismiss the empty state before the user has sent anything.
+    const answered = probes.onTurnEnd()
     endBubble()
     currentThinkingBody = null
     setStatus('')
+
+    if (answered === 'model') {
+      const { current, available } = parseModelList(ev.text ?? '')
+      if (current) setCurrentModel(current)
+      if (available.length) showModelOptions(available)
+      return
+    }
+    if (answered === 'context') {
+      renderContext(parseContextReport(ev.text ?? ''))
+      return
+    }
+
     const cost = typeof ev.costUsd === 'number' ? ev.costUsd : 0
     appendMsg('system', `turn ended · ${ev.turns} turn(s) · $${cost.toFixed(4)}`)
+
+    // Refresh the budget after real work, while the process is idle anyway.
+    // A probe's own turn-end took one of the branches above, so this cannot
+    // recur -- that guard is the whole reason probes.js exists.
+    probes.request('context')
   }
 
   function onRateLimit(ev) {

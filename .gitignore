@@ -7,3 +7,4 @@ node_modules/
 extension/harness/shots/
 extension/harness/theme.css
 extension/harness/replay.js
+extension/harness/viewport.css

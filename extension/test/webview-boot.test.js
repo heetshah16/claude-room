@@ -17,6 +17,13 @@ const { join } = require('node:path')
 
 const CHAT = join(__dirname, '..', 'src', 'chat')
 
+/** The scripts webview.html loads, in order. `{{fooUri}}` names `foo.js`. */
+function modulesLoadedByHtml() {
+  const html = readFileSync(join(CHAT, 'webview.html'), 'utf8')
+  return [...html.matchAll(/src="\{\{(\w+)Uri\}\}"/g)]
+    .map(m => (m[1] === 'script' ? 'webview.js' : `${m[1]}.js`))
+}
+
 function fakeElement(id) {
   const listeners = new Map()
   return {
@@ -82,8 +89,11 @@ function bootWebview() {
   vm.createContext(sandbox)
 
   // Load in the same order webview.html does.
-  // The same list, and the same order, webview.html loads.
-  for (const f of ['markdown.js', 'model.js', 'icons.js', 'webview.js']) {
+  // Read out of webview.html rather than listed here, in the html's own order.
+  // A hardcoded list is wrong the moment a module is added, and the failure it
+  // produces -- "Cannot destructure property X of window.ClaudeY" -- looks like
+  // a bug in the webview rather than a stale test. That happened twice.
+  for (const f of modulesLoadedByHtml()) {
     vm.runInContext(readFileSync(join(CHAT, f), 'utf8'), sandbox, { filename: f })
   }
   return { elements, get, posted }

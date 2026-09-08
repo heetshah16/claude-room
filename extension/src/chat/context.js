@@ -68,18 +68,62 @@ const NOT_A_CATEGORY = new Set(['free space'])
  *
  * /context reports nine categories; a part-to-whole display stops being
  * readable somewhere around six colours, and VS Code ships exactly six chart
- * tokens. So related categories share a band -- see design-system.md section 7.
+ * tokens. So related categories share a band.
+ *
+ * The grouping is the question people actually ask -- how much is the system
+ * prompt, how much is tooling, how much is skills, how much is my CLAUDE.md,
+ * how much is the conversation. An earlier version put the system prompt and
+ * the system tools in one band, which drew the two of them in the same colour
+ * and erased the very distinction the panel exists to show.
  */
+const BAND_ORDER = ['prompt', 'tools', 'mcp', 'skills', 'memory', 'messages']
+
+const BAND_LABELS = {
+  prompt: 'System prompt',
+  tools: 'Tools',
+  mcp: 'MCP tools',
+  skills: 'Skills',
+  memory: 'Memory files',
+  messages: 'Messages',
+}
+
 const BANDS = {
-  'system prompt': 'system',
-  'system tools': 'system',
-  'system tools (deferred)': 'deferred',
+  'system prompt': 'prompt',
+  // Deferred tools are still tools. They keep their own row in the category
+  // table, where the exact split is what matters.
+  'system tools': 'tools',
+  'system tools (deferred)': 'tools',
   'mcp tools': 'mcp',
   skills: 'skills',
   'custom agents': 'skills',
   'memory files': 'memory',
   messages: 'messages',
   'autocompact buffer': 'messages',
+}
+
+/**
+ * Categories summed into the six drawn bands, largest first, with each band's
+ * share of everything loaded.
+ *
+ * @returns {{key: string, label: string, tokens: number, share: number}[]}
+ */
+function bandsOf(report) {
+  if (!report) return []
+  const totals = new Map()
+  for (const c of report.categories) {
+    const key = BAND_ORDER.indexOf(c.key) === -1 ? 'messages' : c.key
+    totals.set(key, (totals.get(key) || 0) + c.tokens)
+  }
+  const used = [...totals.values()].reduce((a, b) => a + b, 0) || 1
+  return BAND_ORDER
+    .filter(key => totals.get(key))
+    .map(key => ({
+      key,
+      label: BAND_LABELS[key],
+      tokens: totals.get(key),
+      share: totals.get(key) / used,
+    }))
+    .sort((a, b) => b.tokens - a.tokens)
 }
 
 /**
@@ -129,8 +173,11 @@ function parseContextReport(text) {
 const DOMINANT_SHARE = 0.35 // one block is over a third of everything loaded
 const BIG_MEMORY_FILE = 5000 // a single CLAUDE.md this large is worth trimming
 
+/** 380 -> "380", 20200 -> "20.2k", 1000000 -> "1m". */
 function fmt(n) {
-  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
+  if (n >= 1e6) return `${Number((n / 1e6).toFixed(1))}m`
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
+  return String(n)
 }
 
 /**
@@ -141,28 +188,32 @@ function fmt(n) {
  */
 function verdictFor(report) {
   if (!report) return null
-  const used = report.categories.reduce((sum, c) => sum + c.tokens, 0)
-  if (used === 0) return null
 
-  // Ranked before the largest category deliberately. "System tools are big" is
-  // true and useless -- you cannot shrink them. An oversized CLAUDE.md is
-  // something the person reading this owns and can edit today.
-  const fat = report.memoryFiles.find(f => f.tokens >= BIG_MEMORY_FILE)
+  // Ranked before the largest band deliberately. "Tools are big" is true and
+  // useless -- you cannot shrink them. An oversized CLAUDE.md is something the
+  // person reading this owns and can edit today.
+  const fat = (report.memoryFiles || []).find(f => f.tokens >= BIG_MEMORY_FILE)
   if (fat) {
     return `${fat.path} is ${fmt(fat.tokens)} on its own — trimming it frees the most context per line removed.`
   }
 
-  const biggest = report.categories.slice().sort((a, b) => b.tokens - a.tokens)[0]
-  if (biggest && biggest.tokens / used >= DOMINANT_SHARE) {
-    const share = Math.round((biggest.tokens / used) * 100)
-    return `${biggest.label} is ${fmt(biggest.tokens)} — ${share}% of everything loaded, and the largest single block.`
+  // Judged over bands, not raw categories, because bands are what the panel
+  // draws. Reasoning over categories disagreed with the bar in front of the
+  // reader: tools were plainly 64% of it while the largest single category was
+  // 33%, under the threshold, so the panel said nothing about its own biggest
+  // block.
+  const bands = bandsOf(report)
+  const biggest = bands[0] // bandsOf sorts largest first
+  if (biggest && biggest.share >= DOMINANT_SHARE) {
+    const share = Math.round(biggest.share * 100)
+    return `${biggest.label} are ${fmt(biggest.tokens)} — ${share}% of everything loaded, and the largest single block.`
   }
   return null
 }
 
 // Uniquely named, like every other chat module: browser <script> tags share one
 // global scope, so a repeated top-level const kills whichever loads later.
-const contextApi = { parseContextReport, verdictFor, BANDS }
+const contextApi = { parseContextReport, verdictFor, bandsOf, fmtTokens: fmt, BANDS, BAND_ORDER, BAND_LABELS }
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = contextApi

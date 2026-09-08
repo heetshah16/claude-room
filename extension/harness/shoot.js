@@ -18,7 +18,7 @@ const { execFile } = require('node:child_process')
 const { existsSync, mkdirSync, writeFileSync } = require('node:fs')
 const { join } = require('node:path')
 const { promisify } = require('node:util')
-const { FIXTURES, resolveTheme } = require('./fixtures.js')
+const { FIXTURES, INTERACTIONS, resolveTheme } = require('./fixtures.js')
 const { themeToCss, BUILTIN_DEFAULTS } = require('./themes.js')
 
 const run = promisify(execFile)
@@ -50,7 +50,16 @@ const THEMES = [
 
 // Wide is a full editor tab; narrow is roughly a sidebar, which is where a
 // chip row or a legend wraps badly if it is going to.
-const WIDTHS = [{ name: 'wide', px: 900 }, { name: 'narrow', px: 420 }]
+const WIDTHS = [{ name: 'wide', px: 900 }, { name: 'narrow', px: 380 }]
+
+// Chrome will not open a window narrower than about 500px -- it silently
+// clamps -- and on a display with scaling, --window-size is in device pixels
+// while layout happens in CSS pixels. Both were quietly lying: a 420px request
+// laid out at 504px and the screenshot captured the leftmost 420 of it, which
+// looks exactly like content overflowing its container.
+//
+// So CSS owns the width. The window is only ever big enough to contain it.
+const MIN_WINDOW_PX = 500
 
 function findFirst(candidates, what) {
   const found = candidates.find(p => existsSync(p))
@@ -85,14 +94,22 @@ async function main() {
       writeFileSync(
         join(HERE, 'replay.js'),
         'for (const m of ' + JSON.stringify(FIXTURES[fixture]) +
-          ") window.dispatchEvent(new MessageEvent('message', { data: m }))\n",
+          ") window.dispatchEvent(new MessageEvent('message', { data: m }))\n" +
+          // Anything that only opens on click has to be clicked, or the shot
+          // is of a collapsed panel. Real click(), so the real handler runs.
+          'for (const id of ' + JSON.stringify(INTERACTIONS[fixture] || []) +
+          ') document.getElementById(id).click()\n',
       )
       for (const width of WIDTHS) {
+        writeFileSync(join(HERE, 'viewport.css'), `html { width: ${width.px}px; }\n`)
         const out = join(outDir, `${fixture}-${theme.name}-${width.name}.png`)
         await run(chrome, [
           '--headless', '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
+          // Without this, --window-size is device pixels while layout happens
+          // in CSS pixels, so a scaled display silently renders wider than asked.
+          '--force-device-scale-factor=1',
           `--screenshot=${out}`,
-          `--window-size=${width.px},760`,
+          `--window-size=${Math.max(width.px, MIN_WINDOW_PX)},760`,
           '--virtual-time-budget=2000',
           fileUrl(join(HERE, 'index.html')),
         ])
