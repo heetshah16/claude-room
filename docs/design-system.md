@@ -366,13 +366,27 @@ deferred-tools block larger than everything else combined, a memory file over
 At turn-end only. The probe is free, but the orchestrator process serves one
 turn at a time, so a timer could collide with a message being sent.
 
-### Workers get a cruder meter, and say so
+### Workers get accurate totals but no categories
 
-OpenCode has no `/context`. Per worker we show input/output totals from its
-session message log, labelled *"estimated, from session log"*. It is coarser on
-purpose and worth having anyway: it is how you tell a worker drowning in a
-bloated brief from a model that is simply weak, and that distinction is a
-judgement about the orchestrator, not the worker.
+OpenCode has no `/context`, so the *breakdown* above cannot exist for a worker.
+The totals can, and they are exact rather than estimated — `GET /session`
+reports them per session, verified against the real binary on 2026-09-08:
+
+```json
+"tokens": { "input": 11561, "output": 836, "cache": { "read": 94336, "write": 0 } }
+```
+
+That is the same shape as the room's own `Usage`
+([`src/ledger.mjs`](../src/ledger.mjs)) minus the ephemeral-cache split, so the
+worker row reuses the same formatting and the same cache-ratio treatment rather
+than inventing a second vocabulary for the same quantity.
+
+So the worker panel shows a totals row and a cache ratio, and says plainly that
+no category split is available for this kind of seat. It is worth having: it is
+how you tell a worker drowning in a bloated brief from a model that is simply
+weak — a low cache ratio across a worker's turns points at the brief being
+rewritten each time, which is a judgement about the orchestrator, not the
+worker.
 
 ---
 
