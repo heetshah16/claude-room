@@ -54,3 +54,95 @@ test('a non-ok HTTP response becomes a readable failure, not a thrown status', (
     assert.match(r.errors[0], /503/)
   })
 })
+
+// --- publishing, and the admin surface -------------------------------------
+
+const { PUBLISHED_HOST } = require('../src/room-client.js')
+
+test('the room binds loopback unless told otherwise', () => {
+  const { opts } = roomRecipe({ repoRoot: '/repo', stateDir: '/state', port: 1234, env: {} })
+  assert.equal(opts.env.ROOM_HOST, '127.0.0.1')
+})
+
+test('publishing binds every interface, on the same port and state dir', () => {
+  // Verified against a real standalone room on 2026-09-08: same port and same
+  // state dir means the owner token and the roster both survive the restart,
+  // and 127.0.0.1 keeps serving -- so the orchestrator's MCP bridge never
+  // notices and the chat is not torn down.
+  const loopback = roomRecipe({ repoRoot: '/repo', stateDir: '/state', port: 1234, env: {} })
+  const published = roomRecipe({ repoRoot: '/repo', stateDir: '/state', port: 1234, host: PUBLISHED_HOST, env: {} })
+  assert.equal(published.opts.env.ROOM_HOST, '0.0.0.0')
+  assert.equal(published.opts.env.ROOM_PORT, loopback.opts.env.ROOM_PORT)
+  assert.equal(published.opts.env.ROOM_STATE_DIR, loopback.opts.env.ROOM_STATE_DIR)
+})
+
+test('adminState reads the roster', async () => {
+  const client = createRoomClient({
+    roomUrl: 'http://127.0.0.1:1',
+    token: 'tok',
+    fetchImpl: async url => {
+      assert.match(String(url), /\/api\/admin\/state\?token=tok/)
+      return { ok: true, json: async () => ({ ok: true, members: [{ name: 'ana', role: 'member' }] }) }
+    },
+  })
+  const state = await client.adminState()
+  assert.equal(state.members[0].name, 'ana')
+})
+
+test('adminState returns null on failure rather than a half-empty roster', async () => {
+  // A roster that renders as "nobody is here" when the call merely failed is
+  // worse than one that does not render.
+  const offline = createRoomClient({
+    roomUrl: 'http://127.0.0.1:1', token: 'tok',
+    fetchImpl: async () => { throw new Error('offline') },
+  })
+  assert.equal(await offline.adminState(), null)
+
+  const forbidden = createRoomClient({
+    roomUrl: 'http://127.0.0.1:1', token: 'tok',
+    fetchImpl: async () => ({ ok: false, status: 403, json: async () => ({}) }),
+  })
+  assert.equal(await forbidden.adminState(), null)
+})
+
+test('invite posts a name and a role and returns the join link', async () => {
+  let body = null
+  const client = createRoomClient({
+    roomUrl: 'http://127.0.0.1:1', token: 'tok',
+    fetchImpl: async (url, init) => {
+      assert.match(String(url), /\/api\/admin\/invite/)
+      body = JSON.parse(init.body)
+      return { ok: true, json: async () => ({ ok: true, joinUrl: 'http://100.1.2.3:1/?token=x' }) }
+    },
+  })
+  const r = await client.invite({ name: 'ana', role: 'member' })
+  assert.deepEqual(body, { name: 'ana', role: 'member' })
+  assert.equal(r.joinUrl, 'http://100.1.2.3:1/?token=x')
+})
+
+test('a failed admin call reports the failure instead of pretending it worked', async () => {
+  const client = createRoomClient({
+    roomUrl: 'http://127.0.0.1:1', token: 'tok',
+    fetchImpl: async () => ({ ok: false, status: 403, json: async () => ({}) }),
+  })
+  const r = await client.invite({ name: 'ana', role: 'member' })
+  assert.equal(r.ok, false)
+  assert.match(r.errors[0], /403/)
+})
+
+test('rotate and remove name the member they act on', async () => {
+  const calls = []
+  const client = createRoomClient({
+    roomUrl: 'http://127.0.0.1:1', token: 'tok',
+    fetchImpl: async (url, init) => {
+      calls.push([String(url), JSON.parse(init.body)])
+      return { ok: true, json: async () => ({ ok: true }) }
+    },
+  })
+  await client.rotate('m1')
+  await client.remove('m2')
+  assert.match(calls[0][0], /\/api\/admin\/rotate/)
+  assert.deepEqual(calls[0][1], { memberId: 'm1' })
+  assert.match(calls[1][0], /\/api\/admin\/remove/)
+  assert.deepEqual(calls[1][1], { memberId: 'm2' })
+})
