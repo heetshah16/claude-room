@@ -277,7 +277,7 @@ export function renderUI(config) {
   }
   .composer-box:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-w); }
   #text {
-    flex: 1; border: 0; background: none; resize: none; outline: none;
+    flex: 1; border: 0; background: none; resize: none;
     padding: 6px; max-height: 180px; min-height: 24px; font-size: 14px;
   }
   .composer-hint { display: flex; align-items: center; gap: var(--sp3); font: 11px/1 var(--mono); color: var(--dim); flex-wrap: wrap; }
@@ -335,7 +335,7 @@ export function renderUI(config) {
     </div>
     <span class="chip" id="state"><span class="pulse"></span><span>idle</span></span>
     <span class="chip" id="queue" hidden></span>
-    <span class="chip" id="conn">connecting</span>
+    <span class="chip" id="conn" role="status" aria-atomic="true">connecting</span>
   </header>
 
   <main>

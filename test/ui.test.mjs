@@ -170,3 +170,23 @@ test('the Agents card reads spend from the ledger id the server actually credits
   const metaText = row.children[2].textContent
   assert.match(metaText, /150/, `expected the owner's 150 tokens to show, got: ${metaText}`)
 })
+
+test('every icon-only control carries an aria-label', () => {
+  const html = renderUI({ roomName: 'r' })
+  // Any <button> whose only content is an <svg> (no text node sibling) must
+  // declare aria-label -- textContent-based buttons are exempt, they are
+  // already accessible by their own text.
+  const iconButtonRe = /<button[^>]*>\s*<svg[\s\S]*?<\/svg>\s*<\/button>/g
+  const matches = html.match(iconButtonRe) ?? []
+  for (const btn of matches) assert.match(btn, /aria-label="[^"]+"/, `icon-only button missing aria-label: ${btn.slice(0, 80)}`)
+})
+
+test('focus is never suppressed on an interactive element', () => {
+  const html = renderUI({ roomName: 'r' })
+  assert.doesNotMatch(html, /outline:\s*none/, 'a visible focus ring must never be removed, per design-system.md §3')
+})
+
+test('connection status is announced through a live region', () => {
+  const html = renderUI({ roomName: 'r' })
+  assert.match(html, /role="status"[^>]*aria-atomic="true"/, 'one atomic live region per design-system.md §3, not per-element')
+})
