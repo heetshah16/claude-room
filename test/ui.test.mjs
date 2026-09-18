@@ -171,14 +171,84 @@ test('the Agents card reads spend from the ledger id the server actually credits
   assert.match(metaText, /150/, `expected the owner's 150 tokens to show, got: ${metaText}`)
 })
 
+// Every icon the client attaches goes on via `appendChild(icon(...))` inside
+// the <script> source -- the <svg> markup never appears in the HTML string
+// renderUI() returns, only in the DOM that results once a browser runs that
+// script. So the only way to find a real icon-only button is to actually run
+// the script (against a fake DOM seeded from the page's own static markup)
+// and inspect what it built, the same technique extractRenderSeats above and
+// extension/test/webview-boot.test.js both use.
+function fakeElementFromHtml(html, id) {
+  const open = html.match(new RegExp(`<([a-zA-Z0-9]+)[^>]*\\bid="${id}"[^>]*>`))
+  const tag = open ? open[1].toLowerCase() : 'div'
+  const attrs = {}
+  if (open) for (const m of open[0].matchAll(/([a-zA-Z-]+)="([^"]*)"/g)) attrs[m[1]] = m[2]
+  let textContent = ''
+  if (open) {
+    const start = html.indexOf(open[0]) + open[0].length
+    const end = html.indexOf(`</${tag}>`, start)
+    if (end !== -1) textContent = html.slice(start, end).trim()
+  }
+  const node = {
+    tag, attrs, children: [], textContent, style: {},
+    appendChild: c => { node.children.push(c) },
+    setAttribute: (k, v) => { attrs[k] = String(v) },
+    getAttribute: k => attrs[k],
+    addEventListener: () => {},
+  }
+  return node
+}
+function plainFakeElement(tag) {
+  const node = {
+    tag, attrs: {}, children: [], textContent: '', style: {}, isSvg: true,
+    appendChild: c => { node.children.push(c) },
+    setAttribute: (k, v) => { node.attrs[k] = String(v) },
+    getAttribute: k => node.attrs[k],
+  }
+  return node
+}
+/** Runs ui.mjs's own client script to completion and returns every element
+ * the script fetched via getElementById, keyed by id. */
+function runClientScript(html) {
+  const script = html.match(/<script>([\s\S]*?)<\/script>/)[1]
+  const byId = {}
+  const context = {
+    document: {
+      getElementById: id => (byId[id] ??= fakeElementFromHtml(html, id)),
+      createElement: tag => plainFakeElement(tag),
+      createElementNS: (ns, tag) => plainFakeElement(tag),
+      querySelectorAll: () => [],
+    },
+    location: { href: 'http://localhost/room' },
+    localStorage: { getItem: () => null, setItem: () => {} },
+    URL,
+    console,
+  }
+  context.window = context
+  vm.createContext(context)
+  // With no token in the URL or localStorage, `if (token) start()` at the
+  // bottom of the script never fires, so the script runs to completion
+  // without needing fetch/EventSource -- everything up to and including the
+  // icon-attaching lines still runs unconditionally.
+  vm.runInContext(script, context)
+  return byId
+}
+
 test('every icon-only control carries an aria-label', () => {
-  const html = renderUI({ roomName: 'r' })
-  // Any <button> whose only content is an <svg> (no text node sibling) must
-  // declare aria-label -- textContent-based buttons are exempt, they are
+  const html = renderUI(loadConfig({}))
+  const byId = runClientScript(html)
+  // A button is icon-only when the script gave it an <svg> child and it has
+  // no text of its own -- textContent-based buttons are exempt, they are
   // already accessible by their own text.
-  const iconButtonRe = /<button[^>]*>\s*<svg[\s\S]*?<\/svg>\s*<\/button>/g
-  const matches = html.match(iconButtonRe) ?? []
-  for (const btn of matches) assert.match(btn, /aria-label="[^"]+"/, `icon-only button missing aria-label: ${btn.slice(0, 80)}`)
+  const iconOnlyButtons = Object.values(byId).filter(n =>
+    n.tag === 'button' && !n.textContent && n.children.some(c => c.isSvg))
+  // If this finds nothing, the harness itself is broken (this codebase does
+  // have an icon-only button, id="attach") -- fail loudly instead of passing
+  // vacuously the way the old regex-based version of this test did.
+  assert.ok(iconOnlyButtons.length > 0, 'expected to find at least one icon-only button via the real script')
+  for (const btn of iconOnlyButtons) {
+    assert.ok(btn.getAttribute('aria-label'), `icon-only <button> missing aria-label: ${JSON.stringify(btn.attrs)}`)
+  }
 })
 
 test('focus is never suppressed on an interactive element', () => {
