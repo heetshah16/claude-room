@@ -691,9 +691,10 @@ details.thinking .thinking-body {
 
 .wide-btn:disabled { opacity: 0.55; cursor: default; }
 
-/* The advertised address, shown before anything is committed: "publish" on
- * shared office wifi means something very different from "publish" on a
- * tailnet, and the address is what tells them apart. */
+/* The advertised address, shown before anything is committed: a devtunnels.ms
+   URL works for anyone with a browser, no VPN or account required on their
+   end -- unlike the tailnet address this replaced, which needed the joiner
+   on the same tailnet first. */
 .room-address {
   margin-top: 6px;
   font-family: var(--vscode-editor-font-family, monospace);

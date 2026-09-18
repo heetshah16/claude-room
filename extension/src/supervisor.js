@@ -41,6 +41,14 @@ function createSupervisor({
     // and a crash would surface as only a bare exit code with no reason.
     child.stderr?.on('data', d => log(`${name}: ${d}`))
 
+    // Bounded so a chatty child (or one left running a long time) cannot grow
+    // this without limit; devtunnel's URL line appears in its first few lines,
+    // so keeping only the tail is enough for parseTunnelUrl to find it.
+    rec.output = ''
+    child.stdout?.on('data', d => {
+      rec.output = (rec.output + d).slice(-4096)
+    })
+
     child.on('error', err => {
       rec.error = String(err?.message ?? err)
       rec.state = 'exited'
@@ -75,8 +83,8 @@ function createSupervisor({
     },
     status(name) {
       const rec = procs.get(name)
-      if (!rec) return { state: 'stopped', pid: null, error: null }
-      return { state: rec.state, pid: rec.pid, error: rec.error }
+      if (!rec) return { state: 'stopped', pid: null, error: null, output: '' }
+      return { state: rec.state, pid: rec.pid, error: rec.error, output: rec.output ?? '' }
     },
     on: (ev, cb) => bus.on(ev, cb),
   }

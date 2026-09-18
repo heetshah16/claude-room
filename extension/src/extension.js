@@ -14,6 +14,7 @@ const os = require('node:os')
 
 const { createSupervisor } = require('./supervisor.js')
 const { roomRecipe, readOwnerToken, createRoomClient, PUBLISHED_HOST } = require('./room-client.js')
+const { detectDevtunnel, tunnelRecipe, parseTunnelUrl } = require('./tunnel.js')
 const { orchestratorRecipe, bridgeMcpConfig, createOrchestrator } = require('./orchestrator.js')
 const { createEventRouter } = require('./events.js')
 const { createChatPanel } = require('./chat/panel.js')
@@ -461,12 +462,29 @@ async function openChat(context) {
   async function republish(next) {
     panel.postRoom({ busy: true, published })
     try {
-      supervisor.start('room', roomRecipe({
-        repoRoot: REPO_ROOT,
-        stateDir,
-        port,
-        host: next ? PUBLISHED_HOST : '127.0.0.1',
-      }))
+      if (next) {
+        if (!detectDevtunnel()) {
+          vscode.window.showErrorMessage(
+            'Claude Room: the devtunnel CLI is not installed. Run: winget install --id Microsoft.devtunnel -e, then devtunnel user login, then try Publish again.',
+          )
+          await postRoom({ busy: false })
+          return
+        }
+        supervisor.start('tunnel', tunnelRecipe({ port }))
+        // The CLI prints its URL once, on stdout, then keeps running -- poll the
+        // supervisor's own stdout buffer rather than re-parenting a second reader.
+        const tunnelUrl = await pollWithBackoff(() => parseTunnelUrl(supervisor.status('tunnel').output ?? ''))
+        if (!tunnelUrl) {
+          vscode.window.showErrorMessage('Claude Room: devtunnel did not report a URL within 10s. Is `devtunnel user login` done?')
+          supervisor.stop('tunnel')
+          await postRoom({ busy: false })
+          return
+        }
+        supervisor.start('room', roomRecipe({ repoRoot: REPO_ROOT, stateDir, port, host: PUBLISHED_HOST, advertise: tunnelUrl }))
+      } else {
+        supervisor.stop('tunnel')
+        supervisor.start('room', roomRecipe({ repoRoot: REPO_ROOT, stateDir, port, host: '127.0.0.1' }))
+      }
       await waitForRoomUp(roomUrl)
       published = next
     } catch (err) {

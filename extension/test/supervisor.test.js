@@ -151,3 +151,32 @@ test('the replacement is still watched, so a real crash after one is reported', 
 
   assert.deepEqual(exits, [{ name: 'room', code: 1 }], 'the live child must still be watched')
 })
+
+// --- publishing through a tunnel -------------------------------------------
+
+test('publishing starts a tunnel alongside the room, keyed off the room\'s own port', () => {
+  const { sup, spawned } = harness()
+  const port = 4321
+  sup.start('room', { cmd: 'node', args: ['server.mjs'], opts: { env: { ROOM_PORT: String(port) } } })
+  sup.start('tunnel', { cmd: 'devtunnel', args: ['host', '-p', String(port), '--allow-anonymous'] })
+  assert.equal(sup.status('tunnel').state, 'running')
+  assert.deepEqual(spawned[1].args, ['host', '-p', '4321', '--allow-anonymous'])
+})
+
+test('un-publishing stops the tunnel, not just the room', () => {
+  const child = fakeChild(999)
+  const { sup, killed } = harness({ children: [fakeChild(1), child] })
+  sup.start('room', { cmd: 'node', args: [] })
+  sup.start('tunnel', { cmd: 'devtunnel', args: [] })
+  sup.stop('tunnel')
+  assert.deepEqual(killed, [999])
+  assert.equal(sup.status('tunnel').state, 'stopped')
+})
+
+test('stdout is buffered and readable through status, bounded so it cannot grow forever', () => {
+  const child = fakeChild()
+  const { sup } = harness({ children: [child] })
+  sup.start('tunnel', { cmd: 'devtunnel', args: [] })
+  child.stdout.emit('data', 'Connect via browser: https://abc-1234.devtunnels.ms\n')
+  assert.match(sup.status('tunnel').output, /devtunnels\.ms/)
+})

@@ -21,7 +21,7 @@ const { join } = require('node:path')
  */
 const PUBLISHED_HOST = '0.0.0.0'
 
-function roomRecipe({ repoRoot, stateDir, port, host = '127.0.0.1', nodePath = process.execPath, env = process.env }) {
+function roomRecipe({ repoRoot, stateDir, port, host = '127.0.0.1', advertise, nodePath = process.execPath, env = process.env }) {
   return {
     cmd: nodePath,
     args: [join(repoRoot, 'src', 'server.mjs')],
@@ -33,6 +33,10 @@ function roomRecipe({ repoRoot, stateDir, port, host = '127.0.0.1', nodePath = p
         ROOM_PORT: String(port),
         ROOM_HOST: host,
         ROOM_STATE_DIR: stateDir,
+        // Only set when publishing via a tunnel -- omitted entirely (not set to
+        // undefined) so the room's own advertiseHost() autodetection still runs
+        // for the plain-LAN/Tailscale case, unchanged from before this task.
+        ...(advertise ? { ROOM_ADVERTISE: advertise } : {}),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     },

@@ -605,7 +605,7 @@
     // ADDRESS. Putting the address in both read as two different facts.
     roomStateEl.textContent = room.busy ? 'restarting…' : room.published ? 'published' : 'local only'
 
-    publishBtnEl.textContent = room.published ? 'Make local again' : 'Publish to this network'
+    publishBtnEl.textContent = room.published ? 'Stop sharing' : 'Publish with Dev Tunnels'
     publishBtnEl.disabled = room.busy
 
     // The address is the whole decision: "publish" on shared office wifi means

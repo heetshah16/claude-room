@@ -76,6 +76,16 @@ test('publishing binds every interface, on the same port and state dir', () => {
   assert.equal(published.opts.env.ROOM_STATE_DIR, loopback.opts.env.ROOM_STATE_DIR)
 })
 
+test('an explicit advertise host overrides autodetection', () => {
+  const r = roomRecipe({ repoRoot: '/repo', stateDir: '/state', port: 1234, host: '0.0.0.0', advertise: 'https://abc-1234.devtunnels.ms' })
+  assert.equal(r.opts.env.ROOM_ADVERTISE, 'https://abc-1234.devtunnels.ms')
+})
+
+test('no advertise option leaves ROOM_ADVERTISE unset, so the room autodetects as before', () => {
+  const r = roomRecipe({ repoRoot: '/repo', stateDir: '/state', port: 1234 })
+  assert.equal('ROOM_ADVERTISE' in r.opts.env, false)
+})
+
 test('adminState reads the roster', async () => {
   const client = createRoomClient({
     roomUrl: 'http://127.0.0.1:1',
