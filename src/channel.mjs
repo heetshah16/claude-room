@@ -172,9 +172,15 @@ const TOOLS = [
       required: ['to', 'class', 'task'],
     },
   },
+  {
+    name: 'list_workers',
+    description:
+      'See which worker seats are online right now and whether each is currently busy with a turn. Use this before delegating, or to check on work you already handed off, without waiting for it to report back.',
+    inputSchema: { type: 'object', properties: {} },
+  },
 ]
 
-export function createChannel({ config, onReply, onDecision, onDelegate }) {
+export function createChannel({ config, onReply, onDecision, onDelegate, onListWorkers }) {
   const mcp = new Server(
     { name: 'room', version: '0.1.0' },
     {
@@ -215,6 +221,10 @@ export function createChannel({ config, onReply, onDecision, onDelegate }) {
         }
       }
       return { content: [{ type: 'text', text: `delegated ${result.id} to ${a.to}` }] }
+    }
+    if (name === 'list_workers') {
+      const workers = onListWorkers?.() ?? []
+      return { content: [{ type: 'text', text: JSON.stringify({ workers }) }] }
     }
     return { content: [{ type: 'text', text: `unknown tool: ${name}` }], isError: true }
   }

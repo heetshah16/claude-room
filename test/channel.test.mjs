@@ -130,3 +130,26 @@ test('an unrelated notification does not reach the permission callback', async (
   await ch.mcp.fallbackNotificationHandler({ method: 'notifications/something/else', params: {} })
   assert.equal(seen.length, 0)
 })
+
+test('list_workers reports online seats and whether each is busy', async () => {
+  const ch = createChannel({
+    config: { roomName: 'r', permissionRelay: false },
+    onReply() {}, onDecision() {},
+    onListWorkers: () => [{ handle: 'opencode', busy: true }, { handle: 'ana-agent', busy: false }],
+  })
+  const result = await ch.callTool('list_workers', {})
+  const parsed = JSON.parse(result.content[0].text)
+  assert.deepEqual(parsed.workers, [{ handle: 'opencode', busy: true }, { handle: 'ana-agent', busy: false }])
+})
+
+test('list_workers with no seats online reports an empty list, not an error', async () => {
+  const ch = createChannel({ config: { roomName: 'r', permissionRelay: false }, onReply() {}, onDecision() {}, onListWorkers: () => [] })
+  const result = await ch.callTool('list_workers', {})
+  assert.deepEqual(JSON.parse(result.content[0].text).workers, [])
+})
+
+test('list_workers is listed alongside delegate, room_reply and room_decision', async () => {
+  const ch = createChannel({ config: { roomName: 'r', permissionRelay: false }, onReply() {}, onDecision() {} })
+  const tools = (await ch.listTools()).map(t => t.name)
+  assert.ok(tools.includes('list_workers'))
+})

@@ -117,6 +117,7 @@ const channel = createChannel({
     return d
   },
   onDelegate: input => delegator.delegate(input),
+  onListWorkers: () => seats.online().map(s => ({ handle: s.handle, busy: queue.busy(s.handle) })),
 })
 
 if (config.permissionRelay) {
