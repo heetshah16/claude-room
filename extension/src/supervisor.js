@@ -37,6 +37,10 @@ function createSupervisor({
     const rec = { child, state: 'running', error: null, pid: child.pid, stopping: false, order: order++ }
     procs.set(name, rec)
 
+    // Nothing else reads stderr, so an unread pipe would otherwise sit full
+    // and a crash would surface as only a bare exit code with no reason.
+    child.stderr?.on('data', d => log(`${name}: ${d}`))
+
     child.on('error', err => {
       rec.error = String(err?.message ?? err)
       rec.state = 'exited'
