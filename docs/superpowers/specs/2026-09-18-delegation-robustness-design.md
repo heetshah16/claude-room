@@ -65,6 +65,13 @@ spawn_worker({ model?: string }) -> { ok: true, handle: string } | { ok: false, 
   extension has one) so a self-spawned worker can be tracked and torn down
   cleanly. Ports the ~40-line pattern from `extension/src/supervisor.js` to
   ESM rather than inventing a different shape.
+- **HTTP mirror and stop.** The same logic is exposed as `POST
+  /api/spawn-worker` and `POST /api/stop-worker` (owner-authenticated, the
+  same pattern as `POST /api/delegate` mirroring the `delegate` tool), so
+  the extension, which may run a standalone room with no channel session,
+  can add and stop workers through the room instead of spawning them
+  itself. The room becomes the sole owner of worker processes; spec #3
+  removes the extension's duplicate spawn logic.
 - **No cap on concurrent self-spawned workers**, by explicit decision made
   during brainstorming: OpenCode's free tier makes token cost a non-issue,
   so this is a judgment call for the orchestrator (taught in spec #1's
