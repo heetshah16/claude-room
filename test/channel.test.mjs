@@ -153,3 +153,51 @@ test('list_workers is listed alongside delegate, room_reply and room_decision', 
   const tools = (await ch.listTools()).map(t => t.name)
   assert.ok(tools.includes('list_workers'))
 })
+
+test('spawn_worker hands back the new handle as JSON, so it can be addressed at once', async () => {
+  const seen = []
+  const ch = createChannel({
+    config: { roomName: 'r', permissionRelay: false },
+    onReply() {}, onDecision() {},
+    onSpawnWorker: async a => { seen.push(a); return { ok: true, handle: 'worker-1' } },
+  })
+  const result = await ch.callTool('spawn_worker', { model: 'opencode/x' })
+  assert.deepEqual(JSON.parse(result.content[0].text), { ok: true, handle: 'worker-1' })
+  assert.equal(result.isError, undefined)
+  assert.deepEqual(seen, [{ model: 'opencode/x' }])
+})
+
+test('spawn_worker with no model asks for none, so the launcher\'s own default wins', async () => {
+  const seen = []
+  const ch = createChannel({
+    config: { roomName: 'r', permissionRelay: false },
+    onReply() {}, onDecision() {},
+    onSpawnWorker: async a => { seen.push(a); return { ok: true, handle: 'worker-1' } },
+  })
+  await ch.callTool('spawn_worker', {})
+  assert.equal(seen[0].model, null)
+})
+
+test('a refused spawn names the reason, because an orchestrator told only "failed" cannot react', async () => {
+  const ch = createChannel({
+    config: { roomName: 'r', permissionRelay: false },
+    onReply() {}, onDecision() {},
+    onSpawnWorker: async () => ({ ok: false, errors: ['this room has no owner to charge a worker to'] }),
+  })
+  const result = await ch.callTool('spawn_worker', {})
+  assert.equal(result.isError, true)
+  assert.match(result.content[0].text, /no owner/)
+})
+
+test('spawn_worker in a room with no fleet says so rather than reporting a handle it never made', async () => {
+  const ch = createChannel({ config: { roomName: 'r', permissionRelay: false }, onReply() {}, onDecision() {} })
+  const result = await ch.callTool('spawn_worker', {})
+  assert.equal(result.isError, true)
+  assert.match(result.content[0].text, /not enabled/)
+})
+
+test('spawn_worker is listed alongside delegate, list_workers, room_reply and room_decision', async () => {
+  const ch = createChannel({ config: { roomName: 'r', permissionRelay: false }, onReply() {}, onDecision() {} })
+  const tools = (await ch.listTools()).map(t => t.name)
+  assert.deepEqual(tools.sort(), ['delegate', 'list_workers', 'room_decision', 'room_reply', 'spawn_worker'])
+})

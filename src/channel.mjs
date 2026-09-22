@@ -178,9 +178,20 @@ const TOOLS = [
       'See which worker seats are online right now and whether each is currently busy with a turn. Use this before delegating, or to check on work you already handed off, without waiting for it to report back.',
     inputSchema: { type: 'object', properties: {} },
   },
+  {
+    name: 'spawn_worker',
+    description:
+      'Start a new OpenCode worker seat in this room and get its @handle back. The worker accepts delegated work immediately; it takes a few seconds to come online, which list_workers reports. Use it when the work in front of you splits into parts that do not need this session.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        model: { type: 'string', description: 'Optional provider/model for this worker, e.g. opencode/mimo-v2.5-free' },
+      },
+    },
+  },
 ]
 
-export function createChannel({ config, onReply, onDecision, onDelegate, onListWorkers }) {
+export function createChannel({ config, onReply, onDecision, onDelegate, onListWorkers, onSpawnWorker }) {
   const mcp = new Server(
     { name: 'room', version: '0.1.0' },
     {
@@ -225,6 +236,21 @@ export function createChannel({ config, onReply, onDecision, onDelegate, onListW
     if (name === 'list_workers') {
       const workers = onListWorkers?.() ?? []
       return { content: [{ type: 'text', text: JSON.stringify({ workers }) }] }
+    }
+    if (name === 'spawn_worker') {
+      // Awaited: spawning mints a seat and launches a process, so unlike
+      // delegate there is no synchronous answer to hand back.
+      const result = (await onSpawnWorker?.({ model: a.model ? String(a.model) : null }))
+        ?? { ok: false, errors: ['spawning workers is not enabled in this room'] }
+      if (!result.ok) {
+        // Specific, like a rejected brief: an orchestrator told only "failed"
+        // cannot tell a missing binary from a room with no owner.
+        return {
+          content: [{ type: 'text', text: `spawn_worker failed:\n- ${(result.errors ?? []).join('\n- ')}` }],
+          isError: true,
+        }
+      }
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, handle: result.handle }) }] }
     }
     return { content: [{ type: 'text', text: `unknown tool: ${name}` }], isError: true }
   }
