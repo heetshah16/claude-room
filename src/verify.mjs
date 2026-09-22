@@ -70,23 +70,15 @@ export function splitCommand(line) {
  * The last `max` BYTES of a string.
  *
  * `String.slice(-n)` counts UTF-16 code units, so a suite printing CJK or
- * emoji would blow a byte budget silently. A cut can land mid-character; the
- * leading replacement character it produces is dropped rather than shipped.
+ * emoji would blow a byte budget silently. A cut can land mid-character; all
+ * leading replacement characters produced by the boundary cut are stripped
+ * rather than shipped, preserving genuine tail content.
  */
 export function truncateTail(s, max = MAX_OUTPUT) {
   const str = String(s ?? '')
   const buf = Buffer.from(str, 'utf8')
   if (buf.length <= max) return str
-  let result = buf.subarray(buf.length - max).toString('utf8').replace(/^�/, '')
-
-  // Trim from the end if necessary to ensure byte length <= max.
-  // Truncating at arbitrary byte boundaries can introduce replacement characters
-  // (3 bytes each), which might exceed the max even after removing the leading one.
-  while (Buffer.byteLength(result) > max && result.length > 0) {
-    result = result.slice(0, -1)
-  }
-
-  return result
+  return buf.subarray(buf.length - max).toString('utf8').replace(/^�+/, '')
 }
 
 /** One command. Resolves with how it went; never rejects. */

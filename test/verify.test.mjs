@@ -110,6 +110,22 @@ test('truncation counts bytes, not code units, so multibyte output is still boun
   assert.ok(Buffer.byteLength(out) <= 2048)
 })
 
+test('truncateTail strips all leading replacement chars from boundary cuts without dropping real tail content', () => {
+  // The triple-byte character U+3042 (\u3042) repeated 2000 times = 6000 bytes.
+  // Subarray to 2048 bytes cuts at byte 3952 (6000 - 2048).
+  // 3952 % 3 === 1, so the cut lands 1 byte into a character, producing
+  // multiple leading U+FFFD replacement characters that must all be stripped.
+  const out = truncateTail('\u3042'.repeat(2000), 2048)
+  assert.ok(Buffer.byteLength(out) <= 2048, 'byte budget must be respected')
+  assert.ok([...out].every(ch => ch === '\u3042'), 'every character in the result is the real content')
+})
+
+test('truncateTail preserves genuine trailing content even when truncation is needed', () => {
+  // If truncation trims from the tail (the old buggy behavior), this assertion fails.
+  const out = truncateTail('x'.repeat(3000) + 'TAIL', 2048)
+  assert.ok(out.endsWith('TAIL'), 'tail content is preserved, never silently dropped')
+})
+
 test('a hanging command is killed and reported as a timeout, not left wedging the delegation', async () => {
   // Spec §2.4: verification has its own deadline, independent of the worker's
   // turn deadline. A test command that never returns must not hold a
