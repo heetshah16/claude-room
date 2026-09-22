@@ -123,11 +123,38 @@ export function renderDelegation({ task, class: cls, spec = {} }) {
  * unreachable from a test. The wiring it needs (`queue`, `store`, `bus`,
  * `channel`, `drain`) is injected for the same reason.
  */
+/**
+ * One line of evidence for a verification run, for the meta field.
+ *
+ * The output is already bounded to 2048 bytes by src/verify.mjs; a timeout has
+ * no exit code to quote, so it says so rather than printing `exit null`.
+ */
+export const summarizeVerification = v =>
+  !v?.ran
+    ? 'no tests to run'
+    : `${v.timedOut ? 'timed out' : `exit ${v.exitCode}`}${v.output ? `\n${v.output}` : ''}`
+
 export function createDelegator({
   queue, store, bus, channel, drain, orchestrator,
+  // Runs a finished delegation's own spec.tests in the worker's worktree and
+  // resolves with src/verify.mjs's verifyDelegation shape. Injected and
+  // optional: with nothing supplied this module behaves exactly as it did
+  // before verification existed, which is what a room (or a test) that has no
+  // worktrees to check needs.
+  verify = null,
   pending = new PendingDelegations(),
   now = Date.now,
 }) {
+  /**
+   * The one place a finished delegation is reported. With `extra` empty this is
+   * byte-identical to what this module has always published.
+   */
+  const report = (record, handle, text, extra = {}) => {
+    const nt = channel.notifyDelegationResult({ ...record, handle, text, ...extra })
+    bus.publish('delegation', { ...record, to: handle, state: 'done', text, ...extra })
+    return nt
+  }
+
   return {
     pending,
 
@@ -191,22 +218,51 @@ export function createDelegator({
      * something else and drained into a single batch — and answering only the
      * first would orphan the second in precisely the way keying by handle did.
      *
-     * @returns {object[]} one notification per delegation answered; empty when
-     *   this reply answers no delegation at all.
+     * @returns {object[]} one notification per delegation answered synchronously;
+     *   empty when this reply answers no delegation, and also empty for an
+     *   execution delegation whose verification is still running — that one
+     *   arrives on the channel when the tests finish.
      */
     onSeatReply(handle, text) {
       const turn = queue?.inflightFor?.(handle)
       const results = []
       for (const m of turn?.messages ?? []) {
         if (m.kind !== 'delegation') continue
+        // Taken synchronously whatever happens next: a delegation is answered
+        // exactly once, and a verification that takes two minutes must not
+        // leave a window where the seat's next reply answers it again.
         const record = pending.take(m.id)
         if (!record) continue
-        results.push(channel.notifyDelegationResult({ ...record, handle, text }))
-        // `text` travels here too, not just to the local channel above: this
-        // is the only event the extension's SSE feed ever sees for a
-        // finished delegation, and without the seat's actual words on it the
-        // relay to the orchestrator reads literally as "undefined".
-        bus.publish('delegation', { ...record, to: handle, state: 'done', text })
+
+        if (!verify) {
+          results.push(report(record, handle, text))
+          continue
+        }
+        if (record.class !== 'execution') {
+          // reasoning/verification briefs carry no spec.tests — there is
+          // nothing mechanical to check, and saying so is not the same as
+          // saying the work failed.
+          results.push(report(record, handle, text, { verified: 'none' }))
+          continue
+        }
+
+        // Verification spawns a real test command, so it cannot be awaited
+        // here: this runs inside POST /seat/reply (src/web.mjs:681), which has
+        // to answer the seat at once. The result is delivered on the channel
+        // when it settles, which is the same shape the orchestrator already
+        // handles — a delegation-result arriving minutes after the call.
+        void Promise.resolve(verify(record, handle))
+          .then(v => report(record, handle, text, {
+            verified: v.ran ? (v.ok ? 'true' : 'false') : 'none',
+            verification: summarizeVerification(v),
+          }))
+          .catch(err => report(record, handle, text, {
+            // A verification that could not run is not a pass. Reporting it as
+            // one would be the exact failure this feature exists to prevent,
+            // arriving through the room's own door instead of the worker's.
+            verified: 'false',
+            verification: `verification could not run: ${String(err?.message ?? err)}`,
+          }))
       }
       return results
     },

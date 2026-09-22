@@ -103,6 +103,14 @@ export function buildDelegationResultNotification(result = {}, { roomName } = {}
     // not start doing so here.
     class: result.class,
     task: result.task,
+    // What the room MEASURED, beside what the worker SAID. "true"/"false" when
+    // the delegation's own tests were run, "none" when the class had none to
+    // run. Absent when the room did not check at all, which sanitizeMeta drops
+    // for us — so every consumer written before this keeps working unchanged.
+    verified: result.verified ?? null,
+    verification: result.verification ?? null,
+    // Why a turn ended without a reply, on the abandoned path only.
+    reason: result.reason ?? null,
   })
 }
 
