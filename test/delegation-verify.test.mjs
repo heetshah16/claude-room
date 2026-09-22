@@ -195,3 +195,74 @@ test('an unverified result omits the fields entirely, so existing consumers are 
   assert.equal('verified' in nt.params.meta, false)
   assert.equal('verification' in nt.params.meta, false)
 })
+
+const abandonedEvents = published =>
+  published.filter(([e, x]) => e === 'delegation' && x.state === 'abandoned').map(([, x]) => x)
+
+test('a worker that did the work but never replied is reported as likely succeeded', async () => {
+  // Observed for real in docs/opencode-seat.md: the model completed a genuine
+  // edit and simply never called room_reply. Reported as a bare abandonment,
+  // the orchestrator re-delegates work that is already done.
+  const { d, queue, published, notified } = delegator(async () => PASSED)
+  d.delegate({ ...EXEC, to: '@worker-1' })
+  const turn = queue.beginTurn()
+  d.onTurnAbandoned('worker-1', turn, 'seat-disconnected')
+  await waitUntil(() => abandonedEvents(published).length === 1)
+
+  const [event] = abandonedEvents(published)
+  assert.equal(event.likelySucceeded, true)
+  assert.equal(event.verified, 'true')
+  assert.equal(event.reason, 'seat-disconnected')
+
+  await waitUntil(() => notified.length === 1)
+  assert.equal(notified[0].verified, 'true')
+  assert.match(notified[0].text, /never reported back/, 'the orchestrator only ever reads the channel')
+  assert.equal(notified[0].reason, 'seat-disconnected')
+})
+
+test('a real abandonment is still a real abandonment when the tests do not pass', async () => {
+  const { d, queue, published, notified } = delegator(async () => FAILED)
+  d.delegate({ ...EXEC, to: '@worker-1' })
+  const turn = queue.beginTurn()
+  d.onTurnAbandoned('worker-1', turn, 'no-response')
+  await waitUntil(() => abandonedEvents(published).length === 1)
+
+  const [event] = abandonedEvents(published)
+  assert.equal(event.likelySucceeded, undefined, 'nothing may claim success here')
+  assert.equal(event.verified, 'false')
+  assert.deepEqual(notified, [], 'and there is no result to hand back — there is no result')
+})
+
+test('an abandoned reasoning delegation is reported exactly as it is today', async () => {
+  // No spec.tests means unavoidably unknown. Inventing an answer would be
+  // worse than the silence.
+  const calls = []
+  const { d, queue, published } = delegator(async () => { calls.push(1); return PASSED })
+  d.delegate({ ...REASONING, to: '@worker-1' })
+  const turn = queue.beginTurn()
+  d.onTurnAbandoned('worker-1', turn, 'no-response')
+
+  const [event] = abandonedEvents(published)
+  assert.equal(event.reason, 'no-response')
+  assert.equal(event.likelySucceeded, undefined)
+  assert.deepEqual(calls, [])
+})
+
+test('an abandoned delegation is released from pending whether or not it is verified', async () => {
+  // Left behind, a stale record is worse than a leak: the seat's next
+  // unrelated reply would come back as this dead delegation's result.
+  const { d, queue } = delegator(async () => PASSED)
+  d.delegate({ ...EXEC, to: '@worker-1' })
+  const turn = queue.beginTurn()
+  d.onTurnAbandoned('worker-1', turn, 'seat-disconnected')
+  assert.equal(d.pending.size, 0, 'released synchronously, before any test has run')
+})
+
+test('a verification that throws on the abandoned path still reports the abandonment', async () => {
+  const { d, queue, published } = delegator(async () => { throw new Error('worktree is gone') })
+  d.delegate({ ...EXEC, to: '@worker-1' })
+  const turn = queue.beginTurn()
+  d.onTurnAbandoned('worker-1', turn, 'no-response')
+  await waitUntil(() => abandonedEvents(published).length === 1)
+  assert.equal(abandonedEvents(published)[0].likelySucceeded, undefined)
+})

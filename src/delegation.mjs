@@ -282,7 +282,47 @@ export function createDelegator({
       for (const m of turn?.messages ?? []) {
         if (m.kind !== 'delegation') continue
         const record = pending.take(m.id)
-        if (record) bus.publish('delegation', { ...record, to: dest, state: 'abandoned', reason })
+        if (!record) continue
+
+        const abandon = extra => bus.publish('delegation', { ...record, to: dest, state: 'abandoned', reason, ...extra })
+
+        if (!verify || record.class !== 'execution') {
+          // Nothing mechanical to check: unavoidably unknown, reported as it
+          // always has been. Inventing an outcome would be worse than silence.
+          abandon({})
+          continue
+        }
+
+        // Silence is not the same as failure. A worker that did the work and
+        // simply never called room_reply has happened for real in this project
+        // (docs/opencode-seat.md), and the thing it produced is sitting in the
+        // worktree either way — so look before concluding.
+        void Promise.resolve(verify(record, dest))
+          .then(v => {
+            const likelySucceeded = v.ran && v.ok === true
+            abandon({
+              verified: v.ran ? (v.ok ? 'true' : 'false') : 'none',
+              verification: summarizeVerification(v),
+              ...(likelySucceeded ? { likelySucceeded: true } : {}),
+            })
+            if (!likelySucceeded) return
+            // The orchestrator only ever reads the channel — the bus event
+            // above reaches browsers and the extension, and nothing else. A
+            // genuinely-completed piece of work would otherwise be
+            // re-delegated because the only party who could use it never hears.
+            //
+            // The content here is the ROOM's sentence, not a worker's: there
+            // are no words to carry verbatim, because none were ever sent.
+            channel.notifyDelegationResult({
+              ...record,
+              handle: dest,
+              reason,
+              text: `@${dest} never reported back, but the room ran this delegation's own tests in its worktree and they pass. The work is likely done — check ${record.spec?.files?.join(', ') || 'the worktree'} rather than delegating it again.`,
+              verified: 'true',
+              verification: summarizeVerification(v),
+            })
+          })
+          .catch(() => abandon({}))
       }
     },
   }
