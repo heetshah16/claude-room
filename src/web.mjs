@@ -89,6 +89,13 @@ export function createWeb(deps) {
     // lives in src/delegation.mjs and is wired in server.mjs, same reason
     // onSeatReply/onTurnAbandoned are callbacks rather than imports here.
     onDelegate,
+    // The fleet's two entry points, mirrored from the channel's spawn_worker
+    // the same way onDelegate mirrors the delegate tool. The fleet itself
+    // lives in src/workers.mjs and is wired in server.mjs — this module must
+    // not know who owns a worker process, exactly as it must not know who
+    // tracks a delegation.
+    onSpawnWorker,
+    onStopWorker,
   } = deps
 
   // Address seen per member, so a ban can cover the device as well as the name.
@@ -441,6 +448,27 @@ export function createWeb(deps) {
         // The verdict travels verbatim - it names the missing spec field, and
         // an orchestrator told only "rejected" cannot repair the brief.
         return json(res, 200, onDelegate?.(body) ?? { ok: false, errors: ['delegation is not enabled'] })
+      }
+
+      if (req.method === 'POST' && (path === '/api/spawn-worker' || path === '/api/stop-worker')) {
+        const member = memberFrom(req, url, null)
+        if (!member) return json(res, 401, { error: 'bad token' })
+        // Starting a worker puts a process and a git worktree on the host, and
+        // stopping one kills work that may be in flight. Both are owner
+        // actions, exactly like delegating onto somebody's seat.
+        if (member.role !== 'owner') return json(res, 403, { error: 'owner-only' })
+        let body = {}
+        try {
+          const read = await readBody(req)
+          if (read.tooLarge) return json(res, 413, { error: 'body too large' })
+          body = JSON.parse(read.buf.toString('utf8') || '{}')
+        } catch {
+          return json(res, 400, { error: 'bad json' })
+        }
+        const fn = path === '/api/spawn-worker' ? onSpawnWorker : onStopWorker
+        // The verdict travels verbatim, same as a delegate rejection: "failed"
+        // alone leaves the caller with nothing to act on.
+        return json(res, 200, (await fn?.(body)) ?? { ok: false, errors: ['worker spawning is not enabled in this room'] })
       }
 
       if (req.method === 'POST' && path === '/msg') {
