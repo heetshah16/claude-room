@@ -28,6 +28,8 @@ import { Observer } from './observer.mjs'
 import { makeRunner } from './run-model.mjs'
 import { createAdmin } from './admin.mjs'
 import { createDelegator } from './delegation.mjs'
+import { createWorkerFleet, worktreeFor } from './workers.mjs'
+import { verifyDelegation } from './verify.mjs'
 
 const log = s => process.stderr.write(`room: ${s}\n`)
 const standalone = process.env.ROOM_STANDALONE === '1'
@@ -98,6 +100,12 @@ if (config.payerMode === 'rotate') {
 // both exist; the channel only ever reaches it at runtime, long after that.
 let delegator = null
 
+// The fleet needs the room's own URL, and with ROOM_PORT=0 the port is not
+// known until the socket is bound — so, for the same reason and in the same
+// shape as `delegator` above, it is declared here and assigned in listen().
+let fleet = null
+const noFleet = { ok: false, errors: ['the room is not listening yet'] }
+
 const channel = createChannel({
   config,
   onReply(text, to) {
@@ -118,6 +126,7 @@ const channel = createChannel({
   },
   onDelegate: input => delegator.delegate(input),
   onListWorkers: () => seats.online().map(s => ({ handle: s.handle, busy: queue.busy(s.handle) })),
+  onSpawnWorker: a => (fleet ? fleet.spawn({ model: a?.model ?? null }) : noFleet),
 })
 
 if (config.permissionRelay) {
@@ -190,16 +199,48 @@ const web = createWeb({
   // The orchestrator's HTTP entry point, mirrored from the MCP-side wiring
   // above (channel's onDelegate): same delegator, same delegate() call.
   onDelegate: input => delegator.delegate(input),
+  // The same fleet the spawn_worker tool reaches, over HTTP — for the
+  // extension, which may drive a standalone room with no channel session.
+  onSpawnWorker: body => (fleet ? fleet.spawn({ model: body?.model ?? null }) : noFleet),
+  onStopWorker: body => (fleet ? fleet.stop(String(body?.handle ?? '')) : noFleet),
 })
 
 delegator = createDelegator({
   queue, store, bus, channel, orchestrator: ORCHESTRATOR, drain: () => web.drain(),
+  // Spec §2: a finished execution delegation is checked by re-running the
+  // orchestrator's own spec.tests in the seat's worktree. Every OpenCode and
+  // Claude seat launcher puts its worktree in the same place, so this is the
+  // right directory for a hand-minted seat as much as a self-spawned one.
+  verify: (record, handle) => verifyDelegation({
+    tests: record.spec?.tests,
+    cwd: worktreeFor(config.repoRoot, handle),
+    timeoutMs: config.verifyTimeoutMs,
+  }),
 })
 
 web.listen(config.port, config.host, () => {
   // Report the port actually bound, not the one requested — with ROOM_PORT=0
   // the OS chooses, and callers need to know which.
   config.port = web.address().port
+
+  // Built here, not above: the fleet hands each worker the room's URL, and
+  // with ROOM_PORT=0 that URL does not exist until this moment.
+  //
+  // Loopback, not config.advertise: a worker is always a local child process
+  // on this same machine, never a remote one, so it should reach the room the
+  // way every other local-only reference already does — extension.js's own
+  // roomUrl for its worker pool is hardcoded to 127.0.0.1 for exactly this
+  // reason. config.advertise exists for join links a browser opens from
+  // somewhere else, which is a different question with a different answer;
+  // using it here would make a self-spawned worker's own connection depend on
+  // whatever the room happens to be published as, for no benefit.
+  fleet = createWorkerFleet({
+    registry, seats, config, store, bus,
+    repoRoot: config.repoRoot,
+    roomUrl: `http://127.0.0.1:${config.port}`,
+    log,
+  })
+
   log(`listening on http://${config.host}:${config.port} (${registry.all().length} member(s))`)
   if (config.host === '127.0.0.1') log('bound to loopback — set ROOM_HOST to your Tailscale address to let teammates in')
 
@@ -211,6 +252,16 @@ web.listen(config.port, config.host, () => {
 })
 
 web.on('error', err => log(`http error: ${err.message}`))
+
+// The room owns its workers' processes now, so it owns reaping them. Without
+// this, Ctrl-C leaves an `opencode serve` per worker holding a port and a
+// worktree — the exact stray-process hunt the tree kill exists to prevent.
+const shutdown = () => {
+  try { fleet?.stopAll() } catch { /* shutdown must never hang or throw */ }
+  process.exit(0)
+}
+process.on('SIGINT', shutdown)
+process.on('SIGTERM', shutdown)
 
 // Embedded mode: connect the MCP stdio transport, same as always. Standalone
 // mode has no stdio peer to connect to — the HTTP server above is already

@@ -68,6 +68,18 @@ export function loadConfig(env = process.env) {
     // idle seat feeds, and under the 60s idle cut common in reverse proxies.
     // Tunable because anything sitting in front of the room may be stricter.
     keepaliveMs: int(env.ROOM_KEEPALIVE_MS, 25_000),
+    // The repo a self-spawned worker gets its git worktree in, and the
+    // directory the launcher runs from. The room is normally started from the
+    // repo being worked on; ROOM_REPO is for when it is not — the room's own
+    // checkout and the work's checkout are not always the same tree.
+    repoRoot: env.ROOM_REPO || process.cwd(),
+    // Verification's own deadline (spec §2.4), deliberately independent of a
+    // worker's turn deadline: a hanging test command must not wedge a
+    // delegation forever, and the worker's number does not bound the room's.
+    verifyTimeoutMs: int(env.ROOM_VERIFY_TIMEOUT_MS, 120_000),
+    // Model for self-spawned workers. Null lets the launcher's own default
+    // win rather than silently pinning whatever it happens to be today.
+    workerModel: env.ROOM_WORKER_MODEL || null,
     payerMode: oneOf(env.ROOM_PAYER_MODE, ['host', 'rotate'], 'host'),
     permissionRelay: bool(env.ROOM_PERMISSION_RELAY),
     splitMode: oneOf(env.ROOM_SPLIT_MODE, ['equal', 'weighted'], 'equal'),

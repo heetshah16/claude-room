@@ -72,3 +72,20 @@ test('with no tailnet, a LAN address is advertised; with nothing, loopback', () 
 test('ROOM_ADVERTISE overrides detection', () => {
   assert.equal(loadConfig({ ROOM_ADVERTISE: 'room.tailnet.ts.net' }).advertise, 'room.tailnet.ts.net')
 })
+
+test('the repo a worker gets its worktree in defaults to where the room was started', () => {
+  assert.equal(loadConfig({}).repoRoot, process.cwd())
+  assert.equal(loadConfig({ ROOM_REPO: '/other/repo' }).repoRoot, '/other/repo')
+})
+
+test('verification carries its own deadline, independent of a worker\'s turn timeout', () => {
+  // Spec §2.4: a hanging test command must not wedge a delegation forever, and
+  // the number that bounds it is not the one that bounds the worker.
+  assert.equal(loadConfig({}).verifyTimeoutMs, 120_000)
+  assert.equal(loadConfig({ ROOM_VERIFY_TIMEOUT_MS: '5000' }).verifyTimeoutMs, 5000)
+})
+
+test('an unset worker model stays null, so the launcher\'s own default wins', () => {
+  assert.equal(loadConfig({}).workerModel, null)
+  assert.equal(loadConfig({ ROOM_WORKER_MODEL: 'opencode/x' }).workerModel, 'opencode/x')
+})
