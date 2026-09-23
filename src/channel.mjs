@@ -111,6 +111,12 @@ export function buildDelegationResultNotification(result = {}, { roomName } = {}
     verification: result.verification ?? null,
     // Why a turn ended without a reply, on the abandoned path only.
     reason: result.reason ?? null,
+    // The one structured signal for "the work is probably done despite the
+    // silence" — the same fact `likelySucceeded` already carries on the bus
+    // event (src/delegation.mjs), now also on the one channel the
+    // orchestrator actually reads. Absent (not false) on every other path,
+    // which sanitizeMeta drops for us.
+    likelySucceeded: result.likelySucceeded ?? null,
   })
 }
 

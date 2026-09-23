@@ -177,13 +177,14 @@ test('the notification carries verified and verification as meta, never in the w
   const nt = buildDelegationResultNotification(
     {
       id: 'del-1', handle: 'worker-1', class: 'execution', task: 'add mul()',
-      text: 'added mul()', verified: 'false', verification: 'exit 1\nnot ok 3',
+      text: 'added mul()', verified: 'false', verification: 'exit 1\nnot ok 3', likelySucceeded: true,
     },
     { roomName: 'room' },
   )
   assert.equal(nt.params.content, 'added mul()', 'the seat\'s words stay byte-identical')
   assert.equal(nt.params.meta.verified, 'false')
   assert.match(nt.params.meta.verification, /not ok 3/)
+  assert.equal(nt.params.meta.likelySucceeded, 'true')
   for (const k of Object.keys(nt.params.meta)) assert.match(k, /^[A-Za-z0-9_]+$/)
 })
 
@@ -194,6 +195,7 @@ test('an unverified result omits the fields entirely, so existing consumers are 
   )
   assert.equal('verified' in nt.params.meta, false)
   assert.equal('verification' in nt.params.meta, false)
+  assert.equal('likelySucceeded' in nt.params.meta, false)
 })
 
 const abandonedEvents = published =>
@@ -216,6 +218,7 @@ test('a worker that did the work but never replied is reported as likely succeed
 
   await waitUntil(() => notified.length === 1)
   assert.equal(notified[0].verified, 'true')
+  assert.equal(notified[0].likelySucceeded, true)
   assert.match(notified[0].text, /never reported back/, 'the orchestrator only ever reads the channel')
   assert.equal(notified[0].reason, 'seat-disconnected')
 })

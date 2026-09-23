@@ -320,6 +320,7 @@ export function createDelegator({
               text: `@${dest} never reported back, but the room ran this delegation's own tests in its worktree and they pass. The work is likely done — check ${record.spec?.files?.join(', ') || 'the worktree'} rather than delegating it again.`,
               verified: 'true',
               verification: summarizeVerification(v),
+              likelySucceeded: true,
             })
           })
           .catch(() => abandon({}))
