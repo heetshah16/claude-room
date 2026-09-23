@@ -127,6 +127,7 @@ const channel = createChannel({
   onDelegate: input => delegator.delegate(input),
   onListWorkers: () => seats.online().map(s => ({ handle: s.handle, busy: queue.busy(s.handle) })),
   onSpawnWorker: a => (fleet ? fleet.spawn({ model: a?.model ?? null }) : noFleet),
+  onStopWorker: a => (fleet ? fleet.stop(String(a?.handle ?? '')) : noFleet),
 })
 
 if (config.permissionRelay) {

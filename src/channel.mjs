@@ -203,9 +203,21 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: 'stop_worker',
+    description:
+      'Stop a worker this session spawned: kills its process tree, ends its seat, and frees its handle for reuse. Use it once a worker has finished the work it was spawned for, so it stops holding a process and a port for nothing — spawn_worker has no cap, and nothing else in this room stops a worker for you.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        handle: { type: 'string', description: 'The worker handle to stop, e.g. worker-1' },
+      },
+      required: ['handle'],
+    },
+  },
 ]
 
-export function createChannel({ config, onReply, onDecision, onDelegate, onListWorkers, onSpawnWorker }) {
+export function createChannel({ config, onReply, onDecision, onDelegate, onListWorkers, onSpawnWorker, onStopWorker }) {
   const mcp = new Server(
     { name: 'room', version: '0.1.0' },
     {
@@ -265,6 +277,19 @@ export function createChannel({ config, onReply, onDecision, onDelegate, onListW
         }
       }
       return { content: [{ type: 'text', text: JSON.stringify({ ok: true, handle: result.handle }) }] }
+    }
+    if (name === 'stop_worker') {
+      // Synchronous, unlike spawn_worker: fleet.stop() does not launch a
+      // process, it tears one down, and there is nothing left to wait on.
+      const result = onStopWorker?.(String(a.handle ?? ''))
+        ?? { ok: false, errors: ['stopping workers is not enabled in this room'] }
+      if (!result.ok) {
+        return {
+          content: [{ type: 'text', text: `stop_worker failed:\n- ${(result.errors ?? []).join('\n- ')}` }],
+          isError: true,
+        }
+      }
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] }
     }
     return { content: [{ type: 'text', text: `unknown tool: ${name}` }], isError: true }
   }

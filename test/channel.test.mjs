@@ -199,5 +199,36 @@ test('spawn_worker in a room with no fleet says so rather than reporting a handl
 test('spawn_worker is listed alongside delegate, list_workers, room_reply and room_decision', async () => {
   const ch = createChannel({ config: { roomName: 'r', permissionRelay: false }, onReply() {}, onDecision() {} })
   const tools = (await ch.listTools()).map(t => t.name)
-  assert.deepEqual(tools.sort(), ['delegate', 'list_workers', 'room_decision', 'room_reply', 'spawn_worker'])
+  assert.deepEqual(tools.sort(), ['delegate', 'list_workers', 'room_decision', 'room_reply', 'spawn_worker', 'stop_worker'])
+})
+
+test('stop_worker hands back ok, so the caller knows the handle is free', async () => {
+  const seen = []
+  const ch = createChannel({
+    config: { roomName: 'r', permissionRelay: false },
+    onReply() {}, onDecision() {},
+    onStopWorker: handle => { seen.push(handle); return { ok: true } },
+  })
+  const result = await ch.callTool('stop_worker', { handle: 'worker-1' })
+  assert.deepEqual(JSON.parse(result.content[0].text), { ok: true })
+  assert.equal(result.isError, undefined)
+  assert.deepEqual(seen, ['worker-1'])
+})
+
+test('a refused stop names the reason, same as a refused spawn', async () => {
+  const ch = createChannel({
+    config: { roomName: 'r', permissionRelay: false },
+    onReply() {}, onDecision() {},
+    onStopWorker: () => ({ ok: false, errors: ['no worker worker-9 in this fleet'] }),
+  })
+  const result = await ch.callTool('stop_worker', { handle: 'worker-9' })
+  assert.equal(result.isError, true)
+  assert.match(result.content[0].text, /worker-9/)
+})
+
+test('stop_worker in a room with no fleet says so rather than pretending it stopped one', async () => {
+  const ch = createChannel({ config: { roomName: 'r', permissionRelay: false }, onReply() {}, onDecision() {} })
+  const result = await ch.callTool('stop_worker', { handle: 'worker-1' })
+  assert.equal(result.isError, true)
+  assert.match(result.content[0].text, /not enabled/)
 })
