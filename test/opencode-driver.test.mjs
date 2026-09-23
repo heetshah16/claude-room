@@ -38,7 +38,7 @@ test('a room turn becomes one prompt on a session the driver creates once', asyn
   assert.equal(prompts.length, 2)
   assert.ok(prompts[0].body.parts[0].text.startsWith('add a mul function'),
     'with no pending context, the request itself opens the prompt')
-  assert.deepEqual(prompts[0].body.model, { providerID: 'opencode', modelID: 'mimo-v2.5-free' })
+  assert.deepEqual(prompts[0].body.model, { providerID: 'opencode', modelID: 'mimo-v2.6-flash-free' })
 })
 
 test('mirrors ride along with the next turn rather than starting one of their own', async () => {

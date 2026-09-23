@@ -141,7 +141,7 @@ export function actionForOpencodeEvent(ev, sessionId) {
   return { type: 'ignore' }
 }
 
-export const DEFAULT_MODEL = 'opencode/mimo-v2.5-free'
+export const DEFAULT_MODEL = 'opencode/mimo-v2.6-flash-free'
 export const DEFAULT_TURN_TIMEOUT_MS = 300_000
 
 /**

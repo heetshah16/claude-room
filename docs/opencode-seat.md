@@ -27,9 +27,12 @@ warning, and troubleshooting.
 The OpenCode Zen free tier is where the room gets a no-cost model from, and free models are
 not uniformly usable. During design, some models sat in `busy` forever with no error at
 all, and others parked in `status: retry` after an upstream 502 and never recovered.
-`opencode/mimo-v2.5-free` (the default — see `DEFAULT_MODEL` in `src/opencode.mjs`) was the
-only one that reliably completed a tool-using turn in that testing, which is why it is the
-default rather than a recommendation to try others blind.
+`opencode/mimo-v2.5-free` was the only one that reliably completed a tool-using turn in that
+testing, which is why a default was set rather than leaving it to try others blind. That
+model ID no longer exists in OpenCode's live catalog — OpenCode renamed it upstream to
+`opencode/mimo-v2.6-flash-free` (confirmed 2026-09-23), which is now `DEFAULT_MODEL` in
+`src/opencode.mjs`. The new model has only been confirmed to respond to basic prompts, not
+re-tested through the same multi-model reliability bake-off described here.
 
 Even the default model is not guaranteed to finish quickly, and a stalled model is not a
 bug in this codebase — it is what the driver is built to survive. Each turn gets a
