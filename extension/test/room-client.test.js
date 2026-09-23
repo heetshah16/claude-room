@@ -172,3 +172,63 @@ test('addressing a seat goes through the room, mentioning it by handle', async (
   assert.match(sent.url, /\/msg\?/)
   assert.equal(sent.body.text, '@worker-1 also cover the empty case')
 })
+
+// --- worker provisioning, which the room owns ------------------------------
+
+test('spawning a worker asks the room, because the room owns worker processes', async () => {
+  // The extension used to mint a seat and spawn the launcher itself. The room
+  // does both now (robustness spec §1), so this is one POST and the room's
+  // verdict comes back verbatim -- exactly like delegate.
+  let sent = null
+  const client = createRoomClient({
+    roomUrl: 'http://127.0.0.1:1', token: 'tok',
+    fetchImpl: async (url, init) => {
+      sent = { url: String(url), body: JSON.parse(init.body) }
+      return { ok: true, json: async () => ({ ok: true, handle: 'worker-1' }) }
+    },
+  })
+  const r = await client.spawnWorker({ model: 'opencode/mimo-v2.5-free' })
+  assert.match(sent.url, /\/api\/spawn-worker\?token=tok/)
+  assert.deepEqual(sent.body, { model: 'opencode/mimo-v2.5-free' })
+  assert.equal(r.handle, 'worker-1')
+})
+
+test('no model means the room picks its own default, not a pinned one', async () => {
+  // Sending `model: null` would pin whatever the extension happened to think
+  // the default was. An absent field lets the room's own default win.
+  let body = null
+  const client = createRoomClient({
+    roomUrl: 'http://127.0.0.1:1', token: 'tok',
+    fetchImpl: async (url, init) => {
+      body = JSON.parse(init.body)
+      return { ok: true, json: async () => ({ ok: true, handle: 'worker-1' }) }
+    },
+  })
+  await client.spawnWorker()
+  assert.deepEqual(body, {})
+})
+
+test('a refused spawn reports the room errors rather than pretending it worked', async () => {
+  const client = createRoomClient({
+    roomUrl: 'http://127.0.0.1:1', token: 'tok',
+    fetchImpl: async () => ({ ok: false, status: 503, json: async () => ({}) }),
+  })
+  const r = await client.spawnWorker({ model: null })
+  assert.equal(r.ok, false)
+  assert.match(r.errors[0], /503/)
+})
+
+test('stopping a worker names the handle the room should reap', async () => {
+  let sent = null
+  const client = createRoomClient({
+    roomUrl: 'http://127.0.0.1:1', token: 'tok',
+    fetchImpl: async (url, init) => {
+      sent = { url: String(url), body: JSON.parse(init.body) }
+      return { ok: true, json: async () => ({ ok: true }) }
+    },
+  })
+  const r = await client.stopWorker('worker-2')
+  assert.match(sent.url, /\/api\/stop-worker/)
+  assert.deepEqual(sent.body, { handle: 'worker-2' })
+  assert.equal(r.ok, true)
+})

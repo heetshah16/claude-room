@@ -121,6 +121,19 @@ function createRoomClient({ roomUrl, token, fetchImpl = fetch }) {
     rotate: memberId => post('/api/admin/rotate', { memberId }),
     remove: memberId => post('/api/admin/remove', { memberId }),
 
+    // --- worker provisioning (owner-only) ---
+    //
+    // The room owns worker processes now: it mints the seat, allocates the
+    // handle and spawns `scripts/room-opencode-seat.mjs` under its own
+    // supervisor. The extension asks. One implementation of "spawn a worker"
+    // serves channel-mode sessions and this extension alike, which is what
+    // keeps the extension working standalone with no channel session.
+    //
+    // `model` is omitted when unset so the room's own default wins; sending
+    // null would silently pin whatever the extension believed the default was.
+    spawnWorker: ({ model = null } = {}) => post('/api/spawn-worker', model ? { model } : {}),
+    stopWorker: handle => post('/api/stop-worker', { handle }),
+
     roomUrl,
     token,
   }
