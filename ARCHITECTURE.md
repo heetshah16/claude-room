@@ -23,7 +23,7 @@ something you install.
 
 ## 1. The room (`src/`)
 
-~6,100 lines, 27 modules, **zero runtime dependencies** beyond
+6,881 lines, 30 modules, **zero runtime dependencies** beyond
 `@modelcontextprotocol/sdk`. It is an HTTP server plus an MCP stdio server.
 
 | Module | Responsibility |
@@ -44,6 +44,9 @@ something you install.
 | `permissions.mjs` | relaying tool-approval prompts to the room |
 | `state.mjs` | durable state: transcript, roster, ledger |
 | `spawn.mjs` | portable process launching (see §5) |
+| `supervisor.mjs` | supervised children; kills process **trees**, not processes |
+| `workers.mjs` | the fleet: mint a seat, launch it, stop it, list it |
+| `verify.mjs` | re-runs a delegation's own `spec.tests`, bounded |
 
 ### The seat protocol
 
@@ -135,12 +138,25 @@ The orchestrator hands scoped work to a seat. Three pieces:
   (`POST /api/delegate`, owner-only)
 - `src/orchestrator-bridge.mjs` — a thin MCP→HTTP shim, the mirror of
   `seat.mjs` but with no feed and no state
+- `src/workers.mjs` + `src/supervisor.mjs` — `spawn_worker` on the channel and
+  `POST /api/spawn-worker` / `POST /api/stop-worker` over HTTP, both owner-only
+- `src/verify.mjs` — the room runs the brief's own `spec.tests` itself
 
 **The brief is validated, not trusted.** `class: "execution"` requires
 non-empty `files` and `tests`, and a rejection names the missing field so the
 orchestrator can repair it. This is not bureaucracy: in the end-to-end test the
 worker ran the command named in `spec.tests` unprompted and reported the
 result.
+
+**And so is the result.** A `class: "execution"` delegation is closed only after
+the room has run the orchestrator's own `spec.tests` in the worker's worktree,
+under its own timeout. `verified` (`true`/`false`/`none`) travels on the
+`delegation-result` notification and the `delegation` event beside what the
+worker actually said. The command was authored upstream, not by the worker, so
+this is not a new trust boundary — it is the room re-running something it
+already had standing authority to have run. The same check runs on the
+abandoned path, which is what lets "did the work and forgot to reply" be told
+apart from "never did anything".
 
 **Authorisation is two separate paths, and must stay that way.** `addressPolicy`
 (`owner-only` / `shared`) governs which *humans* may address a seat, because a
@@ -244,15 +260,15 @@ the worst failure this system can have.
 
 ## 6. Testing
 
-**549 tests** (`node --test` from the repo root), 548 passing, 1 skipped — the
-skip is an opt-in six-minute endurance run. 40 room test files (ESM) and 10
+**832 tests** (`node --test` from the repo root), 830 passing, 2 skipped — the
+skips are opt-in endurance runs. 46 room test files (ESM) and 22
 extension test files (CommonJS) run in one invocation; Node resolves module
 type per nearest `package.json`, and `extension/package.json` deliberately has
 no `"type"` field.
 
 Nothing in the suite spawns `claude` or `opencode`, or opens a non-loopback
 socket. Fakes are injected: `spawn`, `fetch`, `setTimer`, `env`, `platform`,
-`exists`, plus an in-process fake OpenCode server.
+`exists`, `killTree`, plus an in-process fake OpenCode server.
 
 **What tests cannot cover, and how it is covered instead.** Several bugs here
 were invisible to unit tests because the test exercised one path while

@@ -51,10 +51,9 @@ seats that have compacted independently get re-synchronised from the room's own 
 
 ## Status
 
-Working and tested, with three honest gaps. **549 tests** (`node --test`, 548 passing, 1
-skipped — the skip is the opt-in endurance test below), plus an opt-in endurance run
-(`ROOM_ENDURANCE=1`) that idles a real six minutes to prove seat feeds survive undici's
-300s body timeout.
+Working and tested, with three honest gaps. **832 tests** (`node --test`, 830 passing, 2
+skipped — the skips are opt-in endurance runs: one idles a real six minutes (`ROOM_ENDURANCE=1`),
+the other checks local skill discovery), and both may be omitted from routine runs.
 
 What has been exercised end to end:
 
@@ -178,7 +177,7 @@ Five steps from a clone to a teammate typing in the room.
 git clone https://github.com/heetshah16/claude-room
 cd claude-room
 npm install          # one dependency: @modelcontextprotocol/sdk
-node --test          # optional: 549 tests, ~8s
+node --test          # optional: 832 tests, ~8s (830 passing, 2 skipped)
 ```
 
 ### 2. Choose where it listens
@@ -478,6 +477,55 @@ The rendered brief also appends "report what you changed with `room_reply`" to t
 See [`docs/opencode-seat.md`](docs/opencode-seat.md) for prerequisites, the free-model
 reliability warning, `--attach`, and troubleshooting.
 
+### Spawning and verifying workers
+
+The shared session can grow its own fleet. `spawn_worker` mints a delegatable
+OpenCode seat and launches it, and returns its handle at once:
+
+```
+spawn_worker({})                      -> {"ok":true,"handle":"worker-1"}
+spawn_worker({ model: "opencode/x" }) -> {"ok":true,"handle":"worker-2"}
+```
+
+The handle is addressable the moment the tool returns; the seat itself takes a
+few seconds to come online, which `list_workers` reports. There is no cap on how
+many workers you may start — OpenCode's free tier makes token cost a non-issue,
+so the real ceiling is local processes and worktrees, and `list_workers` is what
+keeps an oversized fleet visible rather than silent. Both are mirrored over HTTP
+for the extension, owner-only like every other room-mutating route:
+
+```
+POST /api/spawn-worker  {"model":"opencode/x"}  -> {"ok":true,"handle":"worker-1"}
+POST /api/stop-worker   {"handle":"worker-1"}   -> {"ok":true}
+```
+
+Stopping a worker kills its **process tree**, ends its seat feed, and revokes
+its credential, which is what makes the handle genuinely free for the next one.
+
+**A worker's success claim is not taken on faith.** When a `class: "execution"`
+delegation is answered, the room runs that delegation's own `spec.tests` itself,
+in the worker's worktree (`.worktrees/<handle>`), under its own timeout
+(`ROOM_VERIFY_TIMEOUT_MS`, 120s by default — independent of the worker's turn
+deadline). The result comes back with both halves:
+
+```
+verified="true"   the tests the brief named actually pass
+verified="false"  they do not; verification carries the real exit code and output
+verified="none"   a reasoning/verification class, which has no tests to run
+```
+
+A `verified="false"` result is not a dead end — it is structurally the same
+thing as a rejected brief: evidence, and a decision for the orchestrator to
+make. The room never retries and never rewrites a brief, because it cannot
+reason about *why* something failed.
+
+The same check runs when a worker never answers at all. If its tests pass
+despite the silence, the abandonment is reported as **likely succeeded** rather
+than as a mystery — the free model completing a real edit and forgetting to call
+`room_reply` is a case this project has actually observed. Nothing about the
+command is a shell: it is tokenised into a program plus argv, so `&&`, pipes and
+globs are not interpreted. Two commands means two entries in `tests`.
+
 ## The VS Code extension
 
 Everything above assumes you assemble it yourself: start the server, read a token out of
@@ -758,14 +806,14 @@ text in front of an agent with your filesystem.
 npm test
 ```
 
-549 tests (548 passing, 1 skipped — see [Status](#status)), no network and no `claude` or
+832 tests (830 passing, 2 skipped — see [Status](#status)), no network and no `claude` or
 `opencode` binary required. The pure modules — router, ledger, identity, decisions, queue,
-turns, brief, observer, admin, seats, fanout, delegation, spawn — carry the load-bearing
-logic and are tested directly. The observer takes `runModel` as an injected seam, so its
-whole cycle is exercised without spawning a subprocess or spending a token, and the
-OpenCode driver runs against an in-process fake server.
+turns, brief, observer, admin, seats, fanout, delegation, spawn, workers, supervisor, verify —
+carry the load-bearing logic and are tested directly. The observer takes `runModel` as an
+injected seam, so its whole cycle is exercised without spawning a subprocess or spending a
+token, and the OpenCode driver runs against an in-process fake server.
 
-One `node --test` from the repo root runs both suites: 40 room test files (ESM) and 10
+One `node --test` from the repo root runs both suites: 46 room test files (ESM) and 22
 extension test files (CommonJS). Node resolves module type per nearest `package.json`, and
 `extension/package.json` deliberately has no `"type"` field — that is what keeps the two
 worlds apart in one invocation.
