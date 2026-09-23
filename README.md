@@ -52,8 +52,8 @@ seats that have compacted independently get re-synchronised from the room's own 
 ## Status
 
 Working and tested, with three honest gaps. **832 tests** (`node --test`, 830 passing, 2
-skipped — the skips are opt-in endurance runs: one idles a real six minutes (`ROOM_ENDURANCE=1`),
-the other checks local skill discovery), and both may be omitted from routine runs.
+skipped — the skips are opt-in, and both may be omitted from routine runs: one idles a real six minutes (`ROOM_ENDURANCE=1`),
+the other checks local skill discovery (`SKILLS_LIVE=1`)).
 
 What has been exercised end to end:
 

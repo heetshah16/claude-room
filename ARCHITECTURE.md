@@ -261,7 +261,8 @@ the worst failure this system can have.
 ## 6. Testing
 
 **832 tests** (`node --test` from the repo root), 830 passing, 2 skipped — the
-skips are opt-in endurance runs. 46 room test files (ESM) and 22
+skips are both opt-in: one is a real six-minute endurance run (`ROOM_ENDURANCE=1`), the
+other checks live skill discovery against the developer's own machine (`SKILLS_LIVE=1`). 46 room test files (ESM) and 22
 extension test files (CommonJS) run in one invocation; Node resolves module
 type per nearest `package.json`, and `extension/package.json` deliberately has
 no `"type"` field.
