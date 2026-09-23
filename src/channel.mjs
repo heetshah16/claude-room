@@ -189,7 +189,7 @@ const TOOLS = [
   {
     name: 'list_workers',
     description:
-      'See which worker seats are online right now and whether each is currently busy with a turn. Use this before delegating, or to check on work you already handed off, without waiting for it to report back.',
+      'See which worker seats are online right now, whether each is currently busy with a turn, and any worker this room\'s fleet is still starting or has recently exited. Use this before delegating, or to check on work you already handed off, without waiting for it to report back.',
     inputSchema: { type: 'object', properties: {} },
   },
   {

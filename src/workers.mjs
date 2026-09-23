@@ -80,6 +80,27 @@ export function workerRecipe({
 }
 
 /**
+ * The channel's list_workers view: every currently online seat — any kind, a
+ * hand-added Claude or OpenCode seat is online too, not just a fleet-spawned
+ * one — plus any fleet worker the fleet itself still tracks that is NOT
+ * currently online (`starting` or `exited`), which `seats.online()` alone
+ * can never report: a starting worker has not joined yet, and an exited
+ * one's seat entry is simply gone. A fleet worker already online is never
+ * duplicated here — `fleet.list()`'s own `'online'` state is itself derived
+ * from `seats.isOnline()` (see `stateOf` above), so the two can never
+ * disagree about who is online, only about who currently is not.
+ */
+export function listWorkersView({ onlineSeats, isBusy, fleetWorkers }) {
+  const rows = onlineSeats.map(seat => ({ handle: seat.handle, busy: isBusy(seat.handle), state: 'online' }))
+  const onlineHandles = new Set(rows.map(r => r.handle))
+  for (const w of fleetWorkers) {
+    if (w.state === 'online' || onlineHandles.has(w.handle)) continue
+    rows.push({ handle: w.handle, busy: false, state: w.state })
+  }
+  return rows
+}
+
+/**
  * @param {{registry:object, seats:object, config:object, store:object, bus:object,
  *          spawn?:Function, repoRoot:string, roomUrl:string,
  *          log?:Function, now?:() => number}} deps

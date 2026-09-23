@@ -28,7 +28,7 @@ import { Observer } from './observer.mjs'
 import { makeRunner } from './run-model.mjs'
 import { createAdmin } from './admin.mjs'
 import { createDelegator } from './delegation.mjs'
-import { createWorkerFleet, worktreeFor } from './workers.mjs'
+import { createWorkerFleet, worktreeFor, listWorkersView } from './workers.mjs'
 import { verifyDelegation } from './verify.mjs'
 
 const log = s => process.stderr.write(`room: ${s}\n`)
@@ -125,7 +125,11 @@ const channel = createChannel({
     return d
   },
   onDelegate: input => delegator.delegate(input),
-  onListWorkers: () => seats.online().map(s => ({ handle: s.handle, busy: queue.busy(s.handle) })),
+  onListWorkers: () => listWorkersView({
+    onlineSeats: seats.online(),
+    isBusy: handle => queue.busy(handle),
+    fleetWorkers: fleet ? fleet.list() : [],
+  }),
   onSpawnWorker: a => (fleet ? fleet.spawn({ model: a?.model ?? null }) : noFleet),
   onStopWorker: a => (fleet ? fleet.stop(String(a?.handle ?? '')) : noFleet),
 })

@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { join } from 'node:path'
-import { createWorkerFleet, nextHandle, worktreeFor, workerRecipe } from '../src/workers.mjs'
+import { createWorkerFleet, nextHandle, worktreeFor, workerRecipe, listWorkersView } from '../src/workers.mjs'
 import { worktreeFor as launcherWorktreeFor } from '../scripts/room-seat.mjs'
 import { Registry, createMember, createAgentMember, isDelegatable } from '../src/identity.mjs'
 import { Seats } from '../src/seats.mjs'
@@ -200,4 +200,48 @@ test('a room-wide worker model is used when set, and the launcher default when n
   const { fleet, spawned } = fleetHarness()
   await fleet.spawn({ model: 'opencode/other-free' })
   assert.deepEqual(spawned[0].args.slice(-2), ['--model', 'opencode/other-free'])
+})
+
+test('every online seat is listed as online, whatever kind of seat it is', () => {
+  const rows = listWorkersView({
+    onlineSeats: [{ handle: 'claude-1' }, { handle: 'worker-1' }],
+    isBusy: h => h === 'worker-1',
+    fleetWorkers: [],
+  })
+  assert.deepEqual(rows, [
+    { handle: 'claude-1', busy: false, state: 'online' },
+    { handle: 'worker-1', busy: true, state: 'online' },
+  ])
+})
+
+test('a fleet worker still starting is listed, though no seat feed exists for it yet', () => {
+  const rows = listWorkersView({
+    onlineSeats: [],
+    isBusy: () => false,
+    fleetWorkers: [{ handle: 'worker-1', state: 'starting', model: null, worktree: '/w', exitCode: null, startedAt: 1 }],
+  })
+  assert.deepEqual(rows, [{ handle: 'worker-1', busy: false, state: 'starting' }])
+})
+
+test('a fleet worker that exited is listed as exited, not silently dropped', () => {
+  const rows = listWorkersView({
+    onlineSeats: [],
+    isBusy: () => false,
+    fleetWorkers: [{ handle: 'worker-1', state: 'exited', model: null, worktree: '/w', exitCode: 1, startedAt: 1 }],
+  })
+  assert.deepEqual(rows, [{ handle: 'worker-1', busy: false, state: 'exited' }])
+})
+
+test('a fleet worker that is online is never listed twice', () => {
+  const rows = listWorkersView({
+    onlineSeats: [{ handle: 'worker-1' }],
+    isBusy: () => true,
+    fleetWorkers: [{ handle: 'worker-1', state: 'online', model: null, worktree: '/w', exitCode: null, startedAt: 1 }],
+  })
+  assert.deepEqual(rows, [{ handle: 'worker-1', busy: true, state: 'online' }])
+})
+
+test('with no fleet at all, the view is exactly what seats.online() already gave', () => {
+  const rows = listWorkersView({ onlineSeats: [{ handle: 'claude-1' }], isBusy: () => false, fleetWorkers: [] })
+  assert.deepEqual(rows, [{ handle: 'claude-1', busy: false, state: 'online' }])
 })
