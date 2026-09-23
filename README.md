@@ -117,6 +117,77 @@ This is a personal project, not an Anthropic product. It uses
 Anthropic-curated allowlist — read [Security](#security) before pointing it at anything
 that matters.
 
+### Manual verification: spawning and verifying
+
+Nothing in the automated suite (`node --test`) spawns `opencode`, creates a git worktree,
+or runs a real test command — every test in it fakes the process layer, by explicit rule.
+This is the one place that gap gets closed: what was actually run against real binaries,
+on 2026-09-23, and what it found.
+
+**The room boots, a real `claude` session attaches, spawns a worker, and delegates real
+work — end to end, with the room's own verification catching both a genuine pass and a
+genuine failure.** A standalone room (`ROOM_STANDALONE=1`) was booted first to confirm it
+prints a real owner join URL and hooks-settings path; a second, non-standalone `claude
+--dangerously-load-development-channels server:room` session was then launched against
+the same state directory as the room itself (standalone and stdio-attached are mutually
+exclusive per-process modes — a separate `claude` session cannot attach to an
+already-running standalone room, contrary to this task's own original two-terminal
+assumption; one non-standalone process serves as both).
+
+- All five tools appeared (`room_reply`, `room_decision`, `delegate`, `list_workers`,
+  `spawn_worker`), with `spawn_worker`'s description matching the source verbatim.
+- `spawn_worker({})` returned a handle immediately; the seat was already `online` on the
+  very first `list_workers` check afterward (faster than expected — no visible `starting`
+  window), and `.worktrees/worker-1` existed on disk at once.
+- A delegated execution task that genuinely passes came back `verified="true"`, with
+  `verification` reading `exit 0` plus the real `node --test` output — confirmed
+  independently by re-running the same command by hand in the worker's worktree.
+- A delegated execution task that deliberately fails came back `verified="false"`, and
+  `verification` carried the *full* real failure detail (`AssertionError`, expected/actual
+  values, stack trace) — genuinely actionable, not truncated to a bare exit code.
+- The silent-worker path was exercised by killing a worker's process tree after it had
+  written its work but before it replied. The abandoned turn came back `verified="true"`,
+  `reason="seat-disconnected"`, and the exact "never reported back … tests pass" text —
+  confirmed independently by re-running the worker's actual output by hand.
+- Stopping a worker (`POST /api/stop-worker`) killed its full process tree, freed its
+  handle for reuse, and — usefully — handled a worker whose process had already died
+  outside the room's own tracking (killed directly rather than through `fleet.stop()`)
+  without erroring.
+- `Ctrl-C` on the room process reaped a live worker's entire process tree (including its
+  `opencode serve` child) and released the room's own port cleanly; no stray `opencode`
+  process, held port, or git worktree lock survived.
+
+**It found four real issues, all small, all being fixed as immediate follow-up:**
+
+1. **The default free model is stale.** `src/opencode.mjs`'s `DEFAULT_MODEL`,
+   `opencode/mimo-v2.5-free`, no longer exists in OpenCode's live catalog — it was renamed
+   to `opencode/mimo-v2.6-flash-free`. Delegating to a worker spawned without an explicit
+   `model` override fails every turn with a generic `"UnknownError"`; the real cause
+   (`ProviderModelNotFoundError`) only surfaces with `opencode run --print-logs
+   --log-level DEBUG` run directly, bypassing the room. This blocks every self-spawned
+   worker using the default until fixed.
+2. **There is no way to despawn a worker from inside the channel.** `spawn_worker` is a
+   channel tool the orchestrator can call freely (no cap, by design), but stopping one is
+   HTTP-only (`POST /api/stop-worker`) — wired for the extension, never exposed as a
+   matching channel tool. A session that spawns workers has no way to clean them up
+   itself; they keep running, holding a process and a port, until a human intervenes
+   externally.
+3. **`likelySucceeded` does not reach the orchestrator.** It is published on the internal
+   `delegation` bus event (reaching the extension/browser SSE feed) but not on the
+   `delegation-result` channel notification the orchestrator actually receives — which
+   "only ever reads the channel," per the code's own comment. The orchestrator can still
+   infer the work succeeded from `verified="true"` plus a `reason` field plus the specific
+   wording of the text, but there is no explicit structured field for it.
+4. **`list_workers` cannot see a worker that is starting or has exited.** It is wired to
+   `seats.online()`, not to the fleet's own richer state (`starting`/`online`/`exited`,
+   tracked in `src/workers.mjs`'s `createWorkerFleet`). A worker that crashes or is killed
+   simply disappears from `list_workers` rather than being reported as `exited` — the
+   orchestrator has no way to distinguish "never existed" from "just died."
+
+None of these broke the room itself — every failure was caught and reported honestly
+rather than silently swallowed, which is the property this whole plan exists to
+establish.
+
 ## Is sharing a session allowed?
 
 Worth reading before you invite anyone. Not legal advice, and terms change — check
