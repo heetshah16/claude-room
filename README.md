@@ -51,7 +51,7 @@ seats that have compacted independently get re-synchronised from the room's own 
 
 ## Status
 
-Working and tested, with three honest gaps. **832 tests** (`node --test`, 830 passing, 2
+Working and tested, with three honest gaps. **840 tests** (`node --test`, 838 passing, 2
 skipped — the skips are opt-in, and both may be omitted from routine runs: one idles a real six minutes (`ROOM_ENDURANCE=1`),
 the other checks local skill discovery (`SKILLS_LIVE=1`)).
 
@@ -157,36 +157,37 @@ assumption; one non-standalone process serves as both).
   `opencode serve` child) and released the room's own port cleanly; no stray `opencode`
   process, held port, or git worktree lock survived.
 
-**It found four real issues, all small, all being fixed as immediate follow-up:**
+**It found four real issues, all small, all fixed as immediate follow-up (`34c4e74`,
+`693e0a7`, `d22cb92`, `75f9dba`):**
 
-1. **The default free model is stale.** `src/opencode.mjs`'s `DEFAULT_MODEL`,
-   `opencode/mimo-v2.5-free`, no longer exists in OpenCode's live catalog — it was renamed
-   to `opencode/mimo-v2.6-flash-free`. Delegating to a worker spawned without an explicit
-   `model` override fails every turn with a generic `"UnknownError"`; the real cause
-   (`ProviderModelNotFoundError`) only surfaces with `opencode run --print-logs
-   --log-level DEBUG` run directly, bypassing the room. This blocks every self-spawned
-   worker using the default until fixed.
-2. **There is no way to despawn a worker from inside the channel.** `spawn_worker` is a
-   channel tool the orchestrator can call freely (no cap, by design), but stopping one is
-   HTTP-only (`POST /api/stop-worker`) — wired for the extension, never exposed as a
-   matching channel tool. A session that spawns workers has no way to clean them up
-   itself; they keep running, holding a process and a port, until a human intervenes
-   externally.
-3. **`likelySucceeded` does not reach the orchestrator.** It is published on the internal
-   `delegation` bus event (reaching the extension/browser SSE feed) but not on the
-   `delegation-result` channel notification the orchestrator actually receives — which
-   "only ever reads the channel," per the code's own comment. The orchestrator can still
-   infer the work succeeded from `verified="true"` plus a `reason` field plus the specific
-   wording of the text, but there is no explicit structured field for it.
-4. **`list_workers` cannot see a worker that is starting or has exited.** It is wired to
-   `seats.online()`, not to the fleet's own richer state (`starting`/`online`/`exited`,
-   tracked in `src/workers.mjs`'s `createWorkerFleet`). A worker that crashes or is killed
-   simply disappears from `list_workers` rather than being reported as `exited` — the
-   orchestrator has no way to distinguish "never existed" from "just died."
+1. **The default free model was stale**, fixed in `34c4e74`. `src/opencode.mjs`'s
+   `DEFAULT_MODEL`, `opencode/mimo-v2.5-free`, no longer existed in OpenCode's live
+   catalog — it had been renamed to `opencode/mimo-v2.6-flash-free`. Delegating to a
+   worker spawned without an explicit `model` override failed every turn with a generic
+   `"UnknownError"`; the real cause (`ProviderModelNotFoundError`) only surfaced with
+   `opencode run --print-logs --log-level DEBUG` run directly, bypassing the room.
+2. **There was no way to despawn a worker from inside the channel**, fixed in `d22cb92`
+   with a `stop_worker` tool mirroring `spawn_worker`. `spawn_worker` is a channel tool
+   the orchestrator can call freely (no cap, by design), but stopping one was HTTP-only
+   (`POST /api/stop-worker`) — wired for the extension, never exposed as a matching
+   channel tool. A session that spawned workers had no way to clean them up itself.
+3. **`likelySucceeded` did not reach the orchestrator**, fixed in `693e0a7`. It was
+   published on the internal `delegation` bus event (reaching the extension/browser SSE
+   feed) but not on the `delegation-result` channel notification the orchestrator
+   actually receives — which "only ever reads the channel," per the code's own comment.
+   The orchestrator could still infer the work succeeded from `verified="true"` plus a
+   `reason` field plus the specific wording of the text, but there was no explicit
+   structured field for it.
+4. **`list_workers` could not see a worker that was starting or had exited**, fixed in
+   `75f9dba` by merging in the fleet's own state tracking. It was wired only to
+   `seats.online()`, not to the fleet's richer state (`starting`/`online`/`exited`,
+   tracked in `src/workers.mjs`'s `createWorkerFleet`). A worker that crashed or was
+   killed simply disappeared from `list_workers` rather than being reported as `exited`.
 
 None of these broke the room itself — every failure was caught and reported honestly
 rather than silently swallowed, which is the property this whole plan exists to
-establish.
+establish. Each fix went through its own independent review before landing, same as
+every task above it.
 
 ## Is sharing a session allowed?
 
@@ -248,7 +249,7 @@ Five steps from a clone to a teammate typing in the room.
 git clone https://github.com/heetshah16/claude-room
 cd claude-room
 npm install          # one dependency: @modelcontextprotocol/sdk
-node --test          # optional: 832 tests, ~8s (830 passing, 2 skipped)
+node --test          # optional: 840 tests, ~8s (838 passing, 2 skipped)
 ```
 
 ### 2. Choose where it listens
@@ -877,7 +878,7 @@ text in front of an agent with your filesystem.
 npm test
 ```
 
-832 tests (830 passing, 2 skipped — see [Status](#status)), no network and no `claude` or
+840 tests (838 passing, 2 skipped — see [Status](#status)), no network and no `claude` or
 `opencode` binary required. The pure modules — router, ledger, identity, decisions, queue,
 turns, brief, observer, admin, seats, fanout, delegation, spawn, workers, supervisor, verify —
 carry the load-bearing logic and are tested directly. The observer takes `runModel` as an

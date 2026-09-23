@@ -23,7 +23,7 @@ something you install.
 
 ## 1. The room (`src/`)
 
-6,881 lines, 30 modules, **zero runtime dependencies** beyond
+6,939 lines, 30 modules, **zero runtime dependencies** beyond
 `@modelcontextprotocol/sdk`. It is an HTTP server plus an MCP stdio server.
 
 | Module | Responsibility |
@@ -260,7 +260,7 @@ the worst failure this system can have.
 
 ## 6. Testing
 
-**832 tests** (`node --test` from the repo root), 830 passing, 2 skipped — the
+**840 tests** (`node --test` from the repo root), 838 passing, 2 skipped — the
 skips are both opt-in: one is a real six-minute endurance run (`ROOM_ENDURANCE=1`), the
 other checks live skill discovery against the developer's own machine (`SKILLS_LIVE=1`). 46 room test files (ESM) and 22
 extension test files (CommonJS) run in one invocation; Node resolves module
