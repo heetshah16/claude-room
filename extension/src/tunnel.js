@@ -1,25 +1,15 @@
 'use strict'
-const { existsSync } = require('node:fs')
+const { onPath } = require('./install.js')
 
 /**
- * Is the `devtunnel` CLI on PATH? Same question `resolveCommand` (src/spawn.mjs,
- * the room side) answers for `claude`/`opencode` -- reimplemented here rather
- * than imported, because extension/ is CommonJS and src/ is ESM and nothing
- * crosses that boundary by import (ARCHITECTURE.md).
+ * Is the `devtunnel` CLI on PATH?
  *
- * Deliberately simpler than resolveCommand: this only needs a yes/no to decide
- * whether to show the "install devtunnel" prompt, never a path to spawn --
- * `cmd: 'devtunnel'` below resolves through the OS the normal way.
+ * Kept as its own export because `republish` reads better asking this exact
+ * question, but the lookup itself is install.js's `onPath` -- one PATH walk
+ * for all three tools rather than three copies of it.
  */
-function detectDevtunnel({ exists = existsSync, env = process.env, platform = process.platform } = {}) {
-  const dirs = (env.PATH || env.Path || '').split(platform === 'win32' ? ';' : ':').filter(Boolean)
-  const names = platform === 'win32' ? ['devtunnel.exe', 'devtunnel.cmd'] : ['devtunnel']
-  for (const dir of dirs) {
-    for (const name of names) {
-      if (exists(`${dir}/${name}`)) return true
-    }
-  }
-  return false
+function detectDevtunnel(deps = {}) {
+  return onPath('devtunnel', deps)
 }
 
 /**
