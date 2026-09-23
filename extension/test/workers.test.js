@@ -2,155 +2,110 @@
 'use strict'
 const { test } = require('node:test')
 const assert = require('node:assert/strict')
-const { workerRecipe, nextHandle, createWorkerPool } = require('../src/workers.js')
+const { createWorkerPool } = require('../src/workers.js')
 
-/** A pool whose room and supervisor always succeed. */
+/**
+ * A pool whose room always succeeds.
+ *
+ * No supervisor: the room owns worker processes now, so the only seam left is
+ * the HTTP client.
+ */
 function fakePool(over = {}) {
-  const invites = []
-  const started = []
+  const spawned = []
   const stopped = []
+  let n = 0
   const pool = createWorkerPool({
-    repoRoot: '/repo',
-    roomUrl: 'http://127.0.0.1:8787',
     log: () => {},
     roomClient: {
-      state: async () => ({ you: { id: 'owner-1' } }),
-      invite: async a => { invites.push(a); return { ok: true, token: 'seat-tok', member: { handle: a.handle } } },
+      spawnWorker: async a => { spawned.push(a ?? {}); return { ok: true, handle: `worker-${++n}` } },
+      stopWorker: async h => { stopped.push(h); return { ok: true } },
       ...(over.roomClient ?? {}),
-    },
-    supervisor: {
-      start: (name, recipe) => { started.push({ name, recipe }); return { child: { pid: 42 } } },
-      stop: name => stopped.push(name),
-      ...(over.supervisor ?? {}),
     },
     ...(over.pool ?? {}),
   })
-  return { pool, invites, started, stopped }
+  return { pool, spawned, stopped }
 }
 
-test('the recipe launches the seat launcher, not opencode directly', () => {
-  // scripts/room-opencode-seat.mjs is what creates the worktree, starts
-  // `opencode serve`, registers the reply-only seat bridge, and runs the
-  // driver. Launching opencode here would reimplement all four.
-  const r = workerRecipe({
-    repoRoot: '/repo', handle: 'worker-1', token: 'seat-tok',
-    roomUrl: 'http://127.0.0.1:8787', nodePath: '/usr/bin/node', env: {},
-  })
-  assert.equal(r.cmd, '/usr/bin/node')
-  assert.match(String(r.args[0]).split(/[\\/]/).pop(), /^room-opencode-seat\.mjs$/)
-  assert.equal(r.args[1], 'worker-1')
-  assert.equal(r.args[r.args.indexOf('--token') + 1], 'seat-tok')
-  assert.equal(r.args[r.args.indexOf('--room') + 1], 'http://127.0.0.1:8787')
-  assert.equal(r.args[r.args.indexOf('--repo') + 1], '/repo')
-})
-
-test('a model and a timeout are passed only when chosen', () => {
-  // Omitted means the launcher's own defaults win. Passing them explicitly
-  // would silently pin whatever they happen to be today.
-  const bare = workerRecipe({ repoRoot: '/repo', handle: 'w', token: 't', roomUrl: 'u', env: {} })
-  assert.ok(!bare.args.includes('--model'))
-  assert.ok(!bare.args.includes('--timeout'))
-
-  const chosen = workerRecipe({
-    repoRoot: '/repo', handle: 'w', token: 't', roomUrl: 'u',
-    model: 'opencode/other-model', timeoutMs: 60000, env: {},
-  })
-  assert.equal(chosen.args[chosen.args.indexOf('--model') + 1], 'opencode/other-model')
-  assert.equal(chosen.args[chosen.args.indexOf('--timeout') + 1], '60000')
-})
-
-test('the seat token never reaches the environment, only argv', () => {
-  // The launcher reads --token. Putting it in env as well would widen where a
-  // seat credential can be read from, for nothing.
-  const r = workerRecipe({
-    repoRoot: '/repo', handle: 'w', token: 'seat-tok', roomUrl: 'u', env: { PATH: '/bin' },
-  })
-  assert.ok(!JSON.stringify(r.opts.env).includes('seat-tok'))
-  assert.equal(r.opts.env.PATH, '/bin', 'the inherited environment is preserved')
-})
-
-test('the worker runs in the repo, which is where its worktree is made', () => {
-  const r = workerRecipe({ repoRoot: '/repo', handle: 'w', token: 't', roomUrl: 'u', env: {} })
-  assert.equal(r.opts.cwd, '/repo')
-})
-
-test('handles are allocated in order and reuse a freed one', () => {
-  assert.equal(nextHandle([]), 'worker-1')
-  assert.equal(nextHandle(['worker-1']), 'worker-2')
-  assert.equal(nextHandle(['worker-2']), 'worker-1', 'a freed handle is reused')
-  assert.equal(nextHandle(['worker-1', 'worker-2', 'worker-3']), 'worker-4')
-})
-
-test('ensureOne mints a seat and starts exactly one worker', async () => {
-  const { pool, invites, started } = fakePool()
+test('ensureOne asks the room for a worker, and only ever one', async () => {
+  const { pool, spawned } = fakePool()
   await pool.ensureOne()
   await pool.ensureOne() // idempotent
-
-  assert.equal(invites.length, 1)
-  assert.equal(invites[0].kind, 'agent')
-  assert.equal(invites[0].handle, 'worker-1')
-  assert.equal(invites[0].ownerId, 'owner-1')
-  assert.equal(invites[0].delegatable, true, 'the orchestrator must be allowed to delegate to it')
-  assert.equal(started.length, 1)
+  assert.equal(spawned.length, 1)
   assert.equal(pool.list().length, 1)
 })
 
 test('a worker starts in the starting state, not idle', () => {
-  // It is not idle: it has no worktree and no opencode yet, and a delegation
-  // sent now would fail. Saying "idle" would be a lie the sidebar repeats.
+  // It has no worktree and no opencode yet, and a delegation sent now would
+  // fail. Saying "idle" would be a lie the sidebar repeats.
   const { pool } = fakePool()
   return pool.ensureOne().then(() => {
     assert.equal(pool.list()[0].state, 'starting')
   })
 })
 
-test('add() starts a second worker alongside the first', async () => {
-  const { pool, started } = fakePool()
+test('add() asks for a second worker alongside the first', async () => {
+  const { pool, spawned } = fakePool()
   await pool.ensureOne()
   await pool.add()
   assert.deepEqual(pool.list().map(w => w.handle), ['worker-1', 'worker-2'])
-  assert.equal(started.length, 2)
+  assert.equal(spawned.length, 2)
 })
 
-test('a failed mint leaves no half-created worker in the list', async () => {
-  const { pool, started } = fakePool({
-    roomClient: { invite: async () => ({ ok: false, errors: ['handle-taken'] }) },
-  })
-  await pool.ensureOne()
-  assert.deepEqual(pool.list(), [], 'a worker with no seat is not a worker')
-  assert.equal(started.length, 0, 'nothing may be spawned without a seat token')
-})
-
-test('a pool that cannot learn the owner id does not invent one', async () => {
-  // invite requires a real ownerId; guessing would mint a seat owned by
-  // nobody, whose cost lands nowhere.
-  const { pool, started } = fakePool({
-    roomClient: {
-      state: async () => null,
-      invite: async () => assert.fail('must not invite without an owner'),
-    },
-  })
-  await pool.ensureOne()
-  assert.deepEqual(pool.list(), [])
-  assert.equal(started.length, 0)
-})
-
-test('a spawn that throws does not leave the worker listed as live', async () => {
-  // opencode missing from PATH is the common case, and it must degrade to
-  // "no workers" rather than to a row that will never do anything.
+test('the handle in the list is the one the room assigned, never a guessed one', async () => {
+  // The room allocates handles now. Inventing `worker-1` locally would make
+  // the sidebar address a seat that does not exist.
   const { pool } = fakePool({
-    supervisor: { start: () => { throw new Error('command not found on PATH: opencode') } },
+    roomClient: { spawnWorker: async () => ({ ok: true, handle: 'worker-7' }) },
   })
-  await pool.ensureOne()
+  await pool.add()
+  assert.deepEqual(pool.list().map(w => w.handle), ['worker-7'])
+})
+
+test('a chosen model is passed through, an unchosen one is not invented', async () => {
+  const { pool, spawned } = fakePool({ pool: { model: 'opencode/mimo-v2.5-free' } })
+  await pool.add()
+  await pool.add({ model: 'opencode/other' })
+  assert.deepEqual(spawned, [{ model: 'opencode/mimo-v2.5-free' }, { model: 'opencode/other' }])
+})
+
+test('a refused spawn leaves no half-created worker in the list', async () => {
+  const { pool } = fakePool({
+    roomClient: { spawnWorker: async () => ({ ok: false, errors: ['no opencode on PATH'] }) },
+  })
+  const logged = []
+  const { pool: loud } = fakePool({
+    pool: { log: m => logged.push(String(m)) },
+    roomClient: { spawnWorker: async () => ({ ok: false, errors: ['no opencode on PATH'] }) },
+  })
+  await pool.add()
+  await loud.add()
+  assert.deepEqual(pool.list(), [], 'a worker the room refused is not a worker')
+  assert.match(logged.join('\n'), /no opencode on PATH/, 'the room reason must survive verbatim')
+})
+
+test('a spawn that answers without a handle is refused, not listed as blank', async () => {
+  const { pool } = fakePool({ roomClient: { spawnWorker: async () => ({ ok: true }) } })
+  await pool.add()
   assert.deepEqual(pool.list(), [])
 })
 
-test('stop removes the worker and reaps its process tree', async () => {
+test('stop asks the room to reap the worker, then forgets it', async () => {
   const { pool, stopped } = fakePool()
   await pool.ensureOne()
-  pool.stop('worker-1')
+  await pool.stop('worker-1')
+  assert.deepEqual(stopped, ['worker-1'])
   assert.deepEqual(pool.list(), [])
-  assert.deepEqual(stopped, ['worker:worker-1'])
+})
+
+test('a stop the room refused keeps the worker visible, because it is still running', async () => {
+  // Dropping the row would hide a live process holding a worktree. The room is
+  // the authority on whether it died; until it says so, it is still there.
+  const { pool } = fakePool({
+    roomClient: { stopWorker: async () => ({ ok: false, errors: ['unknown handle'] }) },
+  })
+  await pool.ensureOne()
+  await pool.stop('worker-1')
+  assert.equal(pool.list().length, 1)
 })
 
 test('listeners are told when the fleet changes, so the sidebar can redraw', async () => {
@@ -158,7 +113,7 @@ test('listeners are told when the fleet changes, so the sidebar can redraw', asy
   const seen = []
   pool.onChange(list => seen.push(list.length))
   await pool.ensureOne()
-  pool.stop('worker-1')
+  await pool.stop('worker-1')
   assert.deepEqual(seen, [1, 0])
 })
 

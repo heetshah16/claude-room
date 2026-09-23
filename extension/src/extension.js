@@ -388,7 +388,7 @@ async function openChat(context) {
 
   // The worker fleet. Nothing is spawned here: a chat-only session should pay
   // no worktree, no process, and should not need `opencode` on PATH at all.
-  const pool = createWorkerPool({ roomClient, supervisor, repoRoot: REPO_ROOT, roomUrl, log })
+  const pool = createWorkerPool({ roomClient, log })
   // One tab per worker, opened on demand from the sidebar and kept fed by the
   // same onChange every other surface uses.
   const workerPanels = new Map()
@@ -551,9 +551,9 @@ async function openChat(context) {
 
   panel.onDidDispose(() => {
     stopFeed()
-    // Every worker holds a worktree and an `opencode serve`; leaving them
-    // behind orphans both.
-    pool.stopAll()
+    // The workers are NOT stopped here any more: the room owns them, the
+    // sidebar outlives the chat, and killing a fleet because a chat window
+    // closed would throw away work in progress.
     if (session?.panel === panel) session = null
   })
 

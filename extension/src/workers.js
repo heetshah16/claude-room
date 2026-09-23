@@ -1,21 +1,19 @@
 // extension/src/workers.js
 //
-// The worker fleet: minting a seat, launching it, and tracking what it is
-// doing.
+// The worker fleet, as the extension sees it: what exists, what each one is
+// doing, and what it has done.
 //
-// A worker is an OpenCode seat in the room. Minting one is a single owner-only
-// call (`invite` with `kind: 'agent'`), and launching it is
-// `scripts/room-opencode-seat.mjs` -- which is what creates the git worktree,
-// starts `opencode serve`, registers the reply-only bridge so the seat can call
-// room_reply, and runs the driver. Launching `opencode` directly from here
-// would reimplement all four.
+// Nothing is spawned here. The room mints the seat, allocates the handle and
+// runs `scripts/room-opencode-seat.mjs` under its own supervisor; this asks it
+// to, over HTTP, through room-client.js. One implementation of "spawn a
+// worker" serves channel-mode sessions and this extension alike, and the
+// extension no longer supervises processes the room owns.
 //
 // The live state is driven entirely by the room's own event stream, which the
-// extension already subscribes to once. `applyRoomEvent` is pure over this
+// session already subscribes to once. `applyRoomEvent` is pure over this
 // module's own state, which is what makes the whole thing testable without a
 // socket or a real worker.
 'use strict'
-const { join } = require('node:path')
 
 /** How long a worker's turn may run before the driver abandons it. */
 const DEFAULT_TURN_TIMEOUT_MS = 300_000
@@ -30,57 +28,11 @@ const DEFAULT_TURN_TIMEOUT_MS = 300_000
 const MAX_TRANSCRIPT = 500
 
 /**
- * argv for `scripts/room-opencode-seat.mjs`.
- *
- * `model` and `timeout` are omitted when unset so the launcher's own defaults
- * win; passing them explicitly would silently pin whatever they happen to be.
- */
-function workerRecipe({
-  repoRoot, handle, token, roomUrl, model = null, timeoutMs = null,
-  nodePath = process.execPath, env = process.env,
-}) {
-  const args = [
-    join(repoRoot, 'scripts', 'room-opencode-seat.mjs'),
-    handle,
-    '--token', token,
-    '--repo', repoRoot,
-    '--room', roomUrl,
-  ]
-  if (model) args.push('--model', model)
-  if (timeoutMs) args.push('--timeout', String(timeoutMs))
-
-  return {
-    cmd: nodePath,
-    args,
-    opts: {
-      // The worktree is created relative to the repo, so this is where the
-      // launcher has to run.
-      cwd: repoRoot,
-      // The token travels in argv, which the launcher reads. Putting it in the
-      // environment as well would widen where a seat credential can be read
-      // from, and buy nothing.
-      env: { ...env },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    },
-  }
-}
-
-/** The lowest free `worker-N`, so a stopped worker's handle comes back. */
-function nextHandle(existing) {
-  const taken = new Set(existing)
-  for (let i = 1; ; i++) {
-    const h = `worker-${i}`
-    if (!taken.has(h)) return h
-  }
-}
-
-/**
- * @param {{roomClient: object, supervisor: object, repoRoot: string,
- *          roomUrl: string, model?: string, timeoutMs?: number,
+ * @param {{roomClient: object, model?: string, timeoutMs?: number,
  *          log?: Function, now?: () => number}} deps
  */
 function createWorkerPool({
-  roomClient, supervisor, repoRoot, roomUrl,
+  roomClient,
   model = null, timeoutMs = DEFAULT_TURN_TIMEOUT_MS,
   log = () => {}, now = Date.now,
 }) {
@@ -103,50 +55,25 @@ function createWorkerPool({
     }
   }
 
-  /** The owner's member id, which `invite` requires and must not be guessed. */
-  async function ownerId() {
-    const state = await roomClient.state()
-    return state?.you?.id ?? null
-  }
-
-  async function spawn() {
-    const owner = await ownerId()
-    if (!owner) {
-      // Guessing would mint a seat owned by nobody, whose cost lands nowhere.
-      log('cannot start a worker: the room did not report an owner')
-      return null
+  /**
+   * Ask the room for a worker and record what it gave back.
+   *
+   * The handle comes from the response, never from a local counter: the room
+   * allocates it, and a guessed one would address a seat that does not exist.
+   */
+  async function spawn({ model: wanted = model } = {}) {
+    const r = await roomClient.spawnWorker(wanted ? { model: wanted } : {})
+    if (!r?.ok || !r.handle) {
+      log(`could not start a worker: ${r?.errors?.[0] ?? 'the room did not return a handle'}`)
+      return null // a worker the room refused is not a worker
     }
 
-    const handle = nextHandle([...workers.keys()])
-    const invited = await roomClient.invite({
-      name: handle,
-      kind: 'agent',
-      handle,
-      ownerId: owner,
-      // The orchestrator's permission to delegate here. Room ownership does
-      // not grant it -- it is a separate, per-seat opt-in.
-      delegatable: true,
-    })
-    if (!invited?.ok || !invited.token) {
-      log(`could not mint a seat for ${handle}: ${invited?.errors?.[0] ?? 'unknown error'}`)
-      return null // a worker with no seat is not a worker
-    }
-
-    try {
-      supervisor.start(`worker:${handle}`, workerRecipe({
-        repoRoot, handle, token: invited.token, roomUrl, model, timeoutMs,
-      }))
-    } catch (err) {
-      // `opencode` missing from PATH is the common case. Degrade to "no
-      // workers" rather than to a row that will never do anything.
-      log(`could not start ${handle}: ${err?.message ?? err}`)
-      return null
-    }
-
-    workers.set(handle, {
-      handle,
-      model,
-      worktree: join(repoRoot, '.worktrees', handle),
+    workers.set(r.handle, {
+      handle: r.handle,
+      model: wanted,
+      // The room always makes it here; the path is shown, the directory is
+      // not this process's to know.
+      worktree: `.worktrees/${r.handle}`,
       // Not idle: there is no worktree and no opencode yet, and a delegation
       // sent now would fail. "Idle" would be a lie the sidebar repeats.
       state: 'starting',
@@ -162,7 +89,7 @@ function createWorkerPool({
       toolsUsed: [],
     })
     changed()
-    return handle
+    return r.handle
   }
 
   return {
@@ -173,20 +100,24 @@ function createWorkerPool({
     },
 
     /** Start another worker alongside the existing ones. */
-    add() {
-      return spawn()
+    add(opts = {}) {
+      return spawn(opts)
     },
 
-    stop(handle) {
+    /**
+     * Ask the room to stop a worker, and forget it only if it agreed.
+     *
+     * Dropping the row on a refusal would hide a live process holding a
+     * worktree; the room is the authority on whether it actually died.
+     */
+    async stop(handle) {
       if (!workers.has(handle)) return
-      supervisor.stop(`worker:${handle}`)
+      const r = await roomClient.stopWorker(handle)
+      if (!r?.ok) {
+        log(`could not stop ${handle}: ${r?.errors?.[0] ?? 'unknown error'}`)
+        return
+      }
       workers.delete(handle)
-      changed()
-    },
-
-    stopAll() {
-      for (const handle of [...workers.keys()]) supervisor.stop(`worker:${handle}`)
-      workers.clear()
       changed()
     },
 
@@ -269,4 +200,4 @@ function createWorkerPool({
   }
 }
 
-module.exports = { workerRecipe, nextHandle, createWorkerPool, DEFAULT_TURN_TIMEOUT_MS, MAX_TRANSCRIPT }
+module.exports = { createWorkerPool, DEFAULT_TURN_TIMEOUT_MS, MAX_TRANSCRIPT }
