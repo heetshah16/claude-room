@@ -308,8 +308,13 @@ function createSession({
       await waitForRoomUp(api.roomUrl)
       published = next
     } catch (err) {
-      // The room not coming back is the one failure here that matters, and it
-      // must not be silent.
+      // State from what actually happened, not from what was asked for. A
+      // failed publish leaves a tunnel pointing at a room that is not serving,
+      // so it is stopped; a failed stop-sharing has still stopped the tunnel.
+      // Either way sharing is not working, and saying "published" would be a
+      // confident lie about who can reach this room.
+      if (next) supervisor.stop('tunnel')
+      published = false
       ui.showError(`Claude Room: the room did not restart — ${err?.message ?? err}`)
       log(`republish failed: ${err?.stack ?? err}`)
     }

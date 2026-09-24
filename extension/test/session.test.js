@@ -296,3 +296,62 @@ test('the busy state is announced before the restart, so no click lands twice', 
   assert.equal(rooms[0].busy, true)
   assert.equal(rooms.at(-1).busy, false)
 })
+
+// --- published state comes from the outcome, never from the intent ---------
+
+/** A harness whose room never comes back after the publish restart. */
+function deadRoomHarness() {
+  let up = true
+  return {
+    ...harness({
+      fetchImpl: async url => {
+        if (String(url).includes('/api/state') && !up) throw new Error('ECONNREFUSED')
+        if (String(url).includes('/events')) return { ok: true, status: 200, body: sseBody([]) }
+        return { ok: true, status: 200, json: async () => ({}) }
+      },
+    }),
+    kill: () => { up = false },
+  }
+}
+
+test('a publish whose room never comes back is not reported as published', async () => {
+  // Reporting "published" for a room that is not serving tells the owner their
+  // work is shared when nothing is reachable at all.
+  const h = deadRoomHarness()
+  await h.session.start()
+  h.kill()
+  await h.session.republish(true)
+  assert.equal(h.session.isPublished(), false)
+  assert.match(h.errors.join(' '), /did not restart/)
+})
+
+test('a failed publish stops the tunnel it started, so nothing points at a dead port', async () => {
+  const h = deadRoomHarness()
+  await h.session.start()
+  h.kill()
+  await h.session.republish(true)
+  assert.ok(h.stopped.includes('tunnel'))
+})
+
+test('a failed stop-sharing reports local, because the tunnel really did stop', async () => {
+  // The tunnel is down whatever the room did next. Staying "published" here is
+  // the exact lie this fix exists to remove.
+  const h = deadRoomHarness()
+  await h.session.start()
+  await h.session.republish(true)
+  assert.equal(h.session.isPublished(), true)
+  h.kill()
+  await h.session.republish(false)
+  assert.equal(h.session.isPublished(), false)
+})
+
+test('the failure is reported to listeners too, not only to the dialog', async () => {
+  const h = deadRoomHarness()
+  await h.session.start()
+  const rooms = []
+  h.session.onRoom(r => rooms.push(r))
+  h.kill()
+  await h.session.republish(true)
+  assert.equal(rooms.at(-1).published, false)
+  assert.equal(rooms.at(-1).busy, false)
+})
