@@ -1,8 +1,14 @@
 {
   "name": "claude-room-orchestrator",
   "displayName": "Claude Room Orchestrator",
-  "description": "Chat with an orchestrating Claude that delegates mechanical work to free-model workers.",
+  "description": "Run, share and watch a Claude Room: publish the room, invite people, and see what the workers are doing.",
   "version": "0.0.1",
+  "publisher": "claude-room",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/heet-shah/claude-room.git"
+  },
   "private": true,
   "engines": {
     "vscode": "^1.75.0",
@@ -23,6 +29,10 @@
       {
         "command": "claudeRoom.restart",
         "title": "Claude Room: Restart Services"
+      },
+      {
+        "command": "claudeRoom.installTools",
+        "title": "Claude Room: Check Required Tools"
       }
     ],
     "configuration": {

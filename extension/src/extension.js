@@ -21,6 +21,7 @@ const { createWorkersView } = require('./chat/workers-view.js')
 const { createRoomView } = require('./chat/room-view.js')
 const { createWorkerPanel } = require('./chat/worker-panel.js')
 const { createSession } = require('./session.js')
+const { detectTools, installPlan } = require('./install.js')
 
 // extension.js lives at <repoRoot>/extension/src/extension.js. "The
 // extension's own directory" is <repoRoot>/extension; its parent is the repo
@@ -72,6 +73,9 @@ async function ensureSession(context) {
   // The first paint: the views are already asking, and the answer needs the
   // roster the session has only just become able to read.
   s.postRoom().catch(err => log(`room state failed: ${err?.message ?? err}`))
+  // Asked once, when the room first starts, and never again in this window: a
+  // dialog on every activation would be nagging rather than helping.
+  offerMissingTools().catch(err => log(`tool check failed: ${err?.message ?? err}`))
   return s
 }
 
@@ -91,6 +95,42 @@ async function withSession(context, fn) {
     log(`sidebar action failed: ${err?.stack ?? err}`)
     vscode.window.showErrorMessage(`Claude Room: ${err?.message ?? err}`)
   }
+}
+
+/**
+ * Offer to install what is missing -- and only after an explicit yes.
+ *
+ * Nothing is ever installed silently: the dialog names each tool, the exact
+ * command, and where it comes from, and the commands run in a visible terminal
+ * so they can be read, cancelled, or copied out and run by hand instead.
+ */
+async function offerMissingTools({ force = false } = {}) {
+  const found = detectTools()
+  const missing = Object.keys(found).filter(k => !found[k])
+  if (!missing.length) {
+    if (force) vscode.window.showInformationMessage('Claude Room: claude, opencode and devtunnel are all on PATH.')
+    return
+  }
+  const plan = installPlan(missing)
+  if (!plan.length) return
+
+  const detail = plan.map(p => `${p.tool}\n  ${p.command}\n  ${p.note}`).join('\n\n')
+  const choice = await vscode.window.showWarningMessage(
+    `Claude Room: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not on PATH.`,
+    { modal: true, detail: `${detail}\n\nRunning these opens a terminal; nothing is installed until you say so.` },
+    'Run these commands',
+    'Copy commands',
+  )
+  if (choice === 'Copy commands') {
+    await vscode.env.clipboard.writeText(plan.map(p => p.command).join('\n'))
+    vscode.window.showInformationMessage('Claude Room: install commands copied to the clipboard.')
+    return
+  }
+  if (choice !== 'Run these commands') return // dismissed: install nothing
+
+  const terminal = vscode.window.createTerminal('Claude Room: install')
+  terminal.show()
+  for (const p of plan) terminal.sendText(p.command)
 }
 
 function activate(context) {
@@ -145,6 +185,7 @@ function activate(context) {
     vscode.window.registerWebviewViewProvider('claudeRoom.workers', workersView.provider),
     vscode.commands.registerCommand('claudeRoom.openChat', () => openChat(context)),
     vscode.commands.registerCommand('claudeRoom.restart', () => restart(context)),
+    vscode.commands.registerCommand('claudeRoom.installTools', () => offerMissingTools({ force: true })),
     vscode.commands.registerCommand('claudeRoom.openWorker', handle => {
       // The sidebar exists before any chat does. Without a chat there is no
       // worker tab to open, so say so rather than doing nothing at all.
