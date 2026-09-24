@@ -161,16 +161,23 @@ const FIXTURES = {
   'workers-empty': [
     { type: 'workers', workers: [] },
   ],
+  // The Room sidebar, published. The address is a real `devtunnel host` URL
+  // shape -- a browser link that needs nothing installed on the other end.
   room: [
-    stream({ kind: 'session', sessionId: 'fixture', tools: [], cwd: '/repo' }),
-    stream({ kind: 'turn-end', text: MODEL_PROBE_RESULT, turns: 1, costUsd: 0, isError: false }),
-    { type: 'permission-mode', mode: 'acceptEdits' },
-    // Published, with a tailnet address -- advertiseHost prefers 100.64/10.
-    { type: 'room', room: { published: true, advertised: 'http://100.84.12.7:51820/?token=REDACTED', members: [
-      { id: 'm0', name: 'you', role: 'owner' },
-      { id: 'm1', name: 'ana', role: 'member' },
-      { id: 'm2', name: 'sam', role: 'viewer' },
-    ] } },
+    { type: 'room', room: {
+      published: true,
+      advertised: 'https://bskw8blx-5001.inc1.devtunnels.ms/?token=REDACTED',
+      members: [
+        { id: 'm0', name: 'you', role: 'owner' },
+        { id: 'm1', name: 'ana', role: 'member' },
+        { id: 'm2', name: 'sam', role: 'viewer' },
+      ],
+    } },
+  ],
+  // Local, with a roster that could not be read -- the state that must never
+  // render as "nobody is here".
+  'room-local': [
+    { type: 'room', room: { published: false, advertised: null, members: null } },
   ],
   'permission-modes': [
     stream({ kind: 'session', sessionId: 'fixture', tools: [], cwd: '/repo' }),
@@ -209,6 +216,10 @@ const PAGES = {
   'worker-thin-brief': { file: 'worker.html', widths: [{ name: 'wide', px: 760 }] },
   workers: { file: 'workers.html', widths: [{ name: 'sidebar', px: 300 }, { name: 'wide', px: 420 }] },
   'workers-empty': { file: 'workers.html', widths: [{ name: 'sidebar', px: 300 }] },
+  // 320px is the design-system's narrow floor for a sidebar; the wide shot
+  // catches a member row that only wraps badly when it has room not to.
+  room: { file: 'room.html', widths: [{ name: 'sidebar', px: 320 }, { name: 'wide', px: 900 }] },
+  'room-local': { file: 'room.html', widths: [{ name: 'sidebar', px: 320 }, { name: 'wide', px: 900 }] },
 }
 
 /**
@@ -219,7 +230,6 @@ const PAGES = {
 const INTERACTIONS = {
   'context-panel': ['context-chip'],
   dashboard: ['dash-btn'],
-  room: ['room-chip'],
   'permission-modes': ['permission-chip'],
 }
 
