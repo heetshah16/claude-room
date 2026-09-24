@@ -14,7 +14,7 @@ const { FIXTURES, INTERACTIONS, PAGES, resolveTheme } = require('../harness/fixt
  * it was testing. These three files define the protocol between the extension
  * host and its three webviews; read it from them.
  */
-const HOST_FILES = ['panel.js', 'worker-panel.js', 'workers-view.js']
+const HOST_FILES = ['panel.js', 'worker-panel.js', 'workers-view.js', 'room-view.js']
 
 function postedTypes() {
   const types = new Set()

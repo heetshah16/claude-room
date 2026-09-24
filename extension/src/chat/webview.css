@@ -768,6 +768,13 @@ body.sidebar {
   color: var(--vscode-descriptionForeground, var(--vscode-foreground));
 }
 
+/* The state word with its icon beside it, in the view header. */
+.side-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .worker {
   padding: 6px 6px 8px;
   border-radius: 4px;

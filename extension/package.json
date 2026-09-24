@@ -37,6 +37,11 @@
     "views": {
       "claudeRoom": [
         {
+          "id": "claudeRoom.room",
+          "name": "Room",
+          "type": "webview"
+        },
+        {
           "id": "claudeRoom.workers",
           "name": "Workers",
           "type": "webview"
