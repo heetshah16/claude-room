@@ -175,6 +175,17 @@ async function restart(context) {
 }
 
 async function openChat(context) {
+  // Dormant by default (spec §4). The `when` clause hides this from the
+  // palette, but a keybinding or another extension can still invoke a command
+  // directly -- so refuse here too, and say where the switch is rather than
+  // failing silently.
+  if (!vscode.workspace.getConfiguration('claudeRoom').get('enableChat')) {
+    vscode.window.showInformationMessage(
+      'Claude Room: the orchestrator chat is off. Turn on "claudeRoom.enableChat" in Settings to use it — the Room and Workers views work without it.',
+    )
+    return
+  }
+
   if (chat) {
     chat.panel.reveal()
     return

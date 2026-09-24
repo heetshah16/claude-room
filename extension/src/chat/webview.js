@@ -42,14 +42,6 @@
   const dashEmptyEl = document.getElementById('dash-empty')
   const dashBtnEl = document.getElementById('dash-btn')
   const attachBtnEl = document.getElementById('attach-btn')
-  const roomChipEl = document.getElementById('room-chip')
-  const roomPanelEl = document.getElementById('room-panel')
-  const roomStateEl = document.getElementById('room-state')
-  const roomAddressEl = document.getElementById('room-address')
-  const roomNoteEl = document.getElementById('room-note')
-  const roomMembersEl = document.getElementById('room-members')
-  const publishBtnEl = document.getElementById('publish-btn')
-  const inviteBtnEl = document.getElementById('invite-btn')
   const permissionChipEl = document.getElementById('permission-chip')
   const permissionPanelEl = document.getElementById('permission-panel')
   const permissionListEl = document.getElementById('permission-list')
@@ -418,7 +410,6 @@
   // stack over the composer and hide what is being typed.
   const POPOVERS = [
     [contextChipEl, contextPanelEl],
-    [roomChipEl, roomPanelEl],
     [permissionChipEl, permissionPanelEl],
   ]
 
@@ -555,11 +546,6 @@
       }
     }
 
-    if (msg.type === 'room') {
-      room = { ...room, ...msg.room }
-      renderRoom()
-      return
-    }
     if (msg.type === 'permission-mode') {
       permissionMode = msg.mode || DEFAULT_MODE
       renderPermissionMode()
@@ -580,84 +566,6 @@
     }
     if (msg.type === 'activity') return onActivity(msg.activity)
     if (msg.type === 'fatal') return onFatal(String(msg.message ?? 'The orchestrator process has stopped.'))
-  })
-
-  // --- the room chip ----------------------------------------------------
-
-  let room = { published: false, advertised: null, members: null, busy: false }
-
-  /** The host part of a join link, which is what "published to" actually means. */
-  function hostOf(joinUrl) {
-    if (!joinUrl) return null
-    // Deliberately not `new URL(...).host`: the link carries a token in its
-    // query string, and nothing here should be one slip away from rendering it.
-    const m = /^https?:\/\/([^/?#]+)/.exec(String(joinUrl))
-    return m ? m[1] : null
-  }
-
-  function renderRoom() {
-    const where = hostOf(room.advertised)
-    roomChipEl.textContent = room.busy
-      ? 'Room · …'
-      : `Room · ${room.published ? 'Published' : 'Local'}`
-
-    // The header carries the STATE, the line under the button carries the
-    // ADDRESS. Putting the address in both read as two different facts.
-    roomStateEl.textContent = room.busy ? 'restarting…' : room.published ? 'published' : 'local only'
-
-    publishBtnEl.textContent = room.published ? 'Stop sharing' : 'Publish with Dev Tunnels'
-    publishBtnEl.disabled = room.busy
-
-    // The address is the whole decision: "publish" on shared office wifi means
-    // something very different from "publish" on a tailnet, and this is what
-    // tells them apart. Shown for both states so it is legible before the
-    // button is pressed, not only after.
-    roomAddressEl.textContent = room.published
-      ? (where ?? 'address unknown')
-      : '127.0.0.1 — reachable only from this machine'
-    roomAddressEl.hidden = false
-    roomNoteEl.textContent = room.busy
-      ? 'The chat keeps going.'
-      : 'Restarts the room (about a second). The chat keeps going.'
-
-    roomMembersEl.textContent = ''
-    if (room.members === null) {
-      // null means the roster call FAILED. Saying "nobody is here" would be a
-      // confident lie about who can read the room.
-      const unknown = document.createElement('div')
-      unknown.className = 'room-member muted'
-      unknown.textContent = room.busy ? 'checking…' : 'could not read the roster'
-      roomMembersEl.appendChild(unknown)
-      return
-    }
-    for (const m of room.members) {
-      const row = document.createElement('div')
-      row.className = 'room-member'
-      const name = document.createElement('span')
-      // A member name is typed by a person and arrives over HTTP. textContent.
-      name.textContent = m.name
-      const role = document.createElement('span')
-      role.className = 'room-role'
-      role.textContent = m.role
-      row.appendChild(name)
-      row.appendChild(role)
-      roomMembersEl.appendChild(row)
-    }
-  }
-
-  roomChipEl.addEventListener('click', () => {
-    if (togglePopover(roomChipEl, roomPanelEl)) vscode.postMessage({ type: 'room-refresh' })
-  })
-
-  publishBtnEl.addEventListener('click', () => {
-    if (room.busy) return
-    vscode.postMessage({ type: 'publish', published: !room.published })
-  })
-
-  inviteBtnEl.addEventListener('click', () => {
-    // The host owns the prompt: a webview cannot show a native input box, and
-    // a bespoke one here would be a worse version of one VS Code already has.
-    vscode.postMessage({ type: 'invite', role: 'member' })
   })
 
   // --- the permission chip ----------------------------------------------
@@ -949,7 +857,6 @@
   closeDash()
   closePopovers(null)
   renderAttachments()
-  renderRoom()
   renderPermissionMode()
 
   inputEl.focus()

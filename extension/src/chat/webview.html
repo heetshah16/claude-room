@@ -42,19 +42,6 @@
     <div id="dash-list" class="dash-list" role="listbox" aria-label="Commands and skills"></div>
     <div id="dash-empty" class="dash-empty" hidden>No command or skill matches</div>
   </div>
-  <div id="room-panel" class="panel" hidden role="region" aria-label="Room">
-    <div class="panel-head">
-      <span class="panel-title">Room</span>
-      <span id="room-state" class="panel-total"></span>
-    </div>
-    <button id="publish-btn" class="wide-btn" type="button"></button>
-    <div id="room-address" class="room-address"></div>
-    <div id="room-note" class="room-note"></div>
-    <div class="panel-sep"></div>
-    <div class="panel-title">Members</div>
-    <div id="room-members" class="room-members"></div>
-    <button id="invite-btn" class="wide-btn" type="button">Invite…</button>
-  </div>
   <div id="permission-panel" class="panel" hidden role="region" aria-label="Permission mode">
     <div class="panel-head"><span class="panel-title">Permission mode</span></div>
     <div id="permission-list" class="dash-list" role="listbox" aria-label="Permission mode"></div>
@@ -66,8 +53,6 @@
       <div class="composer-toolbar-left">
         <button id="attach-btn" class="icon-btn" type="button" aria-label="Attach a file" title="Attach a file"></button>
         <button id="dash-btn" class="icon-btn" type="button" aria-label="Commands and skills" title="Commands and skills"></button>
-        <button id="room-chip" class="chip" type="button" aria-expanded="false"
-                aria-controls="room-panel" title="Room">Room</button>
         <button id="permission-chip" class="chip" type="button" aria-expanded="false"
                 aria-controls="permission-panel" title="Permission mode">mode</button>
         <button id="model-picker" class="chip" type="button" aria-expanded="false"

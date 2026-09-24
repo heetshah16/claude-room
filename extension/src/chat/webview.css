@@ -692,9 +692,8 @@ details.thinking .thinking-body {
 .wide-btn:disabled { opacity: 0.55; cursor: default; }
 
 /* The advertised address, shown before anything is committed: a devtunnels.ms
-   URL works for anyone with a browser, no VPN or account required on their
-   end -- unlike the tailnet address this replaced, which needed the joiner
-   on the same tailnet first. */
+   URL works for anyone with a browser, no account or VPN required on their
+   end. Lives in the Room view now; the chat no longer has a room chip. */
 .room-address {
   margin-top: 6px;
   font-family: var(--vscode-editor-font-family, monospace);

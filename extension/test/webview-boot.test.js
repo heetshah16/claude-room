@@ -310,68 +310,19 @@ test('the attach button asks the host to open a picker', () => {
   assert.ok(boot.posted.some(m => m.type === 'attach-file'))
 })
 
-// --- the room and permission chips -----------------------------------------
+// --- the permission chip ---------------------------------------------------
+//
+// The room chip moved to the claudeRoom.room sidebar view when the chat went
+// dormant; its cases live in test/room-view-boot.test.js now.
 
 test('only one chip-owned popover is open at a time', () => {
   // Two open at once would stack over the composer and hide what is typed.
   const boot = bootWebview()
   boot.fire(boot.get('context-chip'), 'click')
   assert.equal(boot.get('context-panel').hidden, false)
-  boot.fire(boot.get('room-chip'), 'click')
-  assert.equal(boot.get('room-panel').hidden, false)
-  assert.equal(boot.get('context-panel').hidden, true)
   boot.fire(boot.get('permission-chip'), 'click')
   assert.equal(boot.get('permission-panel').hidden, false)
-  assert.equal(boot.get('room-panel').hidden, true)
-})
-
-test('opening the room popover asks the host for a fresh roster', () => {
-  const boot = bootWebview()
-  boot.fire(boot.get('room-chip'), 'click')
-  assert.ok(boot.posted.some(m => m.type === 'room-refresh'))
-})
-
-test('publishing asks the host, naming the state being moved to', () => {
-  const boot = bootWebview()
-  boot.handleMessage({ data: { type: 'room', room: { published: false, advertised: null, members: [] } } })
-  boot.fire(boot.get('publish-btn'), 'click')
-  assert.ok(boot.posted.some(m => m.type === 'publish' && m.published === true))
-})
-
-test('the room chip reports published state in words, not only colour', () => {
-  const boot = bootWebview()
-  boot.handleMessage({ data: { type: 'room', room: {
-    published: true, advertised: 'http://100.1.2.3:8787/?token=SECRET', members: [],
-  } } })
-  assert.match(boot.get('room-chip').textContent, /Published/)
-})
-
-test('a join token never reaches the panel, only the host part does', () => {
-  // The token IS the identity. It goes to the clipboard, never on screen.
-  const boot = bootWebview()
-  boot.handleMessage({ data: { type: 'room', room: {
-    published: true, advertised: 'http://100.1.2.3:8787/?token=SECRETTOKEN', members: [],
-  } } })
-  const rendered = JSON.stringify([boot.get('room-address'), boot.get('room-state'), boot.get('room-chip')])
-  assert.ok(!rendered.includes('SECRETTOKEN'), 'the token must not be rendered anywhere')
-  assert.ok(rendered.includes('100.1.2.3:8787'), 'the address itself should be shown')
-})
-
-test('a failed roster says so rather than claiming the room is empty', () => {
-  // null members means the call failed. "Nobody is here" would be a confident
-  // lie about who can read the room.
-  const boot = bootWebview()
-  boot.handleMessage({ data: { type: 'room', room: { published: false, advertised: null, members: null } } })
-  assert.match(JSON.stringify(boot.get('room-members')), /could not read the roster/)
-})
-
-test('a member name is rendered as text, never as markup', () => {
-  const boot = bootWebview()
-  boot.handleMessage({ data: { type: 'room', room: { published: false, advertised: null, members: [
-    { id: '1', name: '<img src=x onerror=alert(1)>', role: 'member' },
-  ] } } })
-  assert.ok(JSON.stringify(boot.get('room-members')).includes('<img src=x onerror=alert(1)>'),
-    'the name must survive as literal text')
+  assert.equal(boot.get('context-panel').hidden, true)
 })
 
 test('choosing an ordinary permission mode tells the host at once', () => {

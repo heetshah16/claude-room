@@ -7,10 +7,10 @@ const { randomBytes } = require('node:crypto')
 
 const nonce = () => randomBytes(16).toString('base64')
 
-// Messages from the chips that only the extension host can act on. An
-// allowlist rather than a prefix test: these reach process spawns, so an
+// Messages from the permission chip that only the extension host can act on.
+// An allowlist rather than a prefix test: these reach a process spawn, so an
 // unrecognised type must fall on the floor rather than be forwarded.
-const CONTROL_TYPES = new Set(['publish', 'invite', 'permission-mode', 'room-refresh'])
+const CONTROL_TYPES = new Set(['permission-mode'])
 
 /**
  * The chat webview: one panel, driven entirely through postMessage.
@@ -82,8 +82,8 @@ function createChatPanel({ context, onInput, onAttach }) {
       onAttach?.(msg)
       return
     }
-    // publish / invite / permission-mode / room-refresh: each restarts or
-    // queries a child process, which only the extension host can do.
+    // permission-mode: restarts the orchestrator, which only the extension
+    // host can do.
     if (CONTROL_TYPES.has(msg?.type)) onControlMsg?.(msg)
   })
 
@@ -97,7 +97,6 @@ function createChatPanel({ context, onInput, onAttach }) {
     postStream: event => post({ type: 'stream', event }),
     postActivity: activity => post({ type: 'activity', activity }),
     postSkills: skills => post({ type: 'skills', skills }),
-    postRoom: room => post({ type: 'room', room }),
     postWorkers: workers => post({ type: 'workers', workers }),
     postPermissionMode: mode => post({ type: 'permission-mode', mode }),
     /** Register the handler for the chips' control messages. */

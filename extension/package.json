@@ -25,6 +25,24 @@
         "title": "Claude Room: Restart Services"
       }
     ],
+    "configuration": {
+      "title": "Claude Room",
+      "properties": {
+        "claudeRoom.enableChat": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show the orchestrator chat window. Off by default: Claude Code's own UI is the chat, and this extension's job is the Room and Workers views. The chat still works if you turn this on."
+        }
+      }
+    },
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "claudeRoom.openChat",
+          "when": "config.claudeRoom.enableChat"
+        }
+      ]
+    },
     "viewsContainers": {
       "activitybar": [
         {
