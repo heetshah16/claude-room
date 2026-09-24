@@ -66,6 +66,18 @@
       head.appendChild(dot)
       head.appendChild(title)
       head.appendChild(status)
+      const stop = document.createElement('button')
+      stop.className = 'icon-btn'
+      stop.type = 'button'
+      stop.setAttribute('aria-label', `Stop ${w.title}`)
+      stop.title = `Stop ${w.title}`
+      stop.appendChild(icon('x', document))
+      stop.addEventListener('click', e => {
+        // The row itself opens the worker; stopping it must not do both.
+        e.stopPropagation()
+        vscode.postMessage({ type: 'stop-worker', handle: raw.handle })
+      })
+      head.appendChild(stop)
       row.appendChild(head)
 
       if (w.subtitle) {

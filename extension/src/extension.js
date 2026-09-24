@@ -18,6 +18,7 @@ const { discoverSkills } = require('./skills.js')
 const { saveAttachment } = require('./attachments.js')
 const { isKnownMode, DEFAULT_MODE } = require('./chat/permissions.js')
 const { createWorkersView } = require('./chat/workers-view.js')
+const { createRoomView } = require('./chat/room-view.js')
 const { createWorkerPanel } = require('./chat/worker-panel.js')
 const { createSession } = require('./session.js')
 
@@ -32,6 +33,7 @@ let output = null
 let roomSession = null // the room, its feed and its fleet — outlives any chat
 let chat = null // { panel } — the live chat session, if one is open
 let activeWorkersView = null // the sidebar, which outlives any session
+let activeRoomView = null // the room sidebar, which outlives any session
 let activeOpenWorker = null // opens a worker's tab, once a chat exists
 
 function log(msg) {
@@ -66,7 +68,29 @@ async function ensureSession(context) {
   }
   roomSession = s
   s.onWorkers(list => activeWorkersView?.postWorkers(list))
+  s.onRoom(room => activeRoomView?.postRoom(room))
+  // The first paint: the views are already asking, and the answer needs the
+  // roster the session has only just become able to read.
+  s.postRoom().catch(err => log(`room state failed: ${err?.message ?? err}`))
   return s
+}
+
+/**
+ * Run `fn` against the room session, starting it if this is the first ask.
+ *
+ * Every sidebar action goes through here, which is what makes "first reveal of
+ * either view" the thing that starts the room -- rather than activation, which
+ * would run a process for someone who never opens the panel.
+ */
+async function withSession(context, fn) {
+  try {
+    const s = await ensureSession(context)
+    if (!s) return
+    await fn(s)
+  } catch (err) {
+    log(`sidebar action failed: ${err?.stack ?? err}`)
+    vscode.window.showErrorMessage(`Claude Room: ${err?.message ?? err}`)
+  }
 }
 
 function activate(context) {
@@ -83,25 +107,49 @@ function activate(context) {
     if (name === 'room') roomSession?.stop()
   })
 
-  // Registered at activation, not per chat: the sidebar exists whether or not
-  // a chat is open, and a view registered later would never appear.
+  // Registered at activation, not per chat: the sidebar exists whether or not a
+  // chat is open, and a view registered later would never appear.
+  //
+  // The room itself starts on the FIRST REVEAL of either view, not at
+  // activation: a process for someone who never opens the panel is a cost with
+  // no benefit, and both views ask for their state the moment they resolve.
   const workersView = createWorkersView({
     context,
-    onAdd: () => roomSession?.pool?.add().catch(err => log(`add worker failed: ${err?.message ?? err}`)),
+    onAdd: () => withSession(context, s => s.pool.add()),
+    onStop: handle => withSession(context, s => s.pool.stop(handle)),
     onOpen: handle => vscode.commands.executeCommand('claudeRoom.openWorker', handle),
-    onRefresh: () => workersView.postWorkers(roomSession?.pool?.list() ?? []),
+    onRefresh: () => withSession(context, s => {
+      workersView.postWorkers(s.pool.list())
+    }),
   })
   activeWorkersView = workersView
 
+  const roomView = createRoomView({
+    context,
+    onPublish: next => withSession(context, s => s.republish(next)),
+    onInvite: async ({ role }) => {
+      // The host owns the prompt: only it can show a native input box.
+      const name = await vscode.window.showInputBox({
+        prompt: 'Name for the join link',
+        placeHolder: 'ana',
+      })
+      if (!name) return // cancelled: minting a seat nobody asked for helps nobody
+      await withSession(context, s => s.invite({ name, role }))
+    },
+    onRefresh: () => withSession(context, s => s.postRoom()),
+  })
+  activeRoomView = roomView
+
   context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider('claudeRoom.room', roomView.provider),
     vscode.window.registerWebviewViewProvider('claudeRoom.workers', workersView.provider),
     vscode.commands.registerCommand('claudeRoom.openChat', () => openChat(context)),
     vscode.commands.registerCommand('claudeRoom.restart', () => restart(context)),
     vscode.commands.registerCommand('claudeRoom.openWorker', handle => {
-      // The sidebar exists before any chat does, so clicking a worker with no
-      // session must say so rather than doing nothing at all.
+      // The sidebar exists before any chat does. Without a chat there is no
+      // worker tab to open, so say so rather than doing nothing at all.
       if (!activeOpenWorker) {
-        vscode.window.showInformationMessage('Claude Room: open the orchestrator chat first.')
+        vscode.window.showInformationMessage('Claude Room: worker tabs open from the orchestrator chat.')
         return
       }
       activeOpenWorker(String(handle ?? ''))

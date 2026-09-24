@@ -22,7 +22,7 @@ const nonce = () => randomBytes(16).toString('base64')
  * @param {{context: object, onAdd: Function, onOpen: Function, onRefresh: Function}} deps
  * @returns {{provider: object, postWorkers: Function}}
  */
-function createWorkersView({ context, onAdd, onOpen, onRefresh }) {
+function createWorkersView({ context, onAdd, onOpen, onRefresh, onStop }) {
   const extensionRoot = context.extensionUri?.fsPath ?? context.extensionPath
   const chatDir = join(extensionRoot, 'src', 'chat')
 
@@ -53,6 +53,7 @@ function createWorkersView({ context, onAdd, onOpen, onRefresh }) {
       webviewView.webview.onDidReceiveMessage(msg => {
         if (msg?.type === 'add-worker') return onAdd?.()
         if (msg?.type === 'open-worker') return onOpen?.(String(msg.handle ?? ''))
+        if (msg?.type === 'stop-worker') return onStop?.(String(msg.handle ?? ''))
         // The view is destroyed and rebuilt whenever the sidebar is collapsed
         // and reopened, so it asks for the current fleet rather than waiting
         // for the next change -- which might never come.
