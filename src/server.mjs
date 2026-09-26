@@ -15,7 +15,7 @@
  * connects over stdio exactly as before.
  */
 import { randomUUID, randomBytes } from 'node:crypto'
-import { loadConfig } from './config.mjs'
+import { loadConfig, joinUrl } from './config.mjs'
 import { Store } from './state.mjs'
 import { Queue } from './queue.mjs'
 import { Seats } from './seats.mjs'
@@ -66,7 +66,7 @@ if (!registry.all().length) {
   const owner = registry.add(createMember({ name: process.env.ROOM_OWNER || 'owner', role: 'owner' }))
   store.saveRegistry(registry)
   log(`created owner "${owner.name}"`)
-  log(`join: http://${config.advertise}:${config.port}/?token=${owner.token}`)
+  log(`join: ${joinUrl(config, owner.token)}`)
 }
 
 const bus = new Bus()
@@ -76,7 +76,7 @@ const queue = new Queue({ config, ledger, decisions, registry, seats })
 
 const addrs = new Map()
 const runtime = {
-  joinUrl: token => `http://${config.advertise}:${config.port}/?token=${token}`,
+  joinUrl: token => joinUrl(config, token),
   noteAddr: (id, addr) => addrs.set(id, addr),
   lastAddrOf: id => addrs.get(id) ?? null,
 }

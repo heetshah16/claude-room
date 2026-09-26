@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { loadConfig, advertiseHost } from '../src/config.mjs'
+import { loadConfig, advertiseHost, joinUrl } from '../src/config.mjs'
 
 test('defaults are safe', () => {
   const c = loadConfig({})
@@ -71,6 +71,30 @@ test('with no tailnet, a LAN address is advertised; with nothing, loopback', () 
 
 test('ROOM_ADVERTISE overrides detection', () => {
   assert.equal(loadConfig({ ROOM_ADVERTISE: 'room.tailnet.ts.net' }).advertise, 'room.tailnet.ts.net')
+})
+
+// --- the join link built from that address ----------------------------------
+//
+// advertise is one of two shapes: a bare host (an IP, a tailnet name -- needs
+// http:// and the port appended) or a full external URL (devtunnel's
+// port-free host form, which already routes to the right port through its own
+// subdomain -- appending :port to it would break it).
+
+test('a bare host gets http:// and the room\'s port appended', () => {
+  const url = joinUrl({ advertise: '100.120.156.59', port: 8787 }, 'TOKEN')
+  assert.equal(url, 'http://100.120.156.59:8787/?token=TOKEN')
+})
+
+test('a tailnet hostname is treated the same as a bare IP', () => {
+  const url = joinUrl({ advertise: 'room.tailnet.ts.net', port: 8787 }, 'TOKEN')
+  assert.equal(url, 'http://room.tailnet.ts.net:8787/?token=TOKEN')
+})
+
+test('a full devtunnel URL is used as-is, with no scheme doubled and no port appended', () => {
+  // The exact bug this guards: http://${advertise}:${port}/... on a value that
+  // is already a full URL used to produce http://https://host:port/... .
+  const url = joinUrl({ advertise: 'https://4pbf2mzp-5999.inc1.devtunnels.ms', port: 51820 }, 'TOKEN')
+  assert.equal(url, 'https://4pbf2mzp-5999.inc1.devtunnels.ms/?token=TOKEN')
 })
 
 test('the repo a worker gets its worktree in defaults to where the room was started', () => {

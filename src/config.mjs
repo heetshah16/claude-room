@@ -25,6 +25,22 @@ export function advertiseHost(bind, ifaces = networkInterfaces()) {
   return tailnet ?? v4[0] ?? '127.0.0.1'
 }
 
+/**
+ * The join link for a member's token, given the room's own advertised address.
+ *
+ * `advertise` is one of two shapes: a bare host (an IP or a tailnet hostname,
+ * from autodetection or an explicit ROOM_ADVERTISE) needing `http://` and the
+ * port appended, or a full external URL (devtunnel's port-free host form,
+ * which already routes to the right port through its own subdomain) used
+ * as-is. Guessing the shape from a scheme prefix keeps ROOM_ADVERTISE simple
+ * to set either way, rather than needing a second env var to say which it is.
+ */
+export function joinUrl(config, token) {
+  return /^https?:\/\//i.test(config.advertise)
+    ? `${config.advertise}/?token=${token}`
+    : `http://${config.advertise}:${config.port}/?token=${token}`
+}
+
 const int = (v, d) => (v != null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : d)
 const bool = v => v === '1' || v === 'true'
 const oneOf = (v, allowed, d) => (allowed.includes(v) ? v : d)
