@@ -35,7 +35,8 @@ let roomSession = null // the room, its feed and its fleet — outlives any chat
 let chat = null // { panel } — the live chat session, if one is open
 let activeWorkersView = null // the sidebar, which outlives any session
 let activeRoomView = null // the room sidebar, which outlives any session
-let activeOpenWorker = null // opens a worker's tab, once a chat exists
+let activeOpenWorker = null // opens a worker's tab; available once the room session has started
+const workerPanels = new Map() // handle -> panel; outlives any one chat, like the sidebar does
 
 function log(msg) {
   output?.appendLine(String(msg))
@@ -49,6 +50,33 @@ const vscodeUi = {
   showError: m => vscode.window.showErrorMessage(m),
   showInfo: m => vscode.window.showInformationMessage(m),
   copy: t => vscode.env.clipboard.writeText(t),
+}
+
+/** Re-feeds a worker's already-open tab, if it has one. */
+function pushWorker(session, handle) {
+  const p = workerPanels.get(handle)
+  if (p) p.postWorker(session.pool.detail(handle))
+}
+
+/**
+ * Open a worker's tab, or reveal it if one is already open.
+ *
+ * Independent of any chat: the sidebar can open a worker's tab before a chat
+ * ever exists, the same way it can publish or add a worker without one.
+ */
+function openWorker(context, session, handle) {
+  const existing = workerPanels.get(handle)
+  if (existing) return existing.reveal()
+  const wp = createWorkerPanel({
+    context,
+    handle,
+    onSay: (h, text) => session.roomClient.say(h, text),
+    onInterrupt: h => log(`interrupt requested for ${h}`),
+    onRefresh: h => pushWorker(session, h),
+  })
+  wp.onDidDispose(() => workerPanels.delete(handle))
+  workerPanels.set(handle, wp)
+  pushWorker(session, handle)
 }
 
 /**
@@ -68,8 +96,14 @@ async function ensureSession(context) {
     return null
   }
   roomSession = s
-  s.onWorkers(list => activeWorkersView?.postWorkers(list))
+  s.onWorkers(list => {
+    activeWorkersView?.postWorkers(list)
+    // A worker whose tab is open sees every change, not only the ones that
+    // happen to arrive while it is focused.
+    for (const handle of workerPanels.keys()) pushWorker(s, handle)
+  })
   s.onRoom(room => activeRoomView?.postRoom(room))
+  activeOpenWorker = handle => openWorker(context, s, handle)
   // The first paint: the views are already asking, and the answer needs the
   // roster the session has only just become able to read.
   s.postRoom().catch(err => log(`room state failed: ${err?.message ?? err}`))
@@ -192,10 +226,11 @@ function activate(context) {
     vscode.commands.registerCommand('claudeRoom.restart', () => restart(context)),
     vscode.commands.registerCommand('claudeRoom.installTools', () => offerMissingTools({ force: true })),
     vscode.commands.registerCommand('claudeRoom.openWorker', handle => {
-      // The sidebar exists before any chat does. Without a chat there is no
-      // worker tab to open, so say so rather than doing nothing at all.
+      // Set the moment the room session starts (any view's first reveal), so
+      // in practice this only guards a command fired before that -- say why
+      // rather than doing nothing at all.
       if (!activeOpenWorker) {
-        vscode.window.showInformationMessage('Claude Room: worker tabs open from the orchestrator chat.')
+        vscode.window.showInformationMessage('Claude Room: open the Workers view first.')
         return
       }
       activeOpenWorker(String(handle ?? ''))
@@ -245,7 +280,7 @@ async function openChat(context) {
 
   const session = await ensureSession(context)
   if (!session) return
-  const { roomUrl, token, roomClient, pool } = session
+  const { roomUrl, token, pool } = session
   const storageDir = context.globalStorageUri?.fsPath ?? context.globalStoragePath
   const stateDir = path.join(storageDir, 'room-state')
 
@@ -358,38 +393,9 @@ async function openChat(context) {
     }
   }, 0)
 
-  // One tab per worker, opened on demand from the sidebar and kept fed by the
-  // same onChange every other surface uses.
-  const workerPanels = new Map()
-
-  function pushWorker(handle) {
-    const p = workerPanels.get(handle)
-    if (p) p.postWorker(pool.detail(handle))
-  }
-
-  function openWorker(handle) {
-    const existing = workerPanels.get(handle)
-    if (existing) return existing.reveal()
-    const wp = createWorkerPanel({
-      context,
-      handle,
-      onSay: (h, text) => roomClient.say(h, text),
-      onInterrupt: h => log(`interrupt requested for ${h}`),
-      onRefresh: h => pushWorker(h),
-    })
-    wp.onDidDispose(() => workerPanels.delete(handle))
-    workerPanels.set(handle, wp)
-    pushWorker(handle)
-  }
-
-  const offWorkers = session.onWorkers(list => {
-    panel.postWorkers(list)
-    // A worker whose tab is open sees every change, not only the ones that
-    // happen to arrive while it is focused.
-    for (const handle of workerPanels.keys()) pushWorker(handle)
-  })
-
-  activeOpenWorker = openWorker
+  // Worker tabs are owned at module scope now (opened from the sidebar with
+  // or without a chat); the chat just also wants every worker list update.
+  const offWorkers = session.onWorkers(list => panel.postWorkers(list))
 
   // The session holds the one subscription; the chat just asks to hear from it.
   const offActivity = session.onActivity(a => panel.postActivity(a))
