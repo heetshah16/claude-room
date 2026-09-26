@@ -164,7 +164,9 @@ export function spawnPortable(name, args = [], opts = {}, deps = {}) {
   if (!found) return failedChild(new Error(`command not found on PATH: ${name}`))
   try {
     // A real executable is spawned directly, with no shell anywhere near it.
-    if (!found.needsShell) return spawnImpl(found.path, args, { ...opts, shell: false })
+    // windowsHide: a launcher spawned from a headless extension host must
+    // never flash a console window at whoever is running it.
+    if (!found.needsShell) return spawnImpl(found.path, args, { ...opts, shell: false, windowsHide: true })
 
     // Node's shell:true joins argv with plain spaces and quotes nothing, so
     // any argument containing a space is silently split — and both seat
@@ -175,7 +177,7 @@ export function spawnPortable(name, args = [], opts = {}, deps = {}) {
     const comspec = env.ComSpec || env.COMSPEC || 'cmd.exe'
     const quoted = [found.path, ...args].map(quoteForCmd).join(' ')
     return spawnImpl(comspec, ['/d', '/s', '/c', `"${quoted}"`], {
-      ...opts, windowsVerbatimArguments: true, shell: false,
+      ...opts, windowsVerbatimArguments: true, shell: false, windowsHide: true,
     })
   } catch (err) {
     return failedChild(err)

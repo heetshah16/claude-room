@@ -111,6 +111,7 @@ test('a real executable is spawned directly, with no shell and no cmd.exe anywhe
   assert.deepEqual(seen[0].args, ['--add-dir', 'C:\\My Repo'])
   assert.equal(seen[0].opts.shell, false)
   assert.equal(seen[0].opts.windowsVerbatimArguments, undefined)
+  assert.equal(seen[0].opts.windowsHide, true, 'no console window for a headless extension host')
 })
 
 test('the .cmd shim goes through cmd.exe explicitly, never through Node shell:true', () => {
@@ -127,6 +128,11 @@ test('the .cmd shim goes through cmd.exe explicitly, never through Node shell:tr
   assert.equal(seen[0].file, 'cmd.exe')
   assert.equal(seen[0].opts.shell, false, 'shell:true is exactly what this replaces')
   assert.equal(seen[0].opts.windowsVerbatimArguments, true)
+  // cmd.exe is a console-subsystem process: without this, Windows pops up a
+  // real, visible console window for it even though its stdio is piped
+  // elsewhere -- a launcher spawned from a headless extension host must not
+  // flash a terminal at whoever is running it.
+  assert.equal(seen[0].opts.windowsHide, true)
   assert.deepEqual(seen[0].args.slice(0, 3), ['/d', '/s', '/c'])
   assert.equal(seen[0].args[3], '"C:\\bin\\opencode.cmd --add-dir "C:\\My Repo""')
 })
