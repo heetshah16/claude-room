@@ -117,7 +117,12 @@ async function offerMissingTools({ force = false } = {}) {
   const detail = plan.map(p => `${p.tool}\n  ${p.command}\n  ${p.note}`).join('\n\n')
   const choice = await vscode.window.showWarningMessage(
     `Claude Room: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not on PATH.`,
-    { modal: true, detail: `${detail}\n\nRunning these opens a terminal; nothing is installed until you say so.` },
+    {
+      modal: true,
+      detail: `${detail}\n\nRunning these opens a terminal; nothing is installed until you say so.\n\n` +
+        'A newly installed tool will not be found until you close and reopen this window: ' +
+        'PATH is read once, when the window starts.',
+    },
     'Run these commands',
     'Copy commands',
   )
