@@ -180,3 +180,13 @@ test('stdout is buffered and readable through status, bounded so it cannot grow 
   child.stdout.emit('data', 'Connect via browser: https://abc-1234.devtunnels.ms\n')
   assert.match(sup.status('tunnel').output, /devtunnels\.ms/)
 })
+
+test('stderr is buffered and readable through status too, the same way stdout is', () => {
+  // devtunnel prints why it failed on stderr, not stdout -- a caller cannot
+  // explain a failure with a channel that was thrown away.
+  const child = fakeChild()
+  const { sup } = harness({ children: [child] })
+  sup.start('tunnel', { cmd: 'devtunnel', args: [] })
+  child.stderr.emit('data', 'Error: not logged in\n')
+  assert.match(sup.status('tunnel').errOutput, /not logged in/)
+})

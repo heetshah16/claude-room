@@ -37,9 +37,14 @@ function createSupervisor({
     const rec = { child, state: 'running', error: null, pid: child.pid, stopping: false, order: order++ }
     procs.set(name, rec)
 
-    // Nothing else reads stderr, so an unread pipe would otherwise sit full
-    // and a crash would surface as only a bare exit code with no reason.
-    child.stderr?.on('data', d => log(`${name}: ${d}`))
+    // Logged AND buffered: the log is for the output channel, the buffer is
+    // for a caller that needs to explain a failure in the child's own words
+    // (devtunnel prints why it failed on stderr, not stdout).
+    rec.errOutput = ''
+    child.stderr?.on('data', d => {
+      rec.errOutput = (rec.errOutput + d).slice(-4096)
+      log(`${name}: ${d}`)
+    })
 
     // Bounded so a chatty child (or one left running a long time) cannot grow
     // this without limit; devtunnel's URL line appears in its first few lines,
@@ -83,8 +88,11 @@ function createSupervisor({
     },
     status(name) {
       const rec = procs.get(name)
-      if (!rec) return { state: 'stopped', pid: null, error: null, output: '' }
-      return { state: rec.state, pid: rec.pid, error: rec.error, output: rec.output ?? '' }
+      if (!rec) return { state: 'stopped', pid: null, error: null, output: '', errOutput: '' }
+      return {
+        state: rec.state, pid: rec.pid, error: rec.error,
+        output: rec.output ?? '', errOutput: rec.errOutput ?? '',
+      }
     },
     on: (ev, cb) => bus.on(ev, cb),
   }

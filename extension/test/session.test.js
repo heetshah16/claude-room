@@ -40,6 +40,7 @@ function harness(over = {}) {
     pickPort: async () => 51820,
     readToken: () => 'owner-token',
     detectTunnel: () => true,
+    isLoggedIn: async () => true,
     // No real waiting anywhere: the clock advances a second per read, so a
     // poll that is going to time out does so immediately.
     sleep: async () => {},
@@ -266,15 +267,38 @@ test('publishing starts the tunnel and restarts the room on the same port and st
   assert.equal(session.isPublished(), true)
 })
 
+test('publishing without being logged in to devtunnel says so, before waiting on anything', async () => {
+  // isLoggedIn is checked up front now, so a not-logged-in account is an
+  // immediate, correct answer -- not a 10s wait for a guess.
+  const { session, started, errors } = harness({ isLoggedIn: async () => false })
+  await session.start()
+  await session.republish(true)
+  assert.equal(session.isPublished(), false)
+  assert.equal(started.filter(s => s.name === 'tunnel').length, 0)
+  assert.match(errors.join(' '), /devtunnel user login/)
+})
+
 test('a tunnel that never prints a URL is stopped rather than left hosting blind', async () => {
   const { session, stopped, errors } = harness({
-    supervisor: { status: () => ({ output: 'Connecting...\n' }) },
+    supervisor: { status: () => ({ output: 'Connecting...\n', errOutput: '' }) },
   })
   await session.start()
   await session.republish(true)
   assert.ok(stopped.includes('tunnel'))
   assert.equal(session.isPublished(), false)
-  assert.match(errors.join(' '), /devtunnel user login/)
+  // Login is already confirmed by this point (harness default), so the
+  // message must not repeat a guess that has already been ruled out.
+  assert.match(errors.join(' '), /devtunnel did not report a URL within 10s/)
+  assert.doesNotMatch(errors.join(' '), /devtunnel user login/)
+})
+
+test('a tunnel failure surfaces devtunnel\'s own error text, not a guess', async () => {
+  const { session, errors } = harness({
+    supervisor: { status: () => ({ output: 'Connecting...\n', errOutput: 'ERROR: network is unreachable\n' }) },
+  })
+  await session.start()
+  await session.republish(true)
+  assert.match(errors.join(' '), /network is unreachable/)
 })
 
 test('stop sharing stops the tunnel and rebinds the room to loopback', async () => {

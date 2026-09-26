@@ -1,4 +1,5 @@
 'use strict'
+const { execFile: nodeExecFile } = require('node:child_process')
 const { onPath } = require('./install.js')
 
 /**
@@ -42,4 +43,23 @@ function parseTunnelUrl(output) {
   return portFree ?? urls[0]
 }
 
-module.exports = { detectDevtunnel, tunnelRecipe, parseTunnelUrl }
+/**
+ * Is there a signed-in devtunnel account? Being on PATH is not enough:
+ * `devtunnel host` needs an account too, and finding that out from a blind
+ * 10s timeout is the whole reason this check exists -- `devtunnel user show`
+ * answers it in well under a second.
+ *
+ * A failure to even run the check (ENOENT, a killed process, anything) is
+ * treated the same as "not logged in": either way a tunnel cannot be hosted,
+ * so there is nothing a caller would do differently.
+ */
+function isLoggedIn({ execFile = nodeExecFile, devtunnelPath = 'devtunnel' } = {}) {
+  return new Promise(resolve => {
+    execFile(devtunnelPath, ['user', 'show'], (err, stdout) => {
+      if (err) return resolve(false)
+      resolve(!/^Not logged in\.?/m.test(String(stdout)))
+    })
+  })
+}
+
+module.exports = { detectDevtunnel, tunnelRecipe, parseTunnelUrl, isLoggedIn }

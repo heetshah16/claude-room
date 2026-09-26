@@ -15,7 +15,7 @@
 const net = require('node:net')
 
 const { roomRecipe, readOwnerToken, createRoomClient, PUBLISHED_HOST } = require('./room-client.js')
-const { detectDevtunnel, tunnelRecipe, parseTunnelUrl } = require('./tunnel.js')
+const { detectDevtunnel, tunnelRecipe, parseTunnelUrl, isLoggedIn: devtunnelLoggedIn } = require('./tunnel.js')
 const { createEventRouter } = require('./events.js')
 const { createWorkerPool } = require('./workers.js')
 
@@ -144,7 +144,7 @@ async function pollWithBackoff(fn, { timeoutMs = 10_000, startMs = 150, maxMs = 
  * @param {{repoRoot: string, stateDir: string, supervisor: object,
  *          ui: {showError: Function, showInfo: Function, copy: Function},
  *          log?: Function, fetchImpl?: Function, pickPort?: Function,
- *          readToken?: Function, detectTunnel?: Function,
+ *          readToken?: Function, detectTunnel?: Function, isLoggedIn?: Function,
  *          sleep?: Function, now?: () => number}} deps
  */
 function createSession({
@@ -157,6 +157,7 @@ function createSession({
   pickPort = pickFreePort,
   readToken = readOwnerToken,
   detectTunnel = detectDevtunnel,
+  isLoggedIn = devtunnelLoggedIn,
   sleep = realSleep,
   now = Date.now,
 }) {
@@ -287,6 +288,14 @@ function createSession({
           await postRoom({ busy: false })
           return
         }
+        // Being on PATH is not being usable: `devtunnel host` still needs an
+        // account. Checking this now (well under a second) turns what used to
+        // be a blind 10s timeout-then-guess into an immediate, correct answer.
+        if (!(await isLoggedIn())) {
+          ui.showError('Claude Room: devtunnel is installed but not logged in. Run: devtunnel user login, then try Publish again.')
+          await postRoom({ busy: false })
+          return
+        }
         supervisor.start('tunnel', tunnelRecipe({ port }))
         // The CLI prints its URL once, on stdout, then keeps running -- poll the
         // supervisor's own stdout buffer rather than re-parenting a second reader.
@@ -295,7 +304,12 @@ function createSession({
           { sleep, now },
         )
         if (!tunnelUrl) {
-          ui.showError('Claude Room: devtunnel did not report a URL within 10s. Is `devtunnel user login` done?')
+          // Login is already confirmed by this point, so this is some other
+          // failure (network, proxy, a devtunnel-side outage) -- show its own
+          // stderr rather than repeating a guess that has already been ruled out.
+          const errOutput = (supervisor.status('tunnel').errOutput ?? '').trim()
+          const detail = errOutput ? ` — ${errOutput}` : ''
+          ui.showError(`Claude Room: devtunnel did not report a URL within 10s${detail}`)
           supervisor.stop('tunnel')
           await postRoom({ busy: false })
           return
