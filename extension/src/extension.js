@@ -240,18 +240,18 @@ function activate(context) {
   )
 }
 
-function deactivate() {
+async function deactivate() {
   roomSession?.stop()
   roomSession = null
   chat = null
-  supervisor?.stopAll()
+  await supervisor?.stopAll()
 }
 
 async function restart(context) {
   roomSession?.stop()
   roomSession = null
   chat = null
-  supervisor.stopAll()
+  await supervisor.stopAll()
   if (await ensureSession(context)) await openChat(context)
 }
 
@@ -305,7 +305,7 @@ async function openChat(context) {
   const sessionId = crypto.randomUUID()
   await context.workspaceState.update(SESSION_KEY, priorSessionId ?? sessionId)
 
-  const orchProc = supervisor.start('orchestrator', orchestratorRecipe({
+  const orchProc = await supervisor.start('orchestrator', orchestratorRecipe({
     repoRoot: REPO_ROOT,
     roomUrl,
     token,
@@ -414,7 +414,7 @@ async function openChat(context) {
     await context.workspaceState.update(PERMISSION_KEY, mode)
     const prior = context.workspaceState.get(SESSION_KEY) ?? sessionId
     try {
-      const proc = supervisor.start('orchestrator', orchestratorRecipe({
+      const proc = await supervisor.start('orchestrator', orchestratorRecipe({
         repoRoot: REPO_ROOT, roomUrl, token,
         sessionId: crypto.randomUUID(),
         priorSessionId: prior,

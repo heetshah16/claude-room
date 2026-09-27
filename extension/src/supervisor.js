@@ -4,20 +4,29 @@ const { EventEmitter } = require('node:events')
 const { spawn: nodeSpawn, execFile } = require('node:child_process')
 
 /**
- * Kill a process and everything it started.
+ * Kill a process and everything it started, and don't report done until it
+ * genuinely is.
  *
  * `child.kill()` is not enough on Windows: a `.cmd` shim runs under cmd.exe,
  * so killing the child kills the shell and leaves the real server running,
  * holding its port and its worktree. That was observed twice while building
  * the OpenCode seat, both times needing a manual hunt.
+ *
+ * Returning before `taskkill` itself finishes was a second, subtler version
+ * of the same problem: a caller that immediately spawned a replacement on the
+ * same port could reach the OLD process -- still alive for a moment -- and
+ * get a real, successful-looking answer built from stale state (a devtunnel
+ * address computed before publish, a worker list from before an add).
  */
 function defaultKillTree(pid, platform = process.platform) {
-  if (!pid) return
+  if (!pid) return Promise.resolve()
   if (platform === 'win32') {
-    execFile('taskkill', ['/T', '/F', '/PID', String(pid)], () => {})
-    return
+    return new Promise(resolve => {
+      execFile('taskkill', ['/T', '/F', '/PID', String(pid)], () => resolve())
+    })
   }
   try { process.kill(-pid, 'SIGTERM') } catch { try { process.kill(pid, 'SIGTERM') } catch {} }
+  return Promise.resolve()
 }
 
 function createSupervisor({
@@ -31,8 +40,8 @@ function createSupervisor({
   const procs = new Map() // name -> { child, state, error, pid, stopping, order }
   let order = 0
 
-  function start(name, { cmd, args = [], opts = {} }) {
-    if (procs.has(name)) stop(name)
+  async function start(name, { cmd, args = [], opts = {} }) {
+    if (procs.has(name)) await stop(name)
     const child = spawn(cmd, args, opts)
     const rec = { child, state: 'running', error: null, pid: child.pid, stopping: false, order: order++ }
     procs.set(name, rec)
@@ -69,22 +78,22 @@ function createSupervisor({
     return rec
   }
 
-  function stop(name) {
+  async function stop(name) {
     const rec = procs.get(name)
     if (!rec) return
     rec.stopping = true
     rec.state = 'stopped'
-    killTree(rec.pid)
     procs.delete(name)
+    await killTree(rec.pid)
   }
 
   return {
     start,
     stop,
     /** Reverse start order: workers depend on the room, so the room goes last. */
-    stopAll() {
+    async stopAll() {
       const names = [...procs.entries()].sort((a, b) => b[1].order - a[1].order).map(([n]) => n)
-      for (const n of names) stop(n)
+      for (const n of names) await stop(n)
     },
     status(name) {
       const rec = procs.get(name)

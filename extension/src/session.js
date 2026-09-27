@@ -213,14 +213,14 @@ function createSession({
       return { ok: false, error: `could not find a free port: ${err?.message ?? err}` }
     }
     const roomUrl = `http://127.0.0.1:${port}`
-    supervisor.start('room', roomRecipe({ repoRoot, stateDir, port }))
+    await supervisor.start('room', roomRecipe({ repoRoot, stateDir, port }))
 
     let token
     try {
       await waitForRoomUp(roomUrl)
       token = await waitForOwnerToken()
     } catch (err) {
-      supervisor.stop('room')
+      await supervisor.stop('room')
       return { ok: false, error: err?.message ?? String(err) }
     }
 
@@ -296,7 +296,7 @@ function createSession({
           await postRoom({ busy: false })
           return
         }
-        supervisor.start('tunnel', tunnelRecipe({ port }))
+        await supervisor.start('tunnel', tunnelRecipe({ port }))
         // The CLI prints its URL once, on stdout, then keeps running -- poll the
         // supervisor's own stdout buffer rather than re-parenting a second reader.
         const tunnelUrl = await pollWithBackoff(
@@ -310,14 +310,14 @@ function createSession({
           const errOutput = (supervisor.status('tunnel').errOutput ?? '').trim()
           const detail = errOutput ? ` — ${errOutput}` : ''
           ui.showError(`Claude Room: devtunnel did not report a URL within 10s${detail}`)
-          supervisor.stop('tunnel')
+          await supervisor.stop('tunnel')
           await postRoom({ busy: false })
           return
         }
-        supervisor.start('room', roomRecipe({ repoRoot, stateDir, port, host: PUBLISHED_HOST, advertise: tunnelUrl }))
+        await supervisor.start('room', roomRecipe({ repoRoot, stateDir, port, host: PUBLISHED_HOST, advertise: tunnelUrl }))
       } else {
-        supervisor.stop('tunnel')
-        supervisor.start('room', roomRecipe({ repoRoot, stateDir, port, host: '127.0.0.1' }))
+        await supervisor.stop('tunnel')
+        await supervisor.start('room', roomRecipe({ repoRoot, stateDir, port, host: '127.0.0.1' }))
       }
       await waitForRoomUp(api.roomUrl)
       published = next
@@ -327,7 +327,7 @@ function createSession({
       // so it is stopped; a failed stop-sharing has still stopped the tunnel.
       // Either way sharing is not working, and saying "published" would be a
       // confident lie about who can reach this room.
-      if (next) supervisor.stop('tunnel')
+      if (next) await supervisor.stop('tunnel')
       published = false
       ui.showError(`Claude Room: the room did not restart — ${err?.message ?? err}`)
       log(`republish failed: ${err?.stack ?? err}`)
