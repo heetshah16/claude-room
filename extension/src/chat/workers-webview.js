@@ -102,13 +102,23 @@
   }
 
   addEl.appendChild(icon('plus', document))
-  addEl.addEventListener('click', () => vscode.postMessage({ type: 'add-worker' }))
+  addEl.addEventListener('click', () => {
+    // A real spawn takes several seconds (a worktree, then a real opencode
+    // boot) with nothing else in the UI showing that. Without this, an
+    // impatient second click starts a second real worker, not a retry.
+    if (addEl.disabled) return
+    addEl.disabled = true
+    vscode.postMessage({ type: 'add-worker' })
+  })
 
   window.addEventListener('message', event => {
     const msg = event.data
     if (!msg || typeof msg !== 'object') return
     if (msg.type === 'workers') {
       workers = Array.isArray(msg.workers) ? msg.workers : []
+      // The pool posts a fresh list once an add attempt settles, whether it
+      // succeeded or not -- the only signal this view gets either way.
+      addEl.disabled = false
       render()
     }
   })

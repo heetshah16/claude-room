@@ -65,6 +65,10 @@ function createWorkerPool({
     const r = await roomClient.spawnWorker(wanted ? { model: wanted } : {})
     if (!r?.ok || !r.handle) {
       log(`could not start a worker: ${r?.errors?.[0] ?? 'the room did not return a handle'}`)
+      // Nothing changed, but a caller waiting for the attempt to settle (the
+      // sidebar's Add button, disabled since the click) needs to hear that it
+      // has, or a refused spawn leaves it disabled forever.
+      changed()
       return null // a worker the room refused is not a worker
     }
 

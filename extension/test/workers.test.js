@@ -89,6 +89,19 @@ test('a spawn that answers without a handle is refused, not listed as blank', as
   assert.deepEqual(pool.list(), [])
 })
 
+test('a refused spawn still notifies listeners, so a caller waiting on it can stop waiting', async () => {
+  // The sidebar's Add button disables itself on click and re-enables only on
+  // the next onChange -- with no notification here, a refused spawn would
+  // leave that button disabled forever, not just on a successful one.
+  const { pool } = fakePool({
+    roomClient: { spawnWorker: async () => ({ ok: false, errors: ['no opencode on PATH'] }) },
+  })
+  const seen = []
+  pool.onChange(list => seen.push(list.length))
+  await pool.add()
+  assert.equal(seen.length, 1, 'onChange must fire even though nothing was added')
+})
+
 test('stop asks the room to reap the worker, then forgets it', async () => {
   const { pool, stopped } = fakePool()
   await pool.ensureOne()
