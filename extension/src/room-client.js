@@ -75,7 +75,11 @@ function createRoomClient({ roomUrl, token, fetchImpl = fetch }) {
       if (!res.ok) return { ok: false, errors: [`${path} failed: HTTP ${res.status}`] }
       return await res.json()
     } catch (err) {
-      return { ok: false, errors: [String(err?.message ?? err)] }
+      // Node's fetch() reports every connection-level failure with the same
+      // useless message, "fetch failed" -- the actual reason (ECONNREFUSED, a
+      // reset, a timeout) is on .cause, which is worth keeping.
+      const detail = err?.cause?.message ?? err?.cause
+      return { ok: false, errors: [detail ? `${err.message}: ${detail}` : String(err?.message ?? err)] }
     }
   }
 

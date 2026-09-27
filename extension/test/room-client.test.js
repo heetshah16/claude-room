@@ -46,6 +46,21 @@ test('delegate posts the brief and returns the room verdict verbatim', () => {
   })
 })
 
+test('a connection failure reports the real reason, not just "fetch failed"', () => {
+  // Confirmed against a real Node fetch() to a closed port: the thrown
+  // error's own .message is ALWAYS the unhelpful literal string "fetch
+  // failed" -- the actual reason (ECONNREFUSED, a reset, a timeout) lives on
+  // .cause, which String(err.message) silently drops on the floor.
+  const err = new TypeError('fetch failed')
+  err.cause = new Error('connect ECONNREFUSED 127.0.0.1:62953')
+  const fetchImpl = async () => { throw err }
+  const c = createRoomClient({ roomUrl: 'http://room', token: 't', fetchImpl })
+  return c.delegate({ to: '@x', class: 'reasoning', task: 'y' }).then(r => {
+    assert.equal(r.ok, false)
+    assert.match(r.errors[0], /ECONNREFUSED/)
+  })
+})
+
 test('a non-ok HTTP response becomes a readable failure, not a thrown status', () => {
   const fetchImpl = async () => ({ ok: false, status: 503, json: async () => ({}) })
   const c = createRoomClient({ roomUrl: 'http://room', token: 't', fetchImpl })
