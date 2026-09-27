@@ -83,6 +83,17 @@ const runtime = {
 
 const admin = createAdmin({ registry, bans, store, bus, config, queue, runtime, seats })
 
+// A worker's process is a child of the room's own PID and dies with it --
+// killTree kills the whole tree -- so any agent member already on disk at
+// this exact moment cannot have a live process behind it: it is either this
+// room's own prior incarnation's worker or an even older orphan. Pruning it
+// here, once, at boot (never again once real workers start connecting this
+// session) frees its handle to be reused rather than leaving a permanently
+// stale "member" nothing can ever restart under.
+for (const m of registry.agents()) {
+  if (!seats.isOnline(m.handle)) admin.run('remove', { memberId: m.id })
+}
+
 // Rotation needs Console API keys. Verified 2026-08-22: a subscription OAuth
 // access token supplied through apiKeyHelper does not authenticate, and the
 // session hangs retrying rather than failing, which would stall the room.
