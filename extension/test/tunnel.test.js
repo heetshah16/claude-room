@@ -48,8 +48,11 @@ test('a line carrying only the port-suffixed form still yields a usable host', (
 // timeout-then-guess into an immediate, correct answer.
 
 test('a signed-in account is reported as logged in', async () => {
+  // The real shape, confirmed against the actual CLI: "Logged in as <name>
+  // using <provider>." -- not the "You are logged in as..." guess this test
+  // used before, which the real binary has never once printed.
   const loggedIn = await isLoggedIn({
-    execFile: (cmd, args, cb) => cb(null, 'You are logged in as ana@example.com.\n', ''),
+    execFile: (cmd, args, cb) => cb(null, 'Logged in as ana using GitHub.\n', ''),
   })
   assert.equal(loggedIn, true)
 })
@@ -57,6 +60,17 @@ test('a signed-in account is reported as logged in', async () => {
 test('devtunnel\'s own "Not logged in." is reported as not logged in', async () => {
   const loggedIn = await isLoggedIn({
     execFile: (cmd, args, cb) => cb(null, 'Not logged in.\n', ''),
+  })
+  assert.equal(loggedIn, false)
+})
+
+test('an expired login token is reported as not logged in, not as logged in', async () => {
+  // Confirmed against the real CLI: `devtunnel user show` prints exactly this
+  // and exits 0 -- indistinguishable from success by exit code alone, and NOT
+  // matched by a "Not logged in." blocklist check, which is exactly the bug
+  // this test guards: a blocklist treats every unrecognised string as usable.
+  const loggedIn = await isLoggedIn({
+    execFile: (cmd, args, cb) => cb(null, 'Login token expired.\n', ''),
   })
   assert.equal(loggedIn, false)
 })

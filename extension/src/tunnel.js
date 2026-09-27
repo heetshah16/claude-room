@@ -44,20 +44,25 @@ function parseTunnelUrl(output) {
 }
 
 /**
- * Is there a signed-in devtunnel account? Being on PATH is not enough:
- * `devtunnel host` needs an account too, and finding that out from a blind
- * 10s timeout is the whole reason this check exists -- `devtunnel user show`
- * answers it in well under a second.
+ * Is there a signed-in, currently-usable devtunnel account? Being on PATH is
+ * not enough: `devtunnel host` also needs an account, and finding that out
+ * from a blind 10s timeout is the whole reason this check exists --
+ * `devtunnel user show` answers it in well under a second.
  *
- * A failure to even run the check (ENOENT, a killed process, anything) is
- * treated the same as "not logged in": either way a tunnel cannot be hosted,
- * so there is nothing a caller would do differently.
+ * An ALLOWLIST, deliberately: `devtunnel user show` has at least three
+ * distinct outputs, confirmed against the real CLI -- "Not logged in.",
+ * "Login token expired." (exit code 0, indistinguishable from success by exit
+ * code alone), and "Logged in as <name> using <provider>.". A blocklist that
+ * only excludes the first string treats the second as usable, which it is
+ * not. Requiring the one specific success shape -- and treating a failure to
+ * even run the check the same way -- means an unrecognised future message
+ * fails safe instead of silently being treated as fine.
  */
 function isLoggedIn({ execFile = nodeExecFile, devtunnelPath = 'devtunnel' } = {}) {
   return new Promise(resolve => {
     execFile(devtunnelPath, ['user', 'show'], (err, stdout) => {
       if (err) return resolve(false)
-      resolve(!/^Not logged in\.?/m.test(String(stdout)))
+      resolve(/^Logged in as /m.test(String(stdout)))
     })
   })
 }
