@@ -170,6 +170,25 @@ test('activity marks a starting worker as live, since it is plainly working', as
   assert.notEqual(pool.list()[0].state, 'starting')
 })
 
+test('a seat coming online marks a starting worker idle, with no task assigned yet', async () => {
+  // The bug this guards: a worker that connects but is never delegated to had
+  // no event that ever moved it out of "starting" -- it just stayed there
+  // forever, looking stuck even though it was genuinely ready and waiting.
+  const pool = await poolWithOne()
+  assert.equal(pool.list()[0].state, 'starting')
+  pool.applyRoomEvent('seat-online', { handle: 'worker-1' })
+  assert.equal(pool.list()[0].state, 'idle')
+})
+
+test('a seat coming online does not disturb a worker that is already busy', async () => {
+  // A late or duplicate seat-online (a reconnect mid-turn) must not undo
+  // real, in-progress work.
+  const pool = await poolWithOne()
+  pool.applyRoomEvent('delegation', { to: 'worker-1', state: 'sent', task: 'x', id: 'd1' })
+  pool.applyRoomEvent('seat-online', { handle: 'worker-1' })
+  assert.equal(pool.list()[0].state, 'busy')
+})
+
 test('tool activity is recorded against the worker that ran it', async () => {
   const f = fakePool()
   await f.pool.ensureOne()

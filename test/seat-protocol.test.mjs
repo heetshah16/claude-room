@@ -12,6 +12,19 @@ test('a seat joins with its member token and receives a seed', async () => {
   done(h)
 })
 
+test('a seat coming online is broadcast, so a client can tell a worker apart from merely started', async () => {
+  // Without this, nothing ever tells a client watching the room that a
+  // worker with no task yet has actually finished connecting -- only that a
+  // delegation was sent or activity happened, both of which require it to
+  // already be doing something.
+  const h = harness(); const base = await listen(h.server)
+  const events = await openEventsFeed(base, h.owner.token)
+  const seat = await openSeatFeed(base, h.agentToken)
+  const online = await events.until(e => e.event === 'seat-online')
+  assert.equal(online.data.handle, 'ana-agent')
+  events.close(); seat.close(); done(h)
+})
+
 test('a human token cannot claim a seat', async () => {
   const h = harness(); const base = await listen(h.server)
   const res = await post(base, '/seat/join', { token: h.owner.token, handle: 'ana-agent' })

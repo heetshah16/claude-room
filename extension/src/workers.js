@@ -187,6 +187,15 @@ function createWorkerPool({
         return
       }
 
+      if (event === 'seat-online') {
+        // The only signal that a worker with no task yet is actually ready:
+        // delegation and activity both require it to already be doing
+        // something, so without this a worker nobody has delegated to yet
+        // stayed on "starting" forever, looking stuck though it was fine.
+        if (w.state === 'starting') { w.state = 'idle'; changed() }
+        return
+      }
+
       if (event === 'activity') {
         // A worker producing activity is plainly past starting, whatever the
         // launcher has got round to reporting.

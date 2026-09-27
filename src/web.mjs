@@ -634,6 +634,11 @@ export function createWeb(deps) {
         const r = seats.join(member, res)
         if (!r.ok) return json(res, 409, { error: r.reason })
         const seatId = r.seatId
+        // The only signal a client gets that a worker with no task yet is
+        // actually ready: delegation and activity both require it to already
+        // be doing something, so without this a freshly connected worker
+        // looked permanently stuck on "starting".
+        bus.publish('seat-online', { handle: member.handle })
 
         res.writeHead(200, {
           'content-type': 'text/event-stream',
