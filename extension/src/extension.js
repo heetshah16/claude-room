@@ -37,6 +37,7 @@ let activeWorkersView = null // the sidebar, which outlives any session
 let activeRoomView = null // the room sidebar, which outlives any session
 let activeOpenWorker = null // opens a worker's tab; available once the room session has started
 const workerPanels = new Map() // handle -> panel; outlives any one chat, like the sidebar does
+let knownWorkerHandles = new Set() // detects an add/remove, as opposed to a busy/idle flicker
 
 function log(msg) {
   output?.appendLine(String(msg))
@@ -101,6 +102,19 @@ async function ensureSession(context) {
     // A worker whose tab is open sees every change, not only the ones that
     // happen to arrive while it is focused.
     for (const handle of workerPanels.keys()) pushWorker(s, handle)
+
+    // Workers ARE room members, so the Room view's own roster is stale the
+    // moment one is added or removed -- but onWorkers also fires on every
+    // busy/idle flicker, and re-fetching the whole room on each of those
+    // would be one HTTP round trip per tool call. Only a change to the SET
+    // of handles (not a state field) is worth a refresh.
+    const handles = new Set(list.map(w => w.handle))
+    const changed = handles.size !== knownWorkerHandles.size
+      || [...handles].some(h => !knownWorkerHandles.has(h))
+    if (changed) {
+      knownWorkerHandles = handles
+      s.postRoom().catch(err => log(`room state failed: ${err?.message ?? err}`))
+    }
   })
   s.onRoom(room => activeRoomView?.postRoom(room))
   activeOpenWorker = handle => openWorker(context, s, handle)
