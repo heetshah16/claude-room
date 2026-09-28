@@ -701,6 +701,17 @@ details.thinking .thinking-body {
   overflow-wrap: anywhere;
 }
 
+/* Only applied once there is somewhere to send a click -- a local address is
+   plain text, matching the standard VS Code link look everywhere else. */
+.room-address-link {
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+}
+.room-address-link:hover,
+.room-address-link:focus-visible {
+  text-decoration: underline;
+}
+
 .room-note {
   margin-top: 4px;
   font-size: 0.8em;

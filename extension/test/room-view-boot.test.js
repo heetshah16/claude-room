@@ -135,6 +135,29 @@ test('the local address is shown before publishing, because it is the whole deci
   assert.match(boot.get('room-address').textContent, /127\.0\.0\.1/)
 })
 
+test('clicking the published address asks the host to open it, token included', () => {
+  // The DOM never renders the token (see the test above); the click handler
+  // may still hand the full link to the extension host over postMessage,
+  // which is an internal channel, not the screen -- that is what lets the
+  // owner actually open their own working link instead of landing on a bare
+  // "paste your join token" page with nothing to paste.
+  const boot = bootRoomView()
+  boot.handleMessage(roomMsg({
+    published: true, advertised: 'https://abc-1234.inc1.devtunnels.ms/?token=SECRETTOKEN', members: [],
+  }))
+  boot.fire(boot.get('room-address'), 'click')
+  const opened = boot.posted.find(m => m.type === 'open-address')
+  assert.ok(opened, 'a click must ask the host to open the address')
+  assert.equal(opened.url, 'https://abc-1234.inc1.devtunnels.ms/?token=SECRETTOKEN')
+})
+
+test('clicking the local-only address does nothing, since there is nothing to open', () => {
+  const boot = bootRoomView()
+  boot.handleMessage(roomMsg({ published: false, advertised: null, members: [] }))
+  boot.fire(boot.get('room-address'), 'click')
+  assert.ok(!boot.posted.some(m => m.type === 'open-address'))
+})
+
 test('a failed roster says so rather than claiming the room is empty', () => {
   const boot = bootRoomView()
   boot.handleMessage(roomMsg({ published: false, advertised: null, members: null }))

@@ -65,9 +65,25 @@
     addressEl.textContent = room.published
       ? (where ?? 'address unknown')
       : '127.0.0.1 — reachable only from this machine'
+    // Clickable only once there is somewhere to send it -- a local address
+    // opens nothing external, so it stays plain text and out of tab order.
+    const openable = !!(room.published && room.advertised)
+    addressEl.classList.toggle('room-address-link', openable)
+    if (openable) {
+      addressEl.setAttribute('role', 'button')
+      addressEl.setAttribute('tabindex', '0')
+    } else {
+      addressEl.removeAttribute('role')
+      addressEl.removeAttribute('tabindex')
+    }
     noteEl.textContent = room.busy
       ? 'Restarting the room…'
-      : 'Restarts the room (about a second). Anything already connected reconnects.'
+      : room.published
+        // The address above is just where it lives -- Invite is what actually
+        // lets someone in: it mints them their own token and copies a link
+        // that already has it, so they never need to be handed one to paste.
+        ? 'Restarts the room (about a second). Anything already connected reconnects.'
+        : 'Restarts the room (about a second). Use Invite to get a link someone else can actually use.'
 
     summaryEl.textContent = summarise(where)
 
@@ -99,6 +115,17 @@
   publishEl.addEventListener('click', () => {
     if (room.busy) return
     vscode.postMessage({ type: 'publish', published: !room.published })
+  })
+
+  addressEl.addEventListener('click', () => {
+    // Only ever the full link this window already holds, over the
+    // extension's own internal channel -- never rendered as text (see
+    // hostOf), and a local address has nothing external to open at all.
+    if (!room.published || !room.advertised) return
+    vscode.postMessage({ type: 'open-address', url: room.advertised })
+  })
+  addressEl.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); addressEl.click() }
   })
 
   inviteEl.addEventListener('click', () => {

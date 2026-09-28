@@ -52,6 +52,13 @@ function createRoomView({ context, onPublish, onInvite, onRefresh }) {
       webviewView.webview.onDidReceiveMessage(msg => {
         if (msg?.type === 'publish') return onPublish?.(!!msg.published)
         if (msg?.type === 'invite') return onInvite?.({ role: String(msg.role ?? 'member') })
+        if (msg?.type === 'open-address') {
+          // The token in this URL is never rendered by the webview (see
+          // room-webview.js's hostOf) -- it only ever travels internally,
+          // here, to actually open the owner's own working link.
+          try { vscode.env.openExternal(vscode.Uri.parse(String(msg.url))) } catch { /* a bad URL is not fatal */ }
+          return
+        }
         // The view is destroyed and rebuilt whenever the sidebar is collapsed
         // and reopened, so it asks for the current room rather than waiting.
         if (msg?.type === 'room-refresh') {
