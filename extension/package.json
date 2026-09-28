@@ -4,6 +4,7 @@
   "description": "Run, share and watch a Claude Room: publish the room, invite people, and see what the workers are doing.",
   "version": "0.0.1",
   "publisher": "claude-room",
+  "icon": "media/icon.png",
   "license": "MIT",
   "repository": {
     "type": "git",
