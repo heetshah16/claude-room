@@ -218,6 +218,18 @@ export function createAdmin({ registry, bans, store, bus, config, queue, runtime
       return ok({ member: publicMember(m) })
     },
 
+    /**
+     * The existing join link for a member who already has one. Unlike
+     * invite (mints a new member) or rotate (kills the old token), this
+     * changes nothing -- for re-copying a link someone may already be
+     * using, without ending their live session just to hand them a copy.
+     */
+    joinLink({ memberId }) {
+      const m = registry.byId(memberId)
+      if (!m) return no('no-such-member')
+      return ok({ member: publicMember(m), joinUrl: runtime.joinUrl(m.token) })
+    },
+
     /** New token, old one dead on the next request. Use when a link leaks. */
     rotate({ memberId }) {
       const m = registry.rotate(memberId)

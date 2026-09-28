@@ -172,6 +172,21 @@ test('rotate and remove name the member they act on', async () => {
   assert.deepEqual(calls[1][1], { memberId: 'm2' })
 })
 
+test('joinLink asks for an existing member\'s link by id, not a fresh invite', async () => {
+  const calls = []
+  const client = createRoomClient({
+    roomUrl: 'http://127.0.0.1:1', token: 'tok',
+    fetchImpl: async (url, init) => {
+      calls.push([String(url), JSON.parse(init.body)])
+      return { ok: true, json: async () => ({ ok: true, joinUrl: 'https://x/?token=T' }) }
+    },
+  })
+  const r = await client.joinLink('m1')
+  assert.match(calls[0][0], /\/api\/admin\/joinLink/)
+  assert.deepEqual(calls[0][1], { memberId: 'm1' })
+  assert.equal(r.joinUrl, 'https://x/?token=T')
+})
+
 test('addressing a seat goes through the room, mentioning it by handle', async () => {
   // /msg is the room's normal path, which is what makes this QUEUE behind
   // whatever the seat is already doing rather than interrupting it.

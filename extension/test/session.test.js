@@ -213,6 +213,30 @@ test('the advertised address comes from a join link, not from a local guess', as
   assert.deepEqual(rooms.at(-1).members, [{ id: 'm0', name: 'you', role: 'owner' }])
 })
 
+test('an agent member\'s kind is passed through, so the UI can tell a worker from a person', async () => {
+  const { session } = harness({
+    fetchImpl: async url => {
+      if (String(url).includes('/api/admin/state')) {
+        return { ok: true, status: 200, json: async () => ({
+          members: [
+            { id: 'm0', name: 'you', role: 'owner' },
+            { id: 'm1', name: 'worker-1', role: 'member', kind: 'agent', handle: 'worker-1' },
+          ],
+        }) }
+      }
+      return { ok: true, status: 200, json: async () => ({}), body: sseBody([]) }
+    },
+  })
+  const rooms = []
+  session.onRoom(r => rooms.push(r))
+  await session.start()
+  await session.postRoom()
+  assert.deepEqual(rooms.at(-1).members, [
+    { id: 'm0', name: 'you', role: 'owner' },
+    { id: 'm1', name: 'worker-1', role: 'member', kind: 'agent' },
+  ])
+})
+
 test('an invite goes to the clipboard, never through a listener', async () => {
   // The token IS the identity: it must not reach anything that renders.
   const { session, copied, infos } = harness({
@@ -239,6 +263,30 @@ test('a refused invite says so instead of copying nothing and claiming success',
   await session.invite({ name: 'ana', role: 'member' })
   assert.deepEqual(copied, [])
   assert.match(errors.join(' '), /could not invite ana/)
+})
+
+test('re-copying a member\'s link uses their EXISTING token, no fresh invite', async () => {
+  const { session, copied, infos } = harness({
+    fetchImpl: async url => (String(url).includes('/api/admin/joinLink')
+      ? { ok: true, status: 200, json: async () => ({ ok: true, joinUrl: 'https://x/?token=EXISTING' }) }
+      : { ok: true, status: 200, json: async () => ({}), body: sseBody([]) }),
+  })
+  await session.start()
+  await session.copyJoinLink('m1')
+  assert.deepEqual(copied, ['https://x/?token=EXISTING'])
+  assert.match(infos.join(' '), /clipboard/)
+})
+
+test('a failed re-copy says so instead of copying nothing and claiming success', async () => {
+  const { session, copied, errors } = harness({
+    fetchImpl: async url => (String(url).includes('/api/admin/joinLink')
+      ? { ok: false, status: 404, json: async () => ({}) }
+      : { ok: true, status: 200, json: async () => ({}), body: sseBody([]) }),
+  })
+  await session.start()
+  await session.copyJoinLink('m1')
+  assert.deepEqual(copied, [])
+  assert.match(errors.join(' '), /could not (get|copy)/i)
 })
 
 test('publishing without devtunnel installed says how to get it and changes nothing', async () => {

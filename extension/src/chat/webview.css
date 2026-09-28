@@ -730,6 +730,11 @@ details.thinking .thinking-body {
 
 .room-member.muted { color: var(--vscode-descriptionForeground, var(--vscode-foreground)); }
 
+/* Only an invited person's row gets this -- not the owner, not a worker. */
+.room-member-link { cursor: pointer; border-radius: 4px; }
+.room-member-link:hover,
+.room-member-link:focus-visible { background: var(--vscode-list-hoverBackground); }
+
 .room-role {
   flex: 0 0 auto;
   font-size: 0.9em;

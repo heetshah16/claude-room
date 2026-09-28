@@ -173,6 +173,40 @@ test('a member name is rendered as text, never as markup', () => {
     'the name must survive as literal text')
 })
 
+// --- re-copying an invited member's link ------------------------------------
+
+test('clicking an invited member re-copies their link, by id', () => {
+  const boot = bootRoomView()
+  boot.handleMessage(roomMsg({ published: true, advertised: 'https://x/?token=T', members: [
+    { id: 'owner-1', name: 'owner', role: 'owner' },
+    { id: 'm-ana', name: 'ana', role: 'member' },
+  ] }))
+  const row = boot.get('room-members').children.find(c => JSON.stringify(c).includes('ana'))
+  boot.fire(row, 'click')
+  assert.ok(boot.posted.some(m => m.type === 'copy-link' && m.memberId === 'm-ana'))
+})
+
+test('the owner\'s own row is not clickable -- they already have another way in', () => {
+  const boot = bootRoomView()
+  boot.handleMessage(roomMsg({ published: true, advertised: 'https://x/?token=T', members: [
+    { id: 'owner-1', name: 'owner', role: 'owner' },
+  ] }))
+  const row = boot.get('room-members').children[0]
+  boot.fire(row, 'click')
+  assert.ok(!boot.posted.some(m => m.type === 'copy-link'))
+})
+
+test('a worker\'s row is not clickable -- its token is not a link anyone pastes', () => {
+  const boot = bootRoomView()
+  boot.handleMessage(roomMsg({ published: true, advertised: 'https://x/?token=T', members: [
+    { id: 'owner-1', name: 'owner', role: 'owner' },
+    { id: 'w1', name: 'worker-1', role: 'member', kind: 'agent' },
+  ] }))
+  const row = boot.get('room-members').children.find(c => JSON.stringify(c).includes('worker-1'))
+  boot.fire(row, 'click')
+  assert.ok(!boot.posted.some(m => m.type === 'copy-link'))
+})
+
 test('the live region says something, not a number', () => {
   const boot = bootRoomView()
   boot.handleMessage(roomMsg({ published: false, advertised: null, members: [

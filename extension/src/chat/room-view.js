@@ -19,10 +19,11 @@ const { randomBytes } = require('node:crypto')
 const nonce = () => randomBytes(16).toString('base64')
 
 /**
- * @param {{context: object, onPublish: Function, onInvite: Function, onRefresh: Function}} deps
+ * @param {{context: object, onPublish: Function, onInvite: Function,
+ *          onRefresh: Function, onCopyLink?: Function}} deps
  * @returns {{provider: object, postRoom: Function}}
  */
-function createRoomView({ context, onPublish, onInvite, onRefresh }) {
+function createRoomView({ context, onPublish, onInvite, onRefresh, onCopyLink }) {
   const extensionRoot = context.extensionUri?.fsPath ?? context.extensionPath
   const chatDir = join(extensionRoot, 'src', 'chat')
 
@@ -52,6 +53,7 @@ function createRoomView({ context, onPublish, onInvite, onRefresh }) {
       webviewView.webview.onDidReceiveMessage(msg => {
         if (msg?.type === 'publish') return onPublish?.(!!msg.published)
         if (msg?.type === 'invite') return onInvite?.({ role: String(msg.role ?? 'member') })
+        if (msg?.type === 'copy-link') return onCopyLink?.(String(msg.memberId ?? ''))
         if (msg?.type === 'open-address') {
           // The token in this URL is never rendered by the webview (see
           // room-webview.js's hostOf) -- it only ever travels internally,

@@ -265,7 +265,13 @@ function createSession({
       // tests for calls they are not asserting on. None of those tests check
       // `members`, so this changes nothing they assert.
       members: state?.members
-        ? state.members.map(m => ({ id: m.id, name: m.name, role: m.role }))
+        ? state.members.map(m => ({
+            id: m.id, name: m.name, role: m.role,
+            // Only present for an agent: lets the UI tell a worker (its
+            // "join link" is meaningless -- nobody pastes it into a browser)
+            // apart from a person, without changing the shape for everyone else.
+            ...(m.kind ? { kind: m.kind } : {}),
+          }))
         : null,
       ...extra,
     })
@@ -348,6 +354,21 @@ function createSession({
     await postRoom()
   }
 
+  /**
+   * Re-copies a member's EXISTING link -- unlike invite (mints someone new)
+   * or a token rotation, this changes nothing about their access, so it is
+   * safe to use on someone already connected.
+   */
+  async function copyJoinLink(memberId) {
+    const r = await api.roomClient.joinLink(memberId)
+    if (!r?.ok) {
+      ui.showError(`Claude Room: could not copy that link — ${r?.errors?.[0] ?? 'unknown error'}`)
+      return
+    }
+    await ui.copy(r.joinUrl)
+    ui.showInfo('Claude Room: join link copied to the clipboard.')
+  }
+
   /** Ends the SSE subscription. The room child is the supervisor's to stop. */
   function stop() {
     stopFeed?.()
@@ -364,6 +385,7 @@ function createSession({
     postRoom,
     republish,
     invite,
+    copyJoinLink,
     isPublished: () => published,
     onRoom: fn => listen(roomListeners, fn),
     onWorkers: fn => listen(workerListeners, fn),

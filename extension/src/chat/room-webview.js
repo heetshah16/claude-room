@@ -108,6 +108,22 @@
       role.textContent = m.role
       row.appendChild(name)
       row.appendChild(role)
+
+      // Re-copyable only for someone who was actually invited with a link: not
+      // the owner, who already has another way in, and not a worker, whose
+      // token is a seat credential nobody ever pastes into a browser.
+      if (!m.kind && m.role !== 'owner') {
+        row.classList.add('room-member-link')
+        row.setAttribute('role', 'button')
+        row.setAttribute('tabindex', '0')
+        row.title = `Copy ${m.name}'s join link`
+        const copy = () => vscode.postMessage({ type: 'copy-link', memberId: m.id })
+        row.addEventListener('click', copy)
+        row.addEventListener('keydown', e => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); copy() }
+        })
+      }
+
       membersEl.appendChild(row)
     }
   }

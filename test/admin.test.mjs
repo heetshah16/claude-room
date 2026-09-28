@@ -225,6 +225,24 @@ test('rotate issues a new token and kills the old one', () => {
   done(h)
 })
 
+test('joinLink hands back the EXISTING token unchanged, unlike rotate', () => {
+  // For re-copying a link someone already has and may already be using --
+  // rotate would kill their live session just to get a copy of a new one.
+  const h = harness()
+  const before = h.ana.token
+  const r = h.admin.run('joinLink', { memberId: h.ana.id })
+  assert.equal(r.ok, true)
+  assert.match(r.joinUrl, new RegExp(`token=${before}`))
+  assert.equal(h.registry.byToken(before)?.id, h.ana.id, 'the old token must still work')
+  done(h)
+})
+
+test('joinLink refuses an unknown member rather than crashing', () => {
+  const h = harness()
+  assert.equal(h.admin.run('joinLink', { memberId: 'ghost' }).reason, 'no-such-member')
+  done(h)
+})
+
 test('the agent handle can be renamed and takes effect immediately', () => {
   const h = harness()
   assert.deepEqual(h.config.handles, ['claude'])

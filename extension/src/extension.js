@@ -230,6 +230,7 @@ function activate(context) {
       await withSession(context, s => s.invite({ name, role }))
     },
     onRefresh: () => withSession(context, s => s.postRoom()),
+    onCopyLink: memberId => withSession(context, s => s.copyJoinLink(memberId)),
   })
   activeRoomView = roomView
 
