@@ -4,12 +4,12 @@
   "description": "Run, share and watch a Claude Room: publish the room, invite people, and see what the workers are doing.",
   "version": "0.0.1",
   "publisher": "claude-room",
+  "icon": "media/icon.png",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/heet-shah/claude-room.git"
+    "url": "https://github.com/heetshah16/claude-room.git"
   },
-  "private": true,
   "engines": {
     "vscode": "^1.75.0",
     "node": ">=22"
