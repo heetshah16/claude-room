@@ -72,6 +72,7 @@ async function main() {
   }
 
   let joined = false
+  let wasOnline = false
   let backoffMs = 500
   for (;;) {
     try {
@@ -92,10 +93,15 @@ async function main() {
       }
       const feed = await fetch(`${roomUrl}/seat/events?token=${encodeURIComponent(token)}`)
       if (!feed.ok || !feed.body) {
+        // A 409 on reconnect is the room still holding our previous socket
+        // (blip, sleep/wake) until its keepalive fails; only a 409 before we
+        // were ever online means another session really owns the handle.
+        if (feed.status === 409 && wasOnline) throw new Error('handle still held by the previous connection (HTTP 409)')
         const why = refusal(feed.status)
         if (why) return fatal(why)
         throw new Error(`feed refused: HTTP ${feed.status}`)
       }
+      wasOnline = true
       say({ status: 'online' })
       backoffMs = 500
       await readFrames(feed.body, (event, raw) => {

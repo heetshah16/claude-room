@@ -9,20 +9,28 @@ import { refusal } from '../mod/feed.mjs'
 const FEED = fileURLToPath(new URL('../mod/feed.mjs', import.meta.url))
 
 // A room that answers /seat/join and /seat/events the way each test says.
+// `join` and `events` may be a status or a sequence of answers (the last one
+// repeats); 'close' on events opens the stream and ends it at once.
 async function fakeRoom({ join = 200, events = 200, frames = [] } = {}) {
+  const joinAnswers = [].concat(join)
+  const eventAnswers = [].concat(events)
+  const next = a => (a.length > 1 ? a.shift() : a[0])
   const server = createServer((req, res) => {
     if (req.url.startsWith('/seat/join')) {
+      const join = next(joinAnswers)
       res.writeHead(join, { 'content-type': 'application/json' })
       return res.end(JSON.stringify(join === 200 ? { seatId: 's1', seed: { text: 'recent history' } } : { error: 'no' }))
     }
     if (req.url.startsWith('/seat/events')) {
-      if (events !== 200) {
+      const events = next(eventAnswers)
+      if (typeof events === 'number' && events !== 200) {
         res.writeHead(events)
         return res.end()
       }
       res.writeHead(200, { 'content-type': 'text/event-stream' })
       res.write(': connected\n\n')
       for (const [event, data] of frames) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+      if (events === 'close') return res.end()
       return // held open, as the real room holds a seat's feed
     }
     res.writeHead(404)
@@ -131,4 +139,39 @@ test('only refusals that retrying cannot fix are fatal', () => {
   assert.match(refusal(409), /already online/)
   assert.equal(refusal(500), null)
   assert.equal(refusal(503), null)
+})
+
+test('a 409 on reconnect after being online is retried, not fatal', async () => {
+  const room = await fakeRoom({ events: ['close', 409, 200] })
+  try {
+    const { lines, code } = await runFeed(room.url, { until: 4 })
+    assert.equal(code, null) // still running when the harness stopped it
+    assert.deepEqual(lines.map(l => l.status), ['online', 'retrying', 'retrying', 'online'])
+    assert.match(lines[2].reason, /previous connection/)
+  } finally {
+    room.close()
+  }
+})
+
+test('a 403 at the feed is fatal', async () => {
+  const room = await fakeRoom({ events: 403 })
+  try {
+    const { lines, code } = await runFeed(room.url)
+    assert.equal(code, 2)
+    assert.match(lines.at(-1).reason, /not an agent/)
+  } finally {
+    room.close()
+  }
+})
+
+test('a join that fails with 500 once is retried, not fatal', async () => {
+  const room = await fakeRoom({ join: [500, 200] })
+  try {
+    const { lines } = await runFeed(room.url, { until: 2 })
+    assert.equal(lines[0].status, 'retrying')
+    assert.match(lines[0].reason, /500/)
+    assert.deepEqual(lines[1], { status: 'online' })
+  } finally {
+    room.close()
+  }
 })
