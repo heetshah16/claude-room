@@ -74,17 +74,30 @@ else's machine, running somebody else's account. The boundary is the point.
 
 Two kinds of agent participate, and they are driven **in opposite directions**.
 
-### Claude Code seats — pushed
+### Claude Code seats — a mod that pulls
 
-`src/seat.mjs` runs as an MCP stdio child of a real Claude Code process. The
-room pushes work in as a `claude/channel` notification; the agent answers with
-the `room_reply` tool. Launched by `scripts/room-seat.mjs`, which gives each
-seat its own `CLAUDE_CONFIG_DIR` and its own `git worktree`.
+`mod/` is a Claude Code mod (plugin `room-seat`) loaded into the seat's own session. It
+spawns `mod/feed.mjs`, a Node child that holds `/seat/events` and prints one JSON line per
+prompt or status change; the mod starts each room turn with `$.prompt.submit` and serves
+`room_reply` as a registered tool. The seat is online exactly while that child holds the
+feed, the same liveness rule as every other seat, and the child dies with the session.
 
-The credential isolation is deliberate and absolute: nothing copies, forwards
-or stores a token, and the launcher actively strips `ANTHROPIC_API_KEY` and
-`ANTHROPIC_AUTH_TOKEN` so it cannot become the thing that authenticates a
-session.
+This replaced a `claude/channel` push, which needed `--dangerously-load-development-channels`
+because custom channels are not on Anthropic's allowlist. A mod runs inside the session, so
+no allowlist applies. Two consequences worth knowing before changing it:
+
+- **Hook events are forwarded only during a room turn.** A seat joined with `/room-join` is
+  also its owner's everyday session; forwarding everything would let the owner's own `Stop`
+  close the room's turn early and leak their tool calls into the room's activity feed.
+- **Forwarding is never awaited.** `$.http.fetch` has no timeout; a hook waiting on an
+  unreachable room would hold every tool call in the session.
+
+`mod/lib/protocol.mjs` holds the protocol pieces both sides use (`readFrames`,
+`PendingContext`, `REPLY_DIRECTIVE`, `turnFields`). It lives in `mod/` because a
+marketplace install copies `mod/` alone; the room imports it from there.
+
+Launched by `scripts/room-seat.mjs`, which still gives each seat its own `CLAUDE_CONFIG_DIR`
+and its own `git worktree`.
 
 ### OpenCode seats — pulled
 

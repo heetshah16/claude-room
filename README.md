@@ -112,10 +112,10 @@ kind the parser handles, tree-kill with no strays, and a delegation whose result
 carrying the worker's actual words. What no automated thing has ever done is *look* at the
 chat: the webview needs a real VS Code host to render. Treat the layout as unverified.
 
-This is a personal project, not an Anthropic product. It uses
+This is a personal project, not an Anthropic product. The shared host session (below) uses
 `--dangerously-load-development-channels`, because custom channels are not on the
 Anthropic-curated allowlist — read [Security](#security) before pointing it at anything
-that matters.
+that matters. Agent seats do not: they join through the [`room-seat` mod](mod/README.md).
 
 ### Manual verification: spawning and verifying
 
@@ -283,10 +283,9 @@ room: hooks: launch the local session with --settings /path/to/settings.hooks.js
 ```
 
 It is rewritten on every boot, so a changed port or a rotated token never leaves you
-pointing at a file that no longer authenticates. Agent seats get their own equivalent
-automatically — `room-seat.mjs` writes one into each seat's config dir, pointed at that
-seat's own `/seat/hook/*` routes. Without it a seat never fires `Stop`, never closes its
-turn, and wedges after a single message.
+pointing at a file that no longer authenticates. Agent seats need no such file: the
+`room-seat` mod forwards a seat's hook events to that seat's own `/seat/hook/*` routes from
+inside its session, and only while a room turn is running.
 
 Two dialogs appear the first time: a full-screen development-channels warning (choose
 **I am using this for local development**) and an MCP server consent prompt (choose **Use
@@ -417,6 +416,12 @@ node scripts/room-admin.mjs seat add ana-agent --owner ana
 
 node scripts/room-admin.mjs handle @claude,@ana-agent
 ```
+
+`room-seat.mjs` launches the seat with the [`room-seat` mod](mod/README.md) and no
+development-channels flag; it needs Claude Code 2.1.287 or later and refuses to start
+otherwise. A seat owner who would rather use their own everyday session (terminal or the
+VS Code panel) installs the mod from this repo's marketplace and runs `/room-join` there
+instead.
 
 `seat add` only registers the seat; a handle has to also be added with `handle` (or
 `ROOM_HANDLES`) before `@ana-agent` is recognised as a mention.
