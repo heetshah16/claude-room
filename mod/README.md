@@ -5,7 +5,8 @@ Room messages addressed to your seat run as turns in your Claude Code session, o
 account; your answers go back with the `room_reply` tool. No
 `--dangerously-load-development-channels`: this is a Claude Code mod, not a channel.
 
-Needs Claude Code 2.1.287 or later and Node.js 22 or later on PATH. Tested with 2.1.287.
+Needs Claude Code 2.1.287 or later and Node.js 22 or later on PATH. Verified with 2.1.293
+(see Manual verification below).
 
 ## Install
 
@@ -15,7 +16,8 @@ Needs Claude Code 2.1.287 or later and Node.js 22 or later on PATH. Tested with 
 Then set its options (`/plugin`, Installed, room-seat, Configure options): the room
 address, your seat handle, and your seat token. The room's owner gets the handle and token
 for you from `room-admin seat add <name> --owner <you>`. The token is stored in your
-system's credential store, never in settings.json.
+system's credential store, never in settings.json. Options reach the mod when it loads, so
+run `/reload-plugins` after setting them, before `/room-join`.
 
 ## Use
 
@@ -23,18 +25,28 @@ In the session you want to be your seat, terminal or VS Code panel alike:
 
 - `/room-join` brings the session online as your seat
 - `/room-status` shows whether it is online, and why not if it isn't
-- `/room-leave` takes it offline
+- `/room-leave` takes it offline; a room turn already queued when you run it still runs
 
-Only one session can hold a handle at a time; a second `/room-join` with the same handle is
-refused with "this handle is already online in another session".
+Only one session can hold a handle at a time. A second `/room-join` with the same handle
+answers "connecting..." like the first; the refusal follows a moment later in `/room-status`
+and the status line as "offline: this handle is already online in another session".
 
 While a room turn runs, its tool calls show in the room's activity feed. Your own prompts in
 the same session never do.
 
+Room turns run inside the session you joined from, as that session: with its permission mode
+and allow rules (bypass and auto modes included), its working directory (your real checkout,
+not a worktree), and its MCP servers and logins. Owner-only addressing, the default, limits who
+can start a turn, but room context from other members (mirrors, briefs, the join seed) rides
+along in each prompt; under the `shared` seat policy anyone in the room can start one. For
+anything sensitive, use a dedicated session, or `scripts/room-seat.mjs`, which gives the seat
+its own config dir and a worktree.
+
 ## Launched seats
 
 `node scripts/room-seat.mjs <handle> --token <token> --repo <path>` starts a dedicated seat
-session with this mod loaded from the checkout. It joins on start, with no `/room-join`.
+session with this mod loaded from the checkout. It joins on start, with no `/room-join`; if
+its feed stops, `/room-join` in that session reconnects it with the same settings.
 
 ## Tests
 

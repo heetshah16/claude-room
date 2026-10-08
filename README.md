@@ -864,6 +864,10 @@ text in front of an agent with your filesystem.
   members" would silently invalidate everyone's token.
 - Seats never share credentials. `room-seat.mjs` deliberately strips `ANTHROPIC_API_KEY`
   and `ANTHROPIC_AUTH_TOKEN` so it can never be the thing that authenticates a session.
+- A seat joined with the `room-seat` mod's `/room-join` runs room turns inside that everyday
+  session, with its permission mode, allow rules, working directory, MCP servers and logins;
+  room context from other members rides along in each prompt. Use a dedicated session or
+  `room-seat.mjs` (own config dir and worktree) for anything sensitive — see `mod/README.md`.
 - The room never interprets message content. Slash commands arrive as plain text.
 - The browser client writes every server-supplied string with `textContent`.
 - Uploaded filenames never reach the filesystem; only a sanitised extension survives.
