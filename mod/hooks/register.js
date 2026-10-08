@@ -28,9 +28,12 @@ const REPLY_TOOL = {
 }
 
 let seat = null // { roomUrl, token, handle } while joined
+let envSeat = null // the launch environment's seat settings, for /room-join to rejoin with
 let feed = null // the feed child's stream while joined
 let status = 'not joined - run /room-join'
 let inRoomTurn = false
+
+const REPLY_TIMEOUT_MS = 15_000
 
 const UNANSWERED = {
   aborted: "the seat's owner interrupted this turn",
@@ -47,14 +50,18 @@ export function register(on, options = {}) {
     const token = await $.env.get('ROOM_SEAT_TOKEN')
     const handle = await $.env.get('ROOM_SEAT_HANDLE')
     const started = await next(e)
-    if (roomUrl && token && handle) await join($, { roomUrl, token, handle })
+    if (roomUrl && token && handle) {
+      envSeat = { roomUrl, token, handle }
+      await join($, envSeat)
+    }
     return started
   })
 
   on('command.run', { command: 'room-join' }, async ($) => {
     if (feed) return { text: status }
-    const cfg = { roomUrl: options.room_url, token: options.seat_token, handle: options.seat_handle }
-    if (!cfg.roomUrl || !cfg.token || !cfg.handle) {
+    const opts = { roomUrl: options.room_url, token: options.seat_token, handle: options.seat_handle }
+    const cfg = opts.roomUrl && opts.token && opts.handle ? opts : envSeat
+    if (!cfg) {
       return { text: 'Set the room address, seat handle and seat token first: /plugin, Installed, room-seat, Configure options.' }
     }
     await join($, cfg)
@@ -79,7 +86,11 @@ export function register(on, options = {}) {
     try {
       const body = { token: seat.token, text: String(e.text ?? '') }
       if (e.to) body.to = String(e.to)
-      const res = await post($, '/seat/reply', body)
+      // No one may be at a launched seat to press Esc on a hung call.
+      let timer
+      const late = new Promise(resolve => { timer = $.clock.after(REPLY_TIMEOUT_MS, () => resolve(null)) })
+      const res = await Promise.race([post($, '/seat/reply', body), late]).finally(() => timer.cancel())
+      if (!res) return { deny: `room_reply failed: the room did not answer within ${REPLY_TIMEOUT_MS / 1000}s` }
       return res.ok ? { result: 'sent' } : { deny: `room_reply failed: HTTP ${res.status}` }
     } catch (err) {
       return { deny: `room_reply failed: ${err?.message ?? err}` }
@@ -154,6 +165,7 @@ async function join($, cfg) {
 // module unloads, which drops /seat/events and takes the seat offline.
 async function pump($, stream) {
   let buf = ''
+  let ended = null
   try {
     for await (const { stream: pipe, text } of stream) {
       if (pipe === 'stderr') {
@@ -162,12 +174,14 @@ async function pump($, stream) {
       }
       buf += text
       let i
-      while ((i = buf.indexOf('\n')) !== -1) {
+      // Lines already read stay unprocessed once the seat has left.
+      while (feed === stream && (i = buf.indexOf('\n')) !== -1) {
         const line = buf.slice(0, i)
         buf = buf.slice(i + 1)
         if (line.trim()) await onLine($, line)
       }
     }
+    ended = await stream.result?.catch(() => null)
   } catch (err) {
     if (feed === stream) setStatus($, `offline: could not run the room feed (${err?.message ?? err}); a room seat needs Node.js 22 or later on PATH`)
   }
@@ -175,7 +189,8 @@ async function pump($, stream) {
     feed = null
     seat = null
     inRoomTurn = false
-    if (!status.startsWith('offline')) setStatus($, 'offline: the room feed stopped - /room-join to reconnect')
+    const how = ended?.code != null ? ` (exit code ${ended.code})` : ended?.signal ? ` (${ended.signal})` : ''
+    if (!status.startsWith('offline')) setStatus($, `offline: the room feed stopped${how} - /room-join to reconnect`)
   }
 }
 
@@ -209,7 +224,8 @@ async function submit($, text) {
     // The room marked this seat busy when it sent the turn. If the turn cannot
     // start, say so and close it, or every later message queues behind a turn
     // that never ran - the rule opencode.mjs follows too.
-    await closeRoomTurn($, `could not start the turn: ${err?.message ?? err}`)
+    // Not awaited: a post to a room that never answers would hold every later line.
+    void closeRoomTurn($, `could not start the turn: ${err?.message ?? err}`)
   }
 }
 

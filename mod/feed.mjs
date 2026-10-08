@@ -1,7 +1,12 @@
 // The room feed for a mod-driven Claude Code seat, run as a child process by
 // mod/hooks/register.js. A mod can only make outbound calls and cannot hold an
 // SSE stream itself ($.http.fetch reads the whole body), so this process holds
-// /seat/events for it and prints one JSON line per prompt or status change (see Task 2's line protocol).
+// /seat/events for it and prints one JSON line per prompt or status change:
+//
+//   {"text": "..."}                         a room turn, to submit as a prompt
+//   {"status": "online"}                    holding the feed
+//   {"status": "retrying", "reason": "..."} lost it, reconnecting with backoff
+//   {"status": "fatal", "reason": "..."}    refused for good; exits with code 2
 //
 // Seat liveness is unchanged: the seat is online exactly while this process
 // holds the feed, and Claude Code kills it when the mod unloads.

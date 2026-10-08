@@ -20,6 +20,19 @@ function playing(lines: object[]) {
   }
 }
 
+// A fake feed that exits on its own at once, with exit code `code`.
+function exiting(code: number) {
+  return async function* () {
+    return { value: { code, signal: null } }
+  }
+}
+
+const statusOnce = async ($, re: RegExp) => {
+  let status = ''
+  for (let i = 0; i < 50 && !re.test(status); i++) status = (await $.command.run({ command: 'room-status', args: '' })).text
+  return status
+}
+
 // Stubs everything the mod calls. `lines` are what the fake feed prints, or
 // `spawn` replaces the fake feed whole; `fetch` answers each post (default:
 // 200). Records posts and spawns. Overrides go through these options:
@@ -30,6 +43,8 @@ function stubRoom(on, { env = {}, lines = [] as object[], spawn = undefined as a
     spawns: [] as any[],
     tools: 0,
     prompted: deferred<any>(), // the first prompt.submit event
+    submits: [] as string[], // every prompt.submit's text
+    ended: 0, // fake feeds that ended, killed or not
   }
   const feed = spawn ?? playing(lines)
   mock.env(on, env)
@@ -44,10 +59,15 @@ function stubRoom(on, { env = {}, lines = [] as object[], spawn = undefined as a
   })
   on('process.spawn', async function* ($, e, next) {
     seen.spawns.push(e)
-    return yield* feed(next.signal)
+    try {
+      return yield* feed(next.signal)
+    } finally {
+      seen.ended++
+    }
   })
   on('prompt.submit', ($, e) => {
     seen.prompted.resolve(e)
+    seen.submits.push(e.text)
     return submit ? submit(e) : { text: e.text }
   })
   // The bottom of a tool call the model makes (here, Bash): `$.tool.call`
@@ -292,10 +312,79 @@ test('a hook that cannot reach the room does not hold the session', async ($, on
 })
 
 test('/room-leave takes the seat offline and room_reply stops working', async ($, on) => {
-  stubRoom(on, { env: SEAT_ENV, lines: [{ status: 'online' }] })
+  const seen = stubRoom(on, { env: SEAT_ENV, lines: [{ status: 'online' }] })
   await start($)
+  expect(seen.ended).toBe(0)
   await $.command.run({ command: 'room-leave', args: '' })
+  await settle($)
+  expect(seen.ended).toBe(1) // the feed itself was ended, not just the status changed
   expect((await $.command.run({ command: 'room-status', args: '' })).text).toMatch(/left/)
   const out = await $.tool.call({ tool: 'mcp__room-seat__room_reply', text: 'x' })
   expect(out.deny).toMatch(/not .*joined/)
+})
+
+test('/room-join reconnects a launched seat with its environment settings after its feed stops', async ($, on) => {
+  let spawned = 0
+  const seen = stubRoom(on, {
+    env: SEAT_ENV,
+    spawn: (signal: AbortSignal) => (spawned++ ? playing([{ status: 'online' }])(signal) : exiting(1)()),
+  })
+  await start($)
+  expect(await statusOnce($, /stopped/)).toMatch(/stopped/)
+  const out = await $.command.run({ command: 'room-join', args: '' })
+  expect(out.text).not.toMatch(/Configure options/)
+  expect(seen.spawns.length).toBe(2)
+  expect(seen.spawns[1].env).toEqual({ ROOM_URL: 'http://room.test', ROOM_SEAT_TOKEN: 'tok', ROOM_SEAT_HANDLE: 'ana-agent' })
+})
+
+test('a feed that exits on its own shows its exit code', async ($, on) => {
+  stubRoom(on, { env: SEAT_ENV, spawn: exiting(3) })
+  await start($)
+  expect(await statusOnce($, /stopped/)).toMatch(/stopped \(exit code 3\)/)
+})
+
+test('a room turn that cannot start, closed against a room that does not answer, does not hold the next one', async ($, on) => {
+  const seen = stubRoom(on, {
+    env: SEAT_ENV,
+    lines: [{ text: 'one' }, { text: 'two' }],
+    fetch: () => new Promise(() => {}),
+    submit: () => ({ drop: 'paused by policy' }),
+  })
+  await start($)
+  for (let i = 0; i < 50 && seen.submits.length < 2; i++) await $.command.run({ command: 'room-status', args: '' })
+  expect(seen.submits).toEqual(['one', 'two'])
+})
+
+test('lines the feed already printed are dropped once the seat leaves', async ($, on) => {
+  const idle = deferred()
+  const seen = stubRoom(on, {
+    env: SEAT_ENV,
+    // Both prompts in one piece of output, as a pipe may deliver them.
+    spawn: async function* (signal: AbortSignal) {
+      yield { stream: 'stdout' as const, text: '{"text":"one"}\n{"text":"two"}\n' }
+      await new Promise(r => signal.aborted ? r(null) : signal.addEventListener('abort', r, { once: true }))
+      return { value: { code: null, signal: 'SIGTERM' } }
+    },
+    submit: e => (e.text === 'one' ? idle.promise.then(() => ({ text: e.text })) : { text: e.text }),
+  })
+  await start($)
+  await seen.prompted.promise
+  await $.command.run({ command: 'room-leave', args: '' })
+  idle.resolve()
+  await settle($)
+  await settle($)
+  expect(seen.submits).toEqual(['one'])
+})
+
+test('room_reply gives up when the room does not answer within 15s', async ($, on) => {
+  const clock = mock.clock(on)
+  stubRoom(on, { env: SEAT_ENV, fetch: () => new Promise(() => {}) })
+  await start($)
+  let done = false
+  const reply = $.tool.call({ tool: 'mcp__room-seat__room_reply', text: 'done' })
+  reply.then(() => { done = true })
+  await clock.advance(14_999)
+  expect(done).toBe(false)
+  await clock.advance(1)
+  expect((await reply).deny).toBe('room_reply failed: the room did not answer within 15s')
 })
