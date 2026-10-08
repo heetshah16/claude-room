@@ -1,7 +1,7 @@
 // The room feed for a mod-driven Claude Code seat, run as a child process by
 // mod/hooks/register.js. A mod can only make outbound calls and cannot hold an
 // SSE stream itself ($.http.fetch reads the whole body), so this process holds
-// /seat/events for it and prints one JSON line per prompt the seat should run.
+// /seat/events for it and prints one JSON line per prompt or status change (see Task 2's line protocol).
 //
 // Seat liveness is unchanged: the seat is online exactly while this process
 // holds the feed, and Claude Code kills it when the mod unloads.
@@ -37,40 +37,66 @@ export function createPrompter(handle) {
   }
 }
 
-const log = s => process.stderr.write(`room-seat feed: ${s}\n`)
+// Refusals that retrying cannot fix. Anything else (a 5xx, a refused
+// connection, a dropped stream) is a blip, and the feed reconnects.
+const FATAL = {
+  401: 'the room refused this seat token',
+  403: 'this token is not an agent seat',
+  409: 'this handle is already online in another session',
+}
+
+export function refusal(status) {
+  return FATAL[status] ?? null
+}
+
+const say = msg => process.stdout.write(JSON.stringify(msg) + '\n')
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
+// Exit only once the line is flushed: a pipe write can still be pending.
+function fatal(reason) {
+  process.stdout.write(JSON.stringify({ status: 'fatal', reason }) + '\n', () => process.exit(2))
+}
+
 async function main() {
+  // The session that read this pipe is gone; a seat nobody reads must not
+  // keep its handle online.
+  process.stdout.on('error', () => process.exit(0))
+
   const { ROOM_URL: roomUrl, ROOM_SEAT_TOKEN: token, ROOM_SEAT_HANDLE: handle } = process.env
-  if (!roomUrl || !token || !handle) {
-    log('missing ROOM_URL, ROOM_SEAT_TOKEN or ROOM_SEAT_HANDLE')
-    process.exit(1)
-  }
+  if (!roomUrl || !token || !handle) return fatal('ROOM_URL, ROOM_SEAT_TOKEN and ROOM_SEAT_HANDLE must all be set')
+
   const prompt = createPrompter(handle)
   const emit = (event, data) => {
     const text = prompt(event, data)
-    if (text) process.stdout.write(JSON.stringify({ text }) + '\n')
+    if (text) say({ text })
   }
 
-  const res = await fetch(`${roomUrl}/seat/join`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ token, handle }),
-  })
-  // A bad token must stop the seat loudly, not leave it retrying forever.
-  if (!res.ok) {
-    log(`join refused: HTTP ${res.status}`)
-    process.exit(1)
-  }
-  const joined = await res.json()
-  if (joined?.seed?.text) emit('seed', { text: joined.seed.text })
-
+  let joined = false
   let backoffMs = 500
   for (;;) {
     try {
+      if (!joined) {
+        const res = await fetch(`${roomUrl}/seat/join`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ token, handle }),
+        })
+        if (!res.ok) {
+          const why = refusal(res.status)
+          if (why) return fatal(why)
+          throw new Error(`join failed: HTTP ${res.status}`)
+        }
+        const body = await res.json()
+        if (body?.seed?.text) emit('seed', { text: body.seed.text })
+        joined = true
+      }
       const feed = await fetch(`${roomUrl}/seat/events?token=${encodeURIComponent(token)}`)
-      if (!feed.ok || !feed.body) throw new Error(`feed refused: HTTP ${feed.status}`)
-      log(`online as ${handle}`)
+      if (!feed.ok || !feed.body) {
+        const why = refusal(feed.status)
+        if (why) return fatal(why)
+        throw new Error(`feed refused: HTTP ${feed.status}`)
+      }
+      say({ status: 'online' })
       backoffMs = 500
       await readFrames(feed.body, (event, raw) => {
         try {
@@ -79,9 +105,9 @@ async function main() {
           // A malformed frame is dropped, never fatal.
         }
       })
-      log('feed ended')
+      throw new Error('the room closed the feed')
     } catch (err) {
-      log(String(err?.message ?? err))
+      say({ status: 'retrying', reason: String(err?.message ?? err) })
     }
     // Sleep/wake, a room restart, a wifi blip: reconnect, as seat.mjs does.
     await sleep(backoffMs)
