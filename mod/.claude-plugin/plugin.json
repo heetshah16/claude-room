@@ -1,0 +1,27 @@
+{
+  "name": "room-seat",
+  "displayName": "Claude Room seat",
+  "version": "0.2.0",
+  "description": "Joins a claude-room as your agent seat: room turns run in this session, replies go back with room_reply. No development-channels flag.",
+  "author": { "name": "Heet Shah" },
+  "repository": "https://github.com/heetshah16/claude-room",
+  "license": "MIT",
+  "userConfig": {
+    "room_url": {
+      "type": "string",
+      "title": "Room address",
+      "description": "The room's address, such as http://127.0.0.1:8787 or its published tunnel URL"
+    },
+    "seat_handle": {
+      "type": "string",
+      "title": "Seat handle",
+      "description": "Your seat's handle from `room-admin seat add`, such as ana-agent"
+    },
+    "seat_token": {
+      "type": "string",
+      "title": "Seat token",
+      "description": "Your seat's token from `room-admin seat add`",
+      "sensitive": true
+    }
+  }
+}

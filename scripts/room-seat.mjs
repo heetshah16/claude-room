@@ -19,19 +19,29 @@
  * <token> comes from `room-admin seat add <name> --owner <member>`.
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { HOOK_EVENTS } from '../src/state.mjs'
 import { fileURLToPath } from 'node:url'
 import { spawnPortable } from '../src/spawn.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-// The MCP stdio server every seat loads to bridge the room's SSE feed into
-// this session's channel notifications (see src/seat.mjs). Custom channels
-// are not on Anthropic's approved allowlist, hence --dangerously-load-development-channels below.
-const SEAT_BRIDGE = join(__dirname, '..', 'src', 'seat.mjs')
+// The room-seat mod (mod/), loaded straight from this checkout. It joins the
+// room, runs room turns and serves room_reply from inside the session, which
+// is what lets a seat run without --dangerously-load-development-channels.
+export const MOD_DIR = join(__dirname, '..', 'mod')
+
+const MOD_FLOOR = [2, 1, 287] // mods load from Claude Code 2.1.287
+
+/** Whether `claude --version` output is a version that loads mods. */
+export function meetsModFloor(versionText) {
+  const m = /(\d+)\.(\d+)\.(\d+)/.exec(String(versionText))
+  if (!m) return false
+  const v = m.slice(1).map(Number)
+  for (let i = 0; i < 3; i++) if (v[i] !== MOD_FLOOR[i]) return v[i] > MOD_FLOOR[i]
+  return true
+}
 
 /** Every local seat lives in its own worktree so two agents can never clobber one checkout. */
 export function worktreeFor(repo, handle) {
@@ -40,48 +50,17 @@ export function worktreeFor(repo, handle) {
 }
 
 /**
- * The hooks settings a seat runs with, pointed at its own /seat/hook/* routes
- * and carrying its own seat token.
- *
- * Without this a seat has NO hooks at all: its CLAUDE_CONFIG_DIR is fresh, so
- * there is no settings.json in it, and nothing else supplies one. That meant
- * Stop never fired, so `queue.endTurn` was never called for the seat's
- * destination — the seat answered exactly one message and then stayed busy
- * forever, with every later message queued behind it and never drained. Tests
- * missed it because they post /seat/hook/Stop by hand, which is precisely the
- * thing production never did.
- */
-export function seatHookSettings({ roomUrl, token }) {
-  const hooks = {}
-  for (const [event, timeout] of Object.entries(HOOK_EVENTS)) {
-    const url = `${roomUrl}/seat/hook/${event}?token=${encodeURIComponent(token)}`
-    hooks[event] = [{ hooks: [{ type: 'http', url, timeout }] }]
-  }
-  return { hooks }
-}
-
-/**
- * The MCP config body a seat loads. Extracted so the launcher can write it to
- * a file: passing it as JSON on argv cannot survive a Windows shell, and a
- * shell is exactly what an npm-installed `claude` needs.
- */
-export function mcpConfigFor() {
-  return { mcpServers: { seat: { command: 'node', args: [SEAT_BRIDGE] } } }
-}
-
-/**
  * Builds the spawn recipe for one seat: real `claude`, pointed at its own
- * config dir and its own worktree, with the seat bridge loaded as an MCP
- * server and its own hooks settings. Pure and injection-testable — nothing
+ * config dir and its own worktree, with the room-seat mod loaded from this
+ * checkout. Pure and injection-testable — nothing
  * here touches the filesystem or a child process.
  *
  * Deliberately never sets ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN: doing so
  * would let this script authenticate the session instead of the person, which
  * is exactly the shortcut this whole design exists to avoid.
  */
-export function seatArgs({ configDir, roomUrl, token, handle, repo, settingsPath, mcpConfigPath }) {
+export function seatArgs({ configDir, roomUrl, token, handle, repo }) {
   const worktree = worktreeFor(repo, handle)
-  const configPath = mcpConfigPath || join(configDir, 'mcp.seat.json')
 
   // Start from the operator's own environment (PATH, HOME, etc. — claude
   // needs those to run at all), then strip any credential that might be set
@@ -93,13 +72,12 @@ export function seatArgs({ configDir, roomUrl, token, handle, repo, settingsPath
   return {
     cmd: 'claude',
     args: [
-      '--dangerously-load-development-channels',
-      '--mcp-config', configPath,
-      // Without --settings the seat fires no hooks, so its turns never close
-      // and its destination wedges after the first message.
-      '--settings', settingsPath,
+      '--plugin-dir', MOD_DIR,
+      // The seat's only way to answer the room; it posts nowhere else.
+      '--allowedTools', 'mcp__room-seat__room_reply',
       '--add-dir', worktree,
     ],
+    // The mod joins at once when it finds these three.
     env: {
       ...env,
       CLAUDE_CONFIG_DIR: configDir,
@@ -109,6 +87,17 @@ export function seatArgs({ configDir, roomUrl, token, handle, repo, settingsPath
     },
     cwd: worktree,
   }
+}
+
+/** `claude --version`'s output, or '' when claude is not on PATH. */
+function claudeVersion() {
+  return new Promise(done => {
+    let out = ''
+    const child = spawnPortable('claude', ['--version'], { stdio: ['ignore', 'pipe', 'ignore'] })
+    child.stdout.on('data', d => { out += d })
+    child.on('close', () => done(out)) // not 'exit': stdout may still be draining
+    child.on('error', () => done(''))
+  })
 }
 
 function die(msg, code = 1) {
@@ -143,21 +132,15 @@ async function main() {
   const configDir = resolve(flag('--config-dir') || join(homedir(), '.claude-rooms', handle))
   const roomUrl = flag('--room') || process.env.ROOM_URL || 'http://127.0.0.1:8787'
 
+  const version = await claudeVersion()
+  if (!meetsModFloor(version)) {
+    die(`a room seat needs Claude Code 2.1.287 or later, where mods load (found: ${version.trim() || 'no claude on PATH'}). Run: claude update`)
+  }
+
   const worktree = ensureWorktree(repo, handle)
-
-  // The seat's hooks live beside its credentials, in its own config dir, so
-  // two seats on one machine never share a settings file — and so the seat
-  // token in it is no more exposed than the login already in that directory.
   mkdirSync(configDir, { recursive: true })
-  const settingsPath = join(configDir, 'settings.hooks.json')
-  writeFileSync(settingsPath, JSON.stringify(seatHookSettings({ roomUrl, token }), null, 2))
 
-  const mcpConfigPath = join(configDir, 'mcp.seat.json')
-  writeFileSync(mcpConfigPath, JSON.stringify(mcpConfigFor(), null, 2))
-
-  const { cmd, args, env } = seatArgs({
-    configDir, roomUrl, token, handle, repo, settingsPath, mcpConfigPath,
-  })
+  const { cmd, args, env } = seatArgs({ configDir, roomUrl, token, handle, repo })
 
   console.error(`launching seat "${handle}" — config: ${configDir}  worktree: ${worktree}`)
   console.error('first run will prompt /login for this seat\'s own account.')

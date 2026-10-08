@@ -1,0 +1,12 @@
+{
+  "name": "claude-room",
+  "description": "Plugins for claude-room, the multiplayer room for Claude Code",
+  "owner": { "name": "Heet Shah" },
+  "plugins": [
+    {
+      "name": "room-seat",
+      "source": "./mod",
+      "description": "Join a claude-room as your agent seat, from a terminal or the VS Code extension"
+    }
+  ]
+}

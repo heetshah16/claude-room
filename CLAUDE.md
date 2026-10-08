@@ -20,6 +20,12 @@ Run tests from the repo root (`node --test`, room-side) and from `extension/` se
 - **Publishing requires `devtunnel user login`** (interactive, opens a browser) before Publish will produce a real address — this is a one-time-per-machine, per-account thing, unrelated to any code state.
 - **A worker's own worktree/process is a child of the room's PID.** Killing the room (any restart) kills every worker under it too. Agent-member records left in `members.json` from a room that's since restarted are provably dead — the room prunes these at boot now.
 - The install-tool dialog, once tools are installed, needs one more full relaunch to be seen — see the PATH gotcha above.
+- **Mods (`mod/`) need Claude Code 2.1.287+, and their tests are `*.test.tsx`.** Node 24's
+  `node --test` runs `*.test.ts` and would fail on `claude-code/testing`; it ignores `.tsx`.
+  Run the mod suite with `claude plugin test` from `mod/`. `claude --plugin-dir ./mod`
+  hot-reloads on save; an installed copy does not (bump `version` and reinstall).
+- **Nothing in `mod/` may import from outside `mod/`** (`test/mod-boundary.test.mjs`): a
+  marketplace install copies that directory alone, without `node_modules`.
 
 ## Manual testing loop that actually works
 

@@ -72,30 +72,43 @@ else's machine, running somebody else's account. The boundary is the point.
 
 ## 2. Harness drivers
 
-Two kinds of agent participate, and they are driven **in opposite directions**.
+Two kinds of agent participate, and both pull their work from the room — each its own way.
 
-### Claude Code seats — pushed
+### Claude Code seats — a mod that pulls
 
-`src/seat.mjs` runs as an MCP stdio child of a real Claude Code process. The
-room pushes work in as a `claude/channel` notification; the agent answers with
-the `room_reply` tool. Launched by `scripts/room-seat.mjs`, which gives each
-seat its own `CLAUDE_CONFIG_DIR` and its own `git worktree`.
+`mod/` is a Claude Code mod (plugin `room-seat`) loaded into the seat's own session. It
+spawns `mod/feed.mjs`, a Node child that holds `/seat/events` and prints one JSON line per
+prompt or status change; the mod starts each room turn with `$.prompt.submit` and serves
+`room_reply` as a registered tool. The seat is online exactly while that child holds the
+feed, the same liveness rule as every other seat, and the child dies with the session.
 
-The credential isolation is deliberate and absolute: nothing copies, forwards
-or stores a token, and the launcher actively strips `ANTHROPIC_API_KEY` and
-`ANTHROPIC_AUTH_TOKEN` so it cannot become the thing that authenticates a
-session.
+This replaced a `claude/channel` push, which needed `--dangerously-load-development-channels`
+because custom channels are not on Anthropic's allowlist. A mod runs inside the session, so
+no allowlist applies. Two consequences worth knowing before changing it:
+
+- **Hook events are forwarded only during a room turn.** A seat joined with `/room-join` is
+  also its owner's everyday session; forwarding everything would let the owner's own `Stop`
+  close the room's turn early and leak their tool calls into the room's activity feed.
+- **Forwarding is never awaited.** `$.http.fetch` has no timeout; a hook waiting on an
+  unreachable room would hold every tool call in the session.
+
+`mod/lib/protocol.mjs` holds the protocol pieces both sides use (`readFrames`,
+`PendingContext`, `REPLY_DIRECTIVE`, `turnFields`). It lives in `mod/` because a
+marketplace install copies `mod/` alone; the room imports it from there.
+
+Launched by `scripts/room-seat.mjs`, which still gives each seat its own `CLAUDE_CONFIG_DIR`
+and its own `git worktree`.
 
 ### OpenCode seats — pulled
 
 `src/opencode.mjs` drives `opencode serve` over HTTP. Launched by
 `scripts/room-opencode-seat.mjs`.
 
-**This asymmetry is forced, not stylistic.** OpenCode silently discards MCP
-notifications it does not understand — verified against the real binary by
+OpenCode cannot receive channel push notifications — it silently discards MCP
+notifications it does not understand (verified against the real binary by
 firing 13 `claude/channel` notifications at a live idle session and observing
-zero messages, zero tool calls, zero bus events. **There is no inbox.** So
-delivery must be an outbound call the driver makes:
+zero messages, zero tool calls, zero bus events). **There is no inbox.** So
+the driver must pull work with outbound calls instead:
 
 | room event | driver does |
 |---|---|
@@ -115,7 +128,7 @@ Two consequences worth knowing before changing any of it:
   nothing, another parked in `retry` after an upstream 502. `retry` is
   deliberately *not* progress; treating it as progress would mean the deadline
   never fires and the seat blocks its queue destination permanently.
-- **`src/seat.mjs` also runs for OpenCode**, in `reply-only` mode. It serves
+- **`src/seat.mjs` runs for OpenCode** in `reply-only` mode. It serves
   `room_reply` and nothing else — the driver owns the room feed, and a second
   connection claiming the same handle would be refused as `handle-taken`,
   leaving the seat deaf.

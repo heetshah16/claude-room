@@ -2,6 +2,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { TASK_CLASSES } from './delegation.mjs'
+import { turnFields } from '../mod/lib/protocol.mjs'
 
 // Claude Code turns each meta entry into an attribute on the <channel> tag, and
 // silently drops any key that is not an identifier. Validate rather than trust:
@@ -39,25 +40,19 @@ const channelEvent = (content, meta) => ({
  * cannot corrupt what a person typed.
  */
 export function buildNotification(messages, roomName) {
-  if (!messages.length) return null
-  const single = messages.length === 1
-  const content = single
-    ? messages[0].content
-    : messages.map(m => `[${m.name}] ${m.content}`).join('\n')
-
-  const first = messages[0]
-  const attachments = messages.map(m => m.attachment?.path).filter(Boolean)
-  return channelEvent(content, {
+  const t = turnFields(messages)
+  if (!t) return null
+  return channelEvent(t.content, {
     room: roomName,
-    user: single ? first.name : messages.map(m => m.name).join(','),
-    member_id: single ? first.memberId : messages.map(m => m.memberId).join(','),
-    msg_id: messages.map(m => m.id).join(','),
-    batch: messages.length,
+    user: t.user,
+    member_id: t.memberId,
+    msg_id: t.msgId,
+    batch: t.batch,
     ts: new Date().toISOString(),
     // Every attachment in the batch, not just the first message's. Reading
     // only messages[0] silently dropped a file whenever someone else uploaded
     // while the agent was busy — the batch is exactly when that happens.
-    ...(attachments.length ? { file_path: attachments.join(',') } : {}),
+    ...(t.attachments.length ? { file_path: t.attachments.join(',') } : {}),
   })
 }
 

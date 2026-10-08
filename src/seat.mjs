@@ -4,6 +4,8 @@ import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprot
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import { sanitizeMeta, buildNotification, buildBriefNotification } from './channel.mjs'
+import { readFrames } from '../mod/lib/protocol.mjs'
+export { readFrames }
 
 // channel.mjs IS the room, embedded in the host's own session. This is the
 // mirror image: a thin client that lives inside every OTHER seat's session
@@ -73,42 +75,6 @@ A block tagged kind="brief" is a machine-written summary of the room, not from a
 Your transcript output does NOT reach the room. The room_reply tool is the ONLY way anything you say reaches the people and other seats here - not your prose, not your reasoning, nothing else.`
 
 const FEED_EVENTS = new Set(['turn', 'mirror', 'brief', 'seed'])
-
-/**
- * Reads Server-Sent Events by hand off a fetch Response's streaming body.
- * Frames are separated by a blank line; only the `event:`/`data:` lines
- * matter here, so a bare `: comment` keep-alive (the room writes one on
- * connect) has neither and is silently skipped. `onFrame` fires once per
- * complete frame; this returns when the stream ends.
- *
- * `event` is passed through as `null` when a frame carries no `event:`
- * line — OpenCode's SSE frames never have one, only `data:`. The room feed
- * always sends `event:`, and its caller here additionally filters with
- * FEED_EVENTS.has(event), which rejects null, so this relaxation is safe
- * for the room path and required for OpenCode's.
- */
-export async function readFrames(body, onFrame) {
-  const reader = body.getReader()
-  const decoder = new TextDecoder()
-  let buf = ''
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) return
-    buf += decoder.decode(value, { stream: true })
-    let idx
-    while ((idx = buf.indexOf('\n\n')) !== -1) {
-      const frame = buf.slice(0, idx)
-      buf = buf.slice(idx + 2)
-      let event = null
-      let data = null
-      for (const line of frame.split('\n')) {
-        if (line.startsWith('event: ')) event = line.slice('event: '.length)
-        else if (line.startsWith('data: ')) data = line.slice('data: '.length)
-      }
-      if (data !== null) onFrame(event, data)
-    }
-  }
-}
 
 /**
  * Builds one seat: an MCP server that speaks claude/channel to its own

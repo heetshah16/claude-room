@@ -1,12 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { seatArgs, worktreeFor, mcpConfigFor } from '../scripts/room-seat.mjs'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { seatArgs, worktreeFor, meetsModFloor, MOD_DIR } from '../scripts/room-seat.mjs'
 
-test('a seat launches real Claude Code against its own config dir', () => {
-  const { cmd, args, env } = seatArgs({
-    configDir: '/cfg/ana', roomUrl: 'http://127.0.0.1:8787',
-    token: 'tok', handle: 'ana-agent', repo: '/repo',
-  })
+const base = { configDir: '/cfg/ana', roomUrl: 'http://127.0.0.1:8787', token: 'tok', handle: 'ana-agent', repo: '/repo' }
+
+test('a seat launches real Claude Code against its own config dir, with the room in its environment', () => {
+  const { cmd, env } = seatArgs(base)
   assert.equal(cmd, 'claude')
   // The isolation that makes this work at all: a separate credential store per
   // seat, so each session performs its own login.
@@ -16,18 +17,26 @@ test('a seat launches real Claude Code against its own config dir', () => {
   assert.equal(env.ROOM_SEAT_HANDLE, 'ana-agent')
 })
 
-test('the seat loads the bridge as a development channel', () => {
-  const { args } = seatArgs({ configDir: '/c', roomUrl: 'u', token: 't', handle: 'h', repo: '/r' })
-  assert.ok(args.includes('--dangerously-load-development-channels'))
-  assert.ok(args.some(a => a.includes('seat')))
+test('the seat loads the room-seat mod, and no development channel', () => {
+  const { args } = seatArgs(base)
+  assert.ok(!args.some(a => /dangerously/.test(a)), 'a mod needs no development-channels flag')
+  assert.equal(args[args.indexOf('--plugin-dir') + 1], MOD_DIR)
+  assert.ok(!args.includes('--mcp-config'))
+  assert.ok(!args.includes('--settings'), 'the mod forwards the hooks; no settings file')
 })
 
-test('no credential is ever passed on the command line or in the env', () => {
-  const { args, env } = seatArgs({
-    configDir: '/c', roomUrl: 'u', token: 't', handle: 'h', repo: '/r',
-  })
-  const blob = JSON.stringify({ args, env })
-  assert.ok(!/sk-ant/.test(blob), 'a credential must never appear here')
+test("the plugin dir is the repo's own mod/", () => {
+  assert.ok(existsSync(join(MOD_DIR, '.claude-plugin', 'plugin.json')))
+})
+
+test("room_reply is pre-approved: it is the seat's only way to answer, and posts only to the room", () => {
+  const { args } = seatArgs(base)
+  assert.equal(args[args.indexOf('--allowedTools') + 1], 'mcp__room-seat__room_reply')
+})
+
+test('no credential is ever passed on the command line', () => {
+  const { args, env } = seatArgs(base)
+  assert.ok(!args.join(' ').includes('tok'), 'the seat token travels in the env, never argv')
   assert.equal(env.ANTHROPIC_API_KEY, undefined)
   assert.equal(env.ANTHROPIC_AUTH_TOKEN, undefined)
 })
@@ -37,35 +46,18 @@ test('each local seat gets its own worktree so two agents cannot clobber one che
   const b = worktreeFor('/repo', 'heet-agent')
   assert.notEqual(a, b)
   assert.match(a, /ana-agent/)
-  // The room serialises turns inside one session; it cannot serialise writes
-  // from two independent sessions. Isolation has to come from git.
-  const { args } = seatArgs({ configDir: '/c', roomUrl: 'u', token: 't', handle: 'ana-agent', repo: '/repo' })
-  assert.ok(args.some(x => String(x).includes('ana-agent')), 'seat must run in its own worktree')
+  const { args, cwd } = seatArgs(base)
+  assert.equal(cwd, a)
+  assert.ok(args.includes(a), 'seat must run in its own worktree')
 })
 
-test('the MCP config travels as a file path, never as JSON on the command line', () => {
-  // argv-borne JSON cannot survive cmd.exe, and escaping it would be an
-  // injection surface. A path has neither problem.
-  const { args } = seatArgs({
-    configDir: '/cfg/ana', roomUrl: 'u', token: 't', handle: 'ana-agent', repo: '/repo',
-  })
-  const i = args.indexOf('--mcp-config')
-  assert.notEqual(i, -1)
-  const value = args[i + 1]
-  assert.doesNotMatch(value, /[{}]/, 'the config must be a path, not inline JSON')
-  assert.match(value, /mcp\.seat\.json$/)
-})
-
-test('the mcp config path can be overridden, so the launcher controls where it writes', () => {
-  const { args } = seatArgs({
-    configDir: '/cfg/ana', roomUrl: 'u', token: 't', handle: 'h', repo: '/r',
-    mcpConfigPath: '/tmp/custom.json',
-  })
-  assert.ok(args.includes('/tmp/custom.json'))
-})
-
-test('the seat bridge is still what gets loaded, now via the config file body', () => {
-  const cfg = mcpConfigFor()
-  assert.ok(cfg.mcpServers.seat.command)
-  assert.ok(cfg.mcpServers.seat.args.some(a => String(a).includes('seat')))
+test('a seat needs Claude Code 2.1.287 or later, where mods load', () => {
+  assert.equal(meetsModFloor('2.1.287 (Claude Code)'), true)
+  assert.equal(meetsModFloor('2.1.290 (Claude Code)'), true)
+  assert.equal(meetsModFloor('2.2.0'), true)
+  assert.equal(meetsModFloor('10.0.0'), true)
+  assert.equal(meetsModFloor('2.1.286 (Claude Code)'), false)
+  assert.equal(meetsModFloor('2.0.999'), false)
+  assert.equal(meetsModFloor(''), false)
+  assert.equal(meetsModFloor('not a version'), false)
 })

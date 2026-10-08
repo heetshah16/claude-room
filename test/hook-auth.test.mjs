@@ -13,7 +13,6 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { harness, listen, post, postHook, done, openSeatFeed, waitUntil } from './helpers/room.mjs'
-import { seatArgs, seatHookSettings } from '../scripts/room-seat.mjs'
 import { Store, HOOK_EVENTS } from '../src/state.mjs'
 
 // --- /hook/* authentication -------------------------------------------------
@@ -124,45 +123,23 @@ test('a token needing escaping survives into the settings URL', () => {
   }
 })
 
-// --- seats get hooks ---------------------------------------------------------
+// --- seats close their turns through /seat/hook/* ----------------------------
 
-test('a seat is launched with a settings file, or its turns never close', () => {
-  const { args } = seatArgs({
-    configDir: '/cfg', roomUrl: 'http://room', token: 't',
-    handle: 'ana-agent', repo: '/repo', settingsPath: '/cfg/settings.hooks.json',
-  })
-  const i = args.indexOf('--settings')
-  assert.notEqual(i, -1, 'no --settings: the seat fires no hooks and wedges after one turn')
-  assert.equal(args[i + 1], '/cfg/settings.hooks.json')
-})
-
-test("a seat's hooks point at its own seat routes and carry its own token", () => {
-  const settings = seatHookSettings({ roomUrl: 'http://room:8811', token: 'seat-tok' })
-
-  for (const event of Object.keys(HOOK_EVENTS)) {
-    const url = settings.hooks[event][0].hooks[0].url
-    assert.match(url, new RegExp(`/seat/hook/${event}\\?`), `${event} must use the seat route`)
-    assert.match(url, /token=seat-tok/, `${event} carries no seat token`)
-    // The local route would attribute the seat's cost to the host and bind to
-    // the host's turn — the exact cross-account mistake seats exist to avoid.
-    assert.ok(!/\/hook\//.test(url.replace('/seat/hook/', '')), `${event} must not hit the local hook route`)
-  }
-})
+// The URL the room-seat mod posts a seat's Stop hook to.
+const seatStopUrl = (base, token) => `${base}/seat/hook/Stop?token=${encodeURIComponent(token)}`
 
 test('a seat closes its turn through the hooks it is actually launched with', async () => {
-  // End to end over the wire: build the settings the launcher writes, then
-  // drive the room using only the URLs inside them. If those URLs are wrong,
+  // End to end over the wire: drive the room using only the seat hook URL the mod
+  // posts to. If it is wrong,
   // the destination stays busy — which is exactly what shipped.
   const h = harness()
   const base = await listen(h.server)
   const feed = await openSeatFeed(base, h.agentToken)
-  const settings = seatHookSettings({ roomUrl: base, token: h.agentToken })
-
   await post(base, '/msg', { token: h.anaToken, text: '@ana-agent find the TTL' })
   await feed.next()
   assert.equal(h.queue.busy('ana-agent'), true)
 
-  const stopUrl = settings.hooks.Stop[0].hooks[0].url
+  const stopUrl = seatStopUrl(base, h.agentToken)
   await fetch(stopUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -179,7 +156,7 @@ test('a seat can take a second turn - the wedge is gone', async () => {
   const h = harness()
   const base = await listen(h.server)
   const feed = await openSeatFeed(base, h.agentToken)
-  const stopUrl = seatHookSettings({ roomUrl: base, token: h.agentToken }).hooks.Stop[0].hooks[0].url
+  const stopUrl = seatStopUrl(base, h.agentToken)
   const stop = id => fetch(stopUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
