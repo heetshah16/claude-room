@@ -72,7 +72,7 @@ else's machine, running somebody else's account. The boundary is the point.
 
 ## 2. Harness drivers
 
-Two kinds of agent participate, and they are driven **in opposite directions**.
+Two kinds of agent participate, and both pull their work from the room — each its own way.
 
 ### Claude Code seats — a mod that pulls
 
@@ -104,11 +104,11 @@ and its own `git worktree`.
 `src/opencode.mjs` drives `opencode serve` over HTTP. Launched by
 `scripts/room-opencode-seat.mjs`.
 
-**This asymmetry is forced, not stylistic.** OpenCode silently discards MCP
-notifications it does not understand — verified against the real binary by
+OpenCode cannot receive channel push notifications — it silently discards MCP
+notifications it does not understand (verified against the real binary by
 firing 13 `claude/channel` notifications at a live idle session and observing
-zero messages, zero tool calls, zero bus events. **There is no inbox.** So
-delivery must be an outbound call the driver makes:
+zero messages, zero tool calls, zero bus events). **There is no inbox.** So
+the driver must pull work with outbound calls instead:
 
 | room event | driver does |
 |---|---|
@@ -128,7 +128,7 @@ Two consequences worth knowing before changing any of it:
   nothing, another parked in `retry` after an upstream 502. `retry` is
   deliberately *not* progress; treating it as progress would mean the deadline
   never fires and the seat blocks its queue destination permanently.
-- **`src/seat.mjs` also runs for OpenCode**, in `reply-only` mode. It serves
+- **`src/seat.mjs` runs for OpenCode** in `reply-only` mode. It serves
   `room_reply` and nothing else — the driver owns the room feed, and a second
   connection claiming the same handle would be refused as `handle-taken`,
   leaving the seat deaf.
