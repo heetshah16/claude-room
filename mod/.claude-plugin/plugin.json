@@ -1,0 +1,6 @@
+{
+  "name": "room-seat",
+  "version": "0.1.0",
+  "description": "Joins a claude-room as an agent seat: room turns arrive in this session, replies go back with room_reply. Replaces the --dangerously-load-development-channels seat.",
+  "author": { "name": "Heet Shah" }
+}

@@ -150,7 +150,7 @@ export const DEFAULT_TURN_TIMEOUT_MS = 300_000
  * to ride in the prompt body instead. Without it the seat does the work and
  * reports nothing, which reads as silence to everyone waiting in the room.
  */
-const REPLY_DIRECTIVE = [
+export const REPLY_DIRECTIVE = [
   '---',
   'When you have finished, you MUST call the room_reply tool to report what you did.',
   'Your normal output does NOT reach the room — room_reply is the only channel to it.',
