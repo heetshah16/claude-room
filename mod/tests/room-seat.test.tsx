@@ -211,6 +211,65 @@ test('a room turn the owner interrupts is closed with a visible reason', async (
   expect(hookPosts(seen)).toEqual(['http://room.test/seat/hook/Stop'])
 })
 
+for (const [reason, said] of [['error', /API error/], ['refusal', /refused/]] as const) {
+  test(`a room turn that ends with reason ${reason} is closed once, saying so`, async ($, on) => {
+    const seen = stubRoom(on, { env: SEAT_ENV, lines: [{ text: 'room work' }] })
+    on('turn.complete', () => ({ text: '' }))
+    await start($)
+    await seen.prompted.promise
+    await settle($)
+    const ending = reason === 'refusal' ? { reason, refusal: { category: null, explanation: null } } : { reason }
+    await $.turn.complete({ turnId: 't1', answer: '', durationMs: 5, isAborted: false, ...ending })
+    for (let i = 0; i < 50 && hookPosts(seen).length < 1; i++) await $.command.run({ command: 'room-status', args: '' })
+    const replies = seen.posts.filter(p => p.url.endsWith('/seat/reply'))
+    expect(replies.length).toBe(1)
+    expect(replies[0].body.text).toMatch(said)
+    expect(hookPosts(seen)).toEqual(['http://room.test/seat/hook/Stop'])
+  })
+}
+
+test('a room turn that answered and sent its Stop is not closed a second time', async ($, on) => {
+  const seen = stubRoom(on, { env: SEAT_ENV, lines: [{ text: 'room work' }] })
+  on('classic.Stop', () => ({}))
+  on('turn.complete', () => ({ text: '' }))
+  await start($)
+  await seen.prompted.promise
+  await settle($)
+  await $.classic.Stop({ stop_hook_active: false })
+  await $.turn.complete({ turnId: 't1', answer: 'done', durationMs: 5, isAborted: false, reason: 'answer' })
+  await settle($)
+  expect(hookPosts(seen)).toEqual(['http://room.test/seat/hook/Stop'])
+  expect(seen.posts.filter(p => p.url.endsWith('/seat/reply'))).toEqual([])
+})
+
+// A room turn queued behind the owner's, its submit still waiting when the
+// owner leaves; the submit then resolves before or after a /room-join.
+for (const resolves of ['before', 'after'] as const) {
+  test(`a room turn submitted before /room-leave never scopes the owner's turns after a rejoin (resolves ${resolves} it)`, { options: CONFIG }, async ($, on) => {
+    const idle = deferred()
+    let spawned = 0
+    const seen = stubRoom(on, {
+      env: SEAT_ENV,
+      spawn: (signal: AbortSignal) => playing(spawned++ ? [] : [{ text: 'room work' }])(signal),
+      submit: e => idle.promise.then(() => ({ text: e.text })),
+    })
+    on('classic.Stop', () => ({}))
+    await start($)
+    await seen.prompted.promise
+    await $.command.run({ command: 'room-leave', args: '' })
+    if (resolves === 'before') idle.resolve()
+    await settle($)
+    await $.command.run({ command: 'room-join', args: '' })
+    if (resolves === 'after') idle.resolve()
+    await settle($)
+    await bash($, 'ls')
+    await $.classic.Stop({ stop_hook_active: false })
+    await settle($)
+    expect(seen.spawns.length).toBe(2)
+    expect(hookPosts(seen)).toEqual([])
+  })
+}
+
 test('a room turn that cannot start is closed with the reason', async ($, on) => {
   const seen = stubRoom(on, {
     env: SEAT_ENV,

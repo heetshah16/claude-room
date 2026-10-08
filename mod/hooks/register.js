@@ -32,6 +32,12 @@ let feed = null // the feed child's stream while joined
 let status = 'not joined - run /room-join'
 let inRoomTurn = false
 
+const UNANSWERED = {
+  aborted: "the seat's owner interrupted this turn",
+  refusal: 'the model refused this turn',
+  error: 'this turn ended on an API error',
+}
+
 export function register(on, options = {}) {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'room-join', description: 'Bring this session online as your room seat', immediate: true })
@@ -94,11 +100,13 @@ export function register(on, options = {}) {
     return next(e)
   })
 
-  // An interrupted turn may end without a Stop; the room must not stay busy.
+  // A turn that ends without an answer may end without a Stop (an API error
+  // raises StopFailure); the room must not stay busy. A forwarded Stop already
+  // cleared inRoomTurn, so the room's turn is closed once either way.
   on('turn.complete', async ($, e, next) => {
-    if (seat && inRoomTurn && e.isAborted && !e.agentId) {
+    if (inRoomTurn && !e.agentId && UNANSWERED[e.reason]) {
       inRoomTurn = false
-      void closeRoomTurn($, "the seat's owner interrupted this turn")
+      void closeRoomTurn($, UNANSWERED[e.reason])
     }
     return next(e)
   })
@@ -122,14 +130,16 @@ function post($, path, body) {
 // Never awaited: $.http.fetch has no timeout, and a hook waiting on an
 // unreachable room would hold every tool call.
 function forward($, event, payload) {
-  if (!seat || !inRoomTurn) return
+  const inTurn = seat && inRoomTurn
   if (event === 'Stop') inRoomTurn = false
+  if (!inTurn) return
   post($, `/seat/hook/${event}?token=${encodeURIComponent(seat.token)}`, payload)
     .catch(err => $.ui.log(`room hook ${event} failed: ${err?.message ?? err}`, { to: 'debug' }))
 }
 
 async function join($, cfg) {
   seat = { roomUrl: String(cfg.roomUrl).replace(/\/+$/, ''), token: String(cfg.token), handle: String(cfg.handle).replace(/^@/, '') }
+  inRoomTurn = false
   setStatus($, `connecting to ${seat.roomUrl} as @${seat.handle}`)
   await $.tool.register(REPLY_TOOL)
   const stream = $.process.spawn({
@@ -183,15 +193,18 @@ async function onLine($, line) {
 }
 
 async function submit($, text) {
+  const by = seat
   try {
     const entered = await $.prompt.submit({ text })
     if (entered?.drop) throw new Error(entered.drop)
     // It resolves once the session was idle and the turn started: from here
     // until it ends, the session's hook events belong to the room's turn.
     // Marked here, not in a prompt.submit hook of this mod's: called from this
-    // loop, the submit skips every hook of this mod's.
-    inRoomTurn = true
+    // loop, the submit skips every hook of this mod's. Not if the seat that
+    // sent it left (or left and joined again) while the submit waited.
+    if (seat === by) inRoomTurn = true
   } catch (err) {
+    if (seat !== by) return
     inRoomTurn = false
     // The room marked this seat busy when it sent the turn. If the turn cannot
     // start, say so and close it, or every later message queues behind a turn
