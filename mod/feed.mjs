@@ -5,14 +5,10 @@
 //
 // Seat liveness is unchanged: the seat is online exactly while this process
 // holds the feed, and Claude Code kills it when the mod unloads.
-//
-// ponytail: imports from ../src, so this runs from a repo checkout only. A
-// marketplace install copies mod/ alone; bundle these imports before that.
+
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
-import { readFrames } from '../src/seat.mjs'
-import { buildNotification } from '../src/channel.mjs'
-import { PendingContext, REPLY_DIRECTIVE } from '../src/opencode.mjs'
+import { readFrames, PendingContext, REPLY_DIRECTIVE, turnFields } from './lib/protocol.mjs'
 
 /**
  * Room events -> prompt text, or null when the event is not a request.
@@ -31,12 +27,12 @@ export function createPrompter(handle) {
       return null
     }
     if (event !== 'turn') return null
-    const nt = buildNotification(data.messages ?? [], data.room)
-    if (!nt) return null
-    const { user, file_path } = nt.params.meta
+    const t = turnFields(data.messages)
+    if (!t) return null
     const where = data.room ? ` in room "${data.room}"` : ''
-    const header = `${user} addressed you (${seat})${where}:`
-    const body = [header, nt.params.content, file_path && `(attached: ${file_path})`].filter(Boolean).join('\n')
+    const header = `${t.user} addressed you (${seat})${where}:`
+    const attached = t.attachments.length ? `(attached: ${t.attachments.join(', ')})` : ''
+    const body = [header, t.content, attached].filter(Boolean).join('\n')
     return [pending.drain().text, body, REPLY_DIRECTIVE].filter(Boolean).join('\n\n')
   }
 }

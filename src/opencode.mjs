@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { buildNotification } from './channel.mjs'
 import { readFrames } from './seat.mjs'
+import { PendingContext, REPLY_DIRECTIVE } from '../mod/lib/protocol.mjs'
+export { PendingContext, REPLY_DIRECTIVE }
 
 // The reply-only bridge registered with opencode is always src/seat.mjs
 // itself, so connect() defaults to its own sibling file rather than
@@ -32,56 +34,6 @@ export function parseModel(spec) {
 export function promptFromTurn(messages, roomName) {
   const nt = buildNotification(messages ?? [], roomName)
   return nt ? nt.params.content : null
-}
-
-const LABEL = { mirror: 'mirror', brief: 'brief', seed: 'seed' }
-
-/**
- * Room events that are NOT a request — mirrors, briefs, the join seed.
- *
- * OpenCode has no inbox, so these cannot be delivered on their own: sending
- * one would start a turn nobody asked for. They wait here and ride along with
- * the next real turn.
- *
- * Bounded, because they arrive whether or not this seat is ever addressed.
- * Drops are counted and reported rather than hidden, mirroring how `pending`
- * already tells a Claude seat how stale its brief is.
- */
-export class PendingContext {
-  #max
-  #items = []
-  #dropped = 0
-
-  constructor(max = 20) {
-    this.#max = Math.max(1, Number(max) || 20)
-  }
-
-  add(kind, text, from) {
-    if (!text || !String(text).trim()) return
-    const label = LABEL[kind] ?? 'context'
-    this.#items.push(from ? `[${label} from @${from}] ${text}` : `[${label}] ${text}`)
-    while (this.#items.length > this.#max) {
-      this.#items.shift()
-      this.#dropped++
-    }
-  }
-
-  drain() {
-    if (!this.#items.length && !this.#dropped) return { text: '', dropped: 0 }
-    const dropped = this.#dropped
-    const lines = [...this.#items]
-    if (dropped) lines.unshift(`(${dropped} earlier room events dropped)`)
-    this.#items = []
-    this.#dropped = 0
-    return {
-      dropped,
-      text: [
-        '--- room context: background only, never a request ---',
-        ...lines,
-        '--- end room context ---',
-      ].join('\n'),
-    }
-  }
 }
 
 /**
@@ -143,19 +95,6 @@ export function actionForOpencodeEvent(ev, sessionId) {
 
 export const DEFAULT_MODEL = 'opencode/mimo-v2.6-flash-free'
 export const DEFAULT_TURN_TIMEOUT_MS = 300_000
-
-/**
- * OpenCode does not surface an MCP server's `instructions` to its model the way
- * Claude Code does, so the seat never learns the one rule that matters. It has
- * to ride in the prompt body instead. Without it the seat does the work and
- * reports nothing, which reads as silence to everyone waiting in the room.
- */
-export const REPLY_DIRECTIVE = [
-  '---',
-  'When you have finished, you MUST call the room_reply tool to report what you did.',
-  'Your normal output does NOT reach the room — room_reply is the only channel to it.',
-  'A turn that ends without calling room_reply looks like silence to the people waiting.',
-].join('\n')
 
 /**
  * One OpenCode session, driven as a room seat.
