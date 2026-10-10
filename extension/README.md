@@ -207,3 +207,14 @@ harness above talks to the real producer, which is why it would have caught it.
 
 **Still unverified: the chat rendering** of the delegate tool card and the
 relayed turn, which needs a real VS Code host.
+
+## Installed package verification (2026-10-10)
+
+Packaged with `npx @vscode/vsce package` (0.0.2) and run from an unzipped copy far from the checkout.
+
+- Package: 3189 files, 4.91 MB (5,150,258 bytes). `vsce ls`: 3187 files.
+- Contents: `room/src/server.mjs`, `room/src/orchestrator-bridge.mjs`, `room/mod/lib/protocol.mjs`, `room/scripts/room-opencode-seat.mjs` and `node_modules/@modelcontextprotocol/sdk` present; no `.claude/`, no `*.test.*` outside node_modules, no `room/mod/.claude-plugin/types/`.
+- Boot: `ROOM_STANDALONE=1 ROOM_PORT=0 ROOM_STATE_DIR=<tmp>` on the unpacked `room/src/server.mjs` printed "listening on http://127.0.0.1:<port>".
+- Worker with `ROOM_REPO=<fresh temp git repo>`: `POST /api/spawn-worker` returned `{"ok":true,"handle":"worker-1"}`; worktree created at `<repo>/.worktrees/worker-1`, opencode connected; nothing created inside the unpacked extension.
+- Worker without `ROOM_REPO` (cwd = unpacked `room/`): the POST still returned `{"ok":true,"handle":"worker-1"}`, but the seat crashed on `git worktree add <room>/.worktrees/worker-1` (status 128, git's own message not surfaced), the room logged "worker-1 exited with code 1", and no `.worktrees` was created in the extension. The failure is visible only in the room log, not in the spawn response.
+- Cleanup note: killing the room process leaves the worker's `seat.mjs` and `opencode serve` running; they had to be stopped by hand. No stray processes remain.
