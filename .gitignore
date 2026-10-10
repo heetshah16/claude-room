@@ -11,3 +11,5 @@ extension/harness/viewport.css
 .worktrees/
 graphify-out/
 *.vsix
+extension/room/
+.bundle-test-*/

@@ -2,9 +2,13 @@
 test/**
 **/*.test.js
 harness/**
-node_modules/**
 package-lock.json
 .gitignore
 **/tsconfig.json
 **/.eslintrc*
 **/*.map
+.claude/**
+**/*.test.mjs
+**/*.test.tsx
+room/mod/tests/**
+room/mod/.claude-plugin/types/**
