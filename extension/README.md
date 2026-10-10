@@ -54,8 +54,10 @@ npm test          # 80 tests
 Or `node --test` from the repo root to run these alongside the room's own
 suite in one invocation.
 
-No runtime dependencies are required. Node 22+ and a VS Code API of 1.75 or
-newer are assumed — see below for what that means in practice.
+The extension's own code has no runtime `require` beyond Node built-ins and
+`vscode`, and no build step. A VS Code API of 1.75 or newer is assumed — see
+below for what that means in practice. (`@modelcontextprotocol/sdk` is a
+`dependency` only so the bundled room can ship with it; see "Installing".)
 
 ## Editors: VS Code and Cursor
 
@@ -87,17 +89,43 @@ code  --extensionDevelopmentPath="<repo>/extension"    # VS Code
 cursor --extensionDevelopmentPath="<repo>/extension"   # Cursor
 ```
 
-### Installing it properly
+From a repo checkout the room is the checkout's own `src/`, even if a stale
+`extension/room/` exists, so your edits to `src/` are what runs.
 
-There is no build step, so packaging is just:
+## Installing
 
-```bash
-cd extension
-npx @vscode/vsce package        # produces claude-room-orchestrator-0.0.1.vsix
-```
+- **VS Code:** install from the Marketplace, or from a `.vsix`:
+  `code --install-extension <file>.vsix`, or Extensions view → `…` → **Install
+  from VSIX…**.
+- **Cursor (and any Open VSX editor):** Cursor installs from Open VSX, not the
+  VS Code Marketplace, so the Marketplace listing does not appear in its
+  library. Install a `.vsix` today: `cursor --install-extension <file>.vsix`.
+  Publishing to Open VSX (`npx ovsx publish <file>.vsix -p <token>`, which needs
+  an Open VSX account and namespace) is not done yet, so it is not listed there.
+- **Building the `.vsix` yourself:**
 
-Then in either editor: `Ctrl+Shift+P` → **"Extensions: Install from VSIX…"**.
-Cursor supports VSIX installation the same way VS Code does.
+  ```bash
+  cd extension
+  npm install                     # the room's SDK ships in the package's node_modules
+  npx @vscode/vsce package        # produces claude-room-orchestrator-0.0.2.vsix (~4.9 MB)
+  ```
+
+  `vsce package` runs `vscode:prepublish` (`node ../scripts/bundle-room.mjs`),
+  which copies the room's runtime files into `extension/room/` (git-ignored
+  build output). Installed from a `.vsix`, the extension runs that bundled
+  copy; no repo checkout is needed.
+
+### What it needs on your machine
+
+- **Workers:** open a folder that is a git repository. The room is started with
+  `ROOM_REPO` set to the first open workspace folder, and worker worktrees go in
+  `<that folder>/.worktrees/<handle>`. If it is not a git repo, spawning is
+  refused with "workers need a git repository: <path> is not one — open a git
+  project folder (or set ROOM_REPO) and try again". With no folder open,
+  workers cannot run. Workers also need `git` and `opencode` on PATH.
+- **Orchestrator chat:** `claude` on PATH.
+- **Node.js:** not needed for the room itself. It is launched with the editor's
+  own `process.execPath`; the extension does not look for a system Node.
 
 ## Manual verification
 
