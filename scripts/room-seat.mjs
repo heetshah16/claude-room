@@ -89,14 +89,26 @@ export function seatArgs({ configDir, roomUrl, token, handle, repo }) {
   }
 }
 
-/** `claude --version`'s output, or '' when claude is not on PATH. */
+/**
+ * `claude --version`'s output, or '' when claude is not on PATH — and also ''
+ * when it has not finished after 10s, so a wedged probe kills its child and
+ * lets main() die with its usual version message instead of hanging forever.
+ */
 function claudeVersion() {
   return new Promise(done => {
     let out = ''
     const child = spawnPortable('claude', ['--version'], { stdio: ['ignore', 'pipe', 'ignore'] })
+    const settle = text => {
+      clearTimeout(timer)
+      done(text) // a settled promise ignores every later call
+    }
+    const timer = setTimeout(() => {
+      child.kill()
+      settle('')
+    }, 10_000)
     child.stdout.on('data', d => { out += d })
-    child.on('close', () => done(out)) // not 'exit': stdout may still be draining
-    child.on('error', () => done(''))
+    child.on('close', () => settle(out)) // not 'exit': stdout may still be draining
+    child.on('error', () => settle(''))
   })
 }
 

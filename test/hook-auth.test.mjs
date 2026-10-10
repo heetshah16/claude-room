@@ -4,8 +4,8 @@
  * Both were review findings, and both are the same shape: a path nothing drove
  * end to end. /hook/* never called memberFrom — every test posted to it
  * happily, because none of them was asking whether it *should* have been
- * allowed to. And room-seat.mjs passed no --settings, so a real seat fired no
- * hooks, while every test posted /seat/hook/Stop by hand.
+ * allowed to. And room-seat.mjs once launched seats with no --settings, so a
+ * real seat fired no hooks, while every test posted /seat/hook/Stop by hand.
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -128,7 +128,7 @@ test('a token needing escaping survives into the settings URL', () => {
 // The URL the room-seat mod posts a seat's Stop hook to.
 const seatStopUrl = (base, token) => `${base}/seat/hook/Stop?token=${encodeURIComponent(token)}`
 
-test('a seat closes its turn through the hooks it is actually launched with', async () => {
+test("a seat's own /seat/hook/Stop closes its turn", async () => {
   // End to end over the wire: drive the room using only the seat hook URL the mod
   // posts to. If it is wrong,
   // the destination stays busy — which is exactly what shipped.
