@@ -33,6 +33,7 @@ test('the bundled room boots on its own, with no repo src around it', async () =
     const child = spawn(process.execPath, [join(out, 'src', 'server.mjs')], {
       env: { ...process.env, ROOM_STANDALONE: '1', ROOM_PORT: '0', ROOM_STATE_DIR: join(out, 'state') },
     })
+    const closed = new Promise(r => { child.once('close', r); child.once('error', r) })
     const err = []
     child.stderr.on('data', d => err.push(String(d)))
     const listening = await new Promise(resolve => {
@@ -41,7 +42,8 @@ test('the bundled room boots on its own, with no repo src around it', async () =
       child.on('exit', () => { clearTimeout(t); resolve(false) })
       child.on('error', () => { clearTimeout(t); resolve(false) })
     })
-    await new Promise(r => { if (child.exitCode !== null) return r(); child.once('exit', r); child.kill() })
+    child.kill()
+    await closed
     assert.ok(listening, `bundled room did not start:\n${err.join('')}`)
   } finally {
     rmSync(out, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
