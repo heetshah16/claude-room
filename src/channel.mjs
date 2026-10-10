@@ -309,6 +309,18 @@ export function createChannel({ config, onReply, onDecision, onDelegate, onListW
     if (notification?.method === PERMISSION_REQUEST) permissionCb?.(notification.params)
   }
 
+  // notification() is async and rejects with "Not connected" when no session is
+  // attached - always the case in a standalone room (ROOM_STANDALONE=1, how the
+  // extension runs it). A discarded rejection is an unhandled one, and it took
+  // the whole room down the moment a delegation finished. Say it on stderr
+  // (stdout belongs to the MCP transport) and keep the room up: everything this
+  // sends is also published on the room's own bus.
+  const send = nt => {
+    mcp.notification(nt).catch(err => {
+      process.stderr.write(`room: channel: ${nt.method} not sent: ${err?.message ?? err}\n`)
+    })
+  }
+
   return {
     mcp,
     listTools,
@@ -318,21 +330,21 @@ export function createChannel({ config, onReply, onDecision, onDelegate, onListW
     },
     notify(messages) {
       const nt = buildNotification(messages, config.roomName)
-      if (nt) void mcp.notification(nt)
+      if (nt) send(nt)
       return nt
     },
     notifyBrief(text, opts = {}) {
       const nt = buildBriefNotification(text, { ...opts, roomName: config.roomName })
-      if (nt) void mcp.notification(nt)
+      if (nt) send(nt)
       return nt
     },
     notifyDelegationResult(result) {
       const nt = buildDelegationResultNotification(result, { roomName: config.roomName })
-      if (nt) void mcp.notification(nt)
+      if (nt) send(nt)
       return nt
     },
     sendVerdict(requestId, behavior) {
-      void mcp.notification({
+      send({
         method: PERMISSION_VERDICT,
         params: { request_id: requestId, behavior },
       })

@@ -103,6 +103,27 @@ test('the agent is told a brief is not from a person', () => {
   if (instructions) assert.match(instructions, /kind="brief" is NOT from a person/)
 })
 
+test('a channel with no MCP peer never crashes the room when it notifies', async () => {
+  // A standalone room (ROOM_STANDALONE=1, how the extension runs it) never
+  // connects the channel. The SDK's notification() then rejects with "Not
+  // connected", and a discarded rejection killed the whole room the moment a
+  // delegation finished - taking every worker and in-flight delegation with it.
+  const ch = createChannel({ config: { roomName: 'r', permissionRelay: false }, onReply() {}, onDecision() {} })
+  const leaked = []
+  const onLeak = err => leaked.push(err)
+  process.on('unhandledRejection', onLeak)
+  try {
+    ch.notify([{ id: 'm1', name: 'ana', memberId: 'u1', content: 'hi' }])
+    ch.notifyBrief('room summary', { ageS: 1, pending: 0 })
+    ch.notifyDelegationResult({ id: 'd1', handle: 'worker-1', text: 'done', verified: 'true' })
+    ch.sendVerdict('abcde', 'allow')
+    await new Promise(r => setTimeout(r, 20))
+  } finally {
+    process.off('unhandledRejection', onLeak)
+  }
+  assert.deepEqual(leaked.map(e => String(e?.message ?? e)), [])
+})
+
 test('the permission capability is declared only when relay is enabled', () => {
   const off = createChannel({ config: loadConfig({}), onReply() {}, onDecision() {} })
   const on = createChannel({ config: loadConfig({ ROOM_PERMISSION_RELAY: '1' }), onReply() {}, onDecision() {} })
