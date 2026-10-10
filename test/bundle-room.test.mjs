@@ -22,7 +22,7 @@ test('the bundle has everything the room imports at runtime, and no tests', () =
     assert.equal(existsSync(join(out, 'mod', 'tests')), false)
     assert.equal(existsSync(join(out, 'mod', '.claude-plugin')), false)
   } finally {
-    rmSync(out, { recursive: true, force: true })
+    rmSync(out, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
 })
 
@@ -39,10 +39,11 @@ test('the bundled room boots on its own, with no repo src around it', async () =
       const t = setTimeout(() => resolve(false), 10_000)
       child.stderr.on('data', () => { if (/listening on/.test(err.join(''))) { clearTimeout(t); resolve(true) } })
       child.on('exit', () => { clearTimeout(t); resolve(false) })
+      child.on('error', () => { clearTimeout(t); resolve(false) })
     })
-    child.kill()
+    await new Promise(r => { if (child.exitCode !== null) return r(); child.once('exit', r); child.kill() })
     assert.ok(listening, `bundled room did not start:\n${err.join('')}`)
   } finally {
-    rmSync(out, { recursive: true, force: true })
+    rmSync(out, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
 })
