@@ -1,7 +1,8 @@
 // extension/test/room-client.test.js
 const { test } = require('node:test')
 const assert = require('node:assert/strict')
-const { roomRecipe, readOwnerToken, createRoomClient } = require('../src/room-client.js')
+const path = require('node:path')
+const { roomRecipe, readOwnerToken, createRoomClient, roomDir } = require('../src/room-client.js')
 
 test('the room is launched standalone, because the extension owns its lifecycle', () => {
   // Not as an MCP child of Claude Code: the extension has to choose the port,
@@ -261,4 +262,23 @@ test('stopping a worker names the handle the room should reap', async () => {
   assert.match(sent.url, /\/api\/stop-worker/)
   assert.deepEqual(sent.body, { handle: 'worker-2' })
   assert.equal(r.ok, true)
+})
+
+test('from a checkout the room is the repo next to the extension, even if a bundle exists', () => {
+  const ext = path.join('/repo', 'extension')
+  const exists = p => p === path.join('/repo', 'src', 'server.mjs') || p === path.join(ext, 'room', 'src', 'server.mjs')
+  assert.equal(roomDir(ext, exists), path.join('/repo'))
+})
+
+test('installed, the room is the copy bundled inside the extension', () => {
+  const ext = path.join('/home/u/.cursor/extensions', 'claude-room.claude-room-orchestrator-0.0.2')
+  assert.equal(roomDir(ext, () => false), path.join(ext, 'room'))
+})
+
+test('the room is told which repo workers work in, and only when there is one', () => {
+  const withRepo = roomRecipe({ repoRoot: '/room', stateDir: '/s', port: 1, env: {}, workRepo: '/proj' })
+  assert.equal(withRepo.opts.env.ROOM_REPO, '/proj')
+  assert.equal(withRepo.opts.cwd, '/room')
+  const without = roomRecipe({ repoRoot: '/room', stateDir: '/s', port: 1, env: {} })
+  assert.equal('ROOM_REPO' in without.opts.env, false)
 })

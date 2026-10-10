@@ -149,6 +149,7 @@ async function pollWithBackoff(fn, { timeoutMs = 10_000, startMs = 150, maxMs = 
  */
 function createSession({
   repoRoot,
+  workRepo,
   stateDir,
   supervisor,
   ui,
@@ -213,7 +214,7 @@ function createSession({
       return { ok: false, error: `could not find a free port: ${err?.message ?? err}` }
     }
     const roomUrl = `http://127.0.0.1:${port}`
-    await supervisor.start('room', roomRecipe({ repoRoot, stateDir, port }))
+    await supervisor.start('room', roomRecipe({ repoRoot, workRepo, stateDir, port }))
 
     let token
     try {
@@ -320,10 +321,10 @@ function createSession({
           await postRoom({ busy: false })
           return
         }
-        await supervisor.start('room', roomRecipe({ repoRoot, stateDir, port, host: PUBLISHED_HOST, advertise: tunnelUrl }))
+        await supervisor.start('room', roomRecipe({ repoRoot, workRepo, stateDir, port, host: PUBLISHED_HOST, advertise: tunnelUrl }))
       } else {
         await supervisor.stop('tunnel')
-        await supervisor.start('room', roomRecipe({ repoRoot, stateDir, port, host: '127.0.0.1' }))
+        await supervisor.start('room', roomRecipe({ repoRoot, workRepo, stateDir, port, host: '127.0.0.1' }))
       }
       await waitForRoomUp(api.roomUrl)
       published = next

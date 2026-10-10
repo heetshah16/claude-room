@@ -21,13 +21,12 @@ const { createWorkersView } = require('./chat/workers-view.js')
 const { createRoomView } = require('./chat/room-view.js')
 const { createWorkerPanel } = require('./chat/worker-panel.js')
 const { createSession } = require('./session.js')
+const { roomDir } = require('./room-client.js')
 const { detectTools, installPlan } = require('./install.js')
 
-// extension.js lives at <repoRoot>/extension/src/extension.js. "The
-// extension's own directory" is <repoRoot>/extension; its parent is the repo
-// root, which is what roomRecipe/orchestratorRecipe/bridgeMcpConfig need to
-// find src/server.mjs and src/orchestrator-bridge.mjs.
-const REPO_ROOT = path.join(__dirname, '..', '..')
+// The room's code: the checkout above this extension when run from source,
+// else the copy bundled into the package. See roomDir.
+const REPO_ROOT = roomDir(path.join(__dirname, '..'))
 
 let supervisor = null
 let output = null
@@ -90,7 +89,7 @@ async function ensureSession(context) {
   const stateDir = path.join(storageDir, 'room-state')
   fs.mkdirSync(stateDir, { recursive: true })
 
-  const s = createSession({ repoRoot: REPO_ROOT, stateDir, supervisor, ui: vscodeUi, log })
+  const s = createSession({ repoRoot: REPO_ROOT, workRepo: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath, stateDir, supervisor, ui: vscodeUi, log })
   const started = await s.start()
   if (!started.ok) {
     vscode.window.showErrorMessage(`Claude Room: ${started.error}`)

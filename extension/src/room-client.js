@@ -1,7 +1,9 @@
 // extension/src/room-client.js
 'use strict'
-const { readFileSync } = require('node:fs')
-const { join } = require('node:path')
+const fs = require('node:fs')
+const { readFileSync } = fs
+const path = require('node:path')
+const { join } = path
 
 /**
  * The room, launched standalone under the extension's control.
@@ -21,7 +23,15 @@ const { join } = require('node:path')
  */
 const PUBLISHED_HOST = '0.0.0.0'
 
-function roomRecipe({ repoRoot, stateDir, port, host = '127.0.0.1', advertise, nodePath = process.execPath, env = process.env }) {
+// Where the room's code is. From a checkout (F5) the repo sits right above the
+// extension and must win, so a stale bundle never shadows live src/ edits.
+// Installed, there is no repo above it: the room ships inside the extension.
+function roomDir(extensionDir, exists = fs.existsSync) {
+  const checkout = path.join(extensionDir, '..')
+  return exists(path.join(checkout, 'src', 'server.mjs')) ? checkout : path.join(extensionDir, 'room')
+}
+
+function roomRecipe({ repoRoot, stateDir, port, host = '127.0.0.1', advertise, nodePath = process.execPath, env = process.env, workRepo }) {
   return {
     cmd: nodePath,
     args: [join(repoRoot, 'src', 'server.mjs')],
@@ -37,6 +47,7 @@ function roomRecipe({ repoRoot, stateDir, port, host = '127.0.0.1', advertise, n
         // undefined) so the room's own advertiseHost() autodetection still runs
         // for the plain-LAN/Tailscale case, unchanged from before this task.
         ...(advertise ? { ROOM_ADVERTISE: advertise } : {}),
+        ...(typeof workRepo === 'string' && workRepo ? { ROOM_REPO: workRepo } : {}),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
@@ -144,4 +155,4 @@ function createRoomClient({ roomUrl, token, fetchImpl = fetch }) {
   }
 }
 
-module.exports = { roomRecipe, readOwnerToken, createRoomClient, PUBLISHED_HOST }
+module.exports = { roomDir, roomRecipe, readOwnerToken, createRoomClient, PUBLISHED_HOST }

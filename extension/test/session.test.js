@@ -427,3 +427,9 @@ test('the failure is reported to listeners too, not only to the dialog', async (
   assert.equal(rooms.at(-1).published, false)
   assert.equal(rooms.at(-1).busy, false)
 })
+
+test('workers are pointed at the open folder: the room starts with ROOM_REPO', async () => {
+  const { session, started } = harness({ workRepo: '/proj' })
+  await session.start()
+  assert.equal(started[0].recipe.opts.env.ROOM_REPO, '/proj')
+})
