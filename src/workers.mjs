@@ -15,6 +15,7 @@
  * `delegatable` is unconditional. A self-spawned worker exists to be delegated
  * to; making that opt-in would be friction with no decision behind it.
  */
+import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createAgentMember } from './identity.mjs'
@@ -100,14 +101,23 @@ export function listWorkersView({ onlineSeats, isBusy, fleetWorkers }) {
   return rows
 }
 
+/** Worktrees need a repo: without this a worker launches, then dies on `git worktree add`. */
+export function defaultIsGitRepo(dir) {
+  try {
+    execFileSync('git', ['-C', dir, 'rev-parse', '--is-inside-work-tree'], { stdio: 'ignore', windowsHide: true })
+    return true
+  } catch { return false }
+}
+
 /**
  * @param {{registry:object, seats:object, config:object, store:object, bus:object,
- *          spawn?:Function, repoRoot:string, roomUrl:string,
+ *          spawn?:Function, isGitRepo?:(dir:string) => boolean, repoRoot:string, roomUrl:string,
  *          log?:Function, now?:() => number}} deps
  */
 export function createWorkerFleet({
   registry, seats, config, store, bus,
   spawn = spawnPortable,
+  isGitRepo = defaultIsGitRepo,
   repoRoot, roomUrl,
   log = () => {}, now = Date.now,
 }) {
@@ -164,6 +174,10 @@ export function createWorkerFleet({
       if (!owner) {
         // Guessing would mint a seat owned by nobody, whose cost lands nowhere.
         return { ok: false, errors: ['this room has no owner to charge a worker to'] }
+      }
+
+      if (!isGitRepo(repoRoot)) {
+        return { ok: false, errors: [`workers need a git repository: ${repoRoot} is not one — open a git project folder (or set ROOM_REPO) and try again`] }
       }
 
       const handle = nextHandle([

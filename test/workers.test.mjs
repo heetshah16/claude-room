@@ -17,7 +17,7 @@ function fakeChild(pid = 500) {
   return c
 }
 
-function fleetHarness({ owner = true, spawnImpl = null } = {}) {
+function fleetHarness({ owner = true, spawnImpl = null, isGitRepo = () => true } = {}) {
   const registry = new Registry()
   if (owner) registry.add(createMember({ name: 'heet', role: 'owner' }))
   const seats = new Seats()
@@ -38,12 +38,32 @@ function fleetHarness({ owner = true, spawnImpl = null } = {}) {
       return c
     }),
     repoRoot: '/repo',
+    isGitRepo,
     roomUrl: 'http://127.0.0.1:8787',
     log: () => {},
     now: () => 1,
   })
   return { fleet, registry, seats, saved, published, spawned, children }
 }
+
+test('spawn refuses, with a reason, when the repo root is not a git repository', async () => {
+  const h = fleetHarness({ isGitRepo: () => false })
+  const r = await h.fleet.spawn()
+  assert.equal(r.ok, false)
+  assert.match(r.errors[0], /workers need a git repository: \/repo is not one/)
+  assert.match(r.errors[0], /open a git project folder/)
+  assert.equal(h.registry.agents().length, 0)
+  assert.equal(h.spawned.length, 0)
+})
+
+test('spawn checks the configured repo root and launches normally inside a git repo', async () => {
+  const seen = []
+  const h = fleetHarness({ isGitRepo: d => (seen.push(d), true) })
+  const r = await h.fleet.spawn()
+  assert.deepEqual(r, { ok: true, handle: 'worker-1' })
+  assert.deepEqual(seen, ['/repo'])
+  assert.equal(h.spawned.length, 1)
+})
 
 test('nextHandle takes the lowest free number, so a stopped worker\'s handle comes back', () => {
   assert.equal(nextHandle([]), 'worker-1')
