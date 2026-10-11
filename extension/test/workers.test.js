@@ -16,6 +16,7 @@ function fakePool(over = {}) {
   let n = 0
   const pool = createWorkerPool({
     log: () => {},
+    workRepo: '/repo',
     roomClient: {
       spawnWorker: async a => { spawned.push(a ?? {}); return { ok: true, handle: `worker-${++n}` } },
       stopWorker: async h => { stopped.push(h); return { ok: true } },
@@ -81,6 +82,37 @@ test('a refused spawn leaves no half-created worker in the list', async () => {
   await loud.add()
   assert.deepEqual(pool.list(), [], 'a worker the room refused is not a worker')
   assert.match(logged.join('\n'), /no opencode on PATH/, 'the room reason must survive verbatim')
+})
+
+test('a refused spawn is reported through onRefused, not only to the log', async () => {
+  // The Output channel is somewhere nobody is looking when they click Add; the
+  // reason has to reach a surface they will actually see.
+  const refused = []
+  const { pool } = fakePool({
+    pool: { onRefused: m => refused.push(m) },
+    roomClient: { spawnWorker: async () => ({ ok: false, errors: ['workers need git, and git is not on PATH'] }) },
+  })
+  await pool.add()
+  assert.deepEqual(refused, ['workers need git, and git is not on PATH'])
+})
+
+test('with no folder open, adding a worker is refused up front and never reaches the room', async () => {
+  // The room would run with cwd inside the extension install; if the home
+  // directory is a git work tree its check would pass and worktrees would land
+  // there. Refusing here is the only place that knows no folder is open.
+  const refused = []
+  const seen = []
+  const { pool, spawned } = fakePool({ pool: { workRepo: undefined, onRefused: m => refused.push(m) } })
+  pool.onChange(list => seen.push(list.length))
+  await pool.add()
+  await pool.ensureOne()
+  assert.equal(spawned.length, 0, 'the room was never asked')
+  assert.deepEqual(refused, [
+    "Open a folder first: Claude Room workers run in your open project's git repository.",
+    "Open a folder first: Claude Room workers run in your open project's git repository.",
+  ])
+  assert.deepEqual(pool.list(), [])
+  assert.deepEqual(seen, [0, 0], 'the Add button still hears that the attempt settled')
 })
 
 test('a spawn that answers without a handle is refused, not listed as blank', async () => {

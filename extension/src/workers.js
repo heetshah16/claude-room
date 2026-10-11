@@ -28,12 +28,27 @@ const DEFAULT_TURN_TIMEOUT_MS = 300_000
 const MAX_TRANSCRIPT = 500
 
 /**
- * @param {{roomClient: object, model?: string, timeoutMs?: number,
+ * The refusal when no folder is open. Without a folder the room runs with its
+ * cwd inside the extension install, and if the home directory happens to be a
+ * git work tree the room's own git check would pass and put worktrees there.
+ * The extension is the only side that knows no folder is open, so it refuses.
+ */
+const NO_FOLDER = "Open a folder first: Claude Room workers run in your open project's git repository."
+
+/**
+ * @param {{roomClient: object, workRepo?: string, model?: string, timeoutMs?: number,
+ *          onRefused?: (message: string) => void,
  *          log?: Function, now?: () => number}} deps
+ *
+ * `workRepo` is the open folder the room was started on; unset means none.
+ * `onRefused` hears every refused spawn's reason, so it can reach the user
+ * rather than only the Output channel.
  */
 function createWorkerPool({
   roomClient,
+  workRepo = null,
   model = null, timeoutMs = DEFAULT_TURN_TIMEOUT_MS,
+  onRefused = () => {},
   log = () => {}, now = Date.now,
 }) {
   /** @type {Map<string, object>} handle -> worker */
@@ -62,9 +77,13 @@ function createWorkerPool({
    * allocates it, and a guessed one would address a seat that does not exist.
    */
   async function spawn({ model: wanted = model } = {}) {
-    const r = await roomClient.spawnWorker(wanted ? { model: wanted } : {})
+    const r = workRepo
+      ? await roomClient.spawnWorker(wanted ? { model: wanted } : {})
+      : { ok: false, errors: [NO_FOLDER] }
     if (!r?.ok || !r.handle) {
-      log(`could not start a worker: ${r?.errors?.[0] ?? 'the room did not return a handle'}`)
+      const why = r?.errors?.[0] ?? 'the room did not return a handle'
+      log(`could not start a worker: ${why}`)
+      onRefused(why)
       // Nothing changed, but a caller waiting for the attempt to settle (the
       // sidebar's Add button, disabled since the click) needs to hear that it
       // has, or a refused spawn leaves it disabled forever.
@@ -213,4 +232,4 @@ function createWorkerPool({
   }
 }
 
-module.exports = { createWorkerPool, DEFAULT_TURN_TIMEOUT_MS, MAX_TRANSCRIPT }
+module.exports = { createWorkerPool, DEFAULT_TURN_TIMEOUT_MS, MAX_TRANSCRIPT, NO_FOLDER }

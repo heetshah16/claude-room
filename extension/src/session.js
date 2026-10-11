@@ -226,7 +226,10 @@ function createSession({
     }
 
     const roomClient = createRoomClient({ roomUrl, token, fetchImpl })
-    const pool = createWorkerPool({ roomClient, log, now })
+    const pool = createWorkerPool({
+      roomClient, workRepo, log, now,
+      onRefused: message => ui.showError(`Claude Room: ${message}`),
+    })
     pool.onChange(list => emit(workerListeners, list))
 
     // One SSE subscription, fanned out by the router: worker activity to

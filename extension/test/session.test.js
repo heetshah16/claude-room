@@ -31,6 +31,7 @@ function harness(over = {}) {
   let clock = 0
   const session = createSession({
     repoRoot: '/repo',
+    workRepo: '/proj',
     stateDir: '/state',
     ui: {
       showError: m => errors.push(String(m)),
@@ -432,4 +433,33 @@ test('workers are pointed at the open folder: the room starts with ROOM_REPO', a
   const { session, started } = harness({ workRepo: '/proj' })
   await session.start()
   assert.equal(started[0].recipe.opts.env.ROOM_REPO, '/proj')
+})
+
+test('a worker the room refused is shown to the user, not only logged', async () => {
+  const { session, errors } = harness({
+    fetchImpl: async url => (String(url).includes('/events')
+      ? { ok: true, status: 200, body: sseBody([]) }
+      : { ok: true, status: 200, json: async () => ({ ok: false, errors: ['workers need a git repository: /proj is not one'] }) }),
+  })
+  await session.start()
+  await session.pool.add()
+  session.stop()
+  assert.deepEqual(errors, ['Claude Room: workers need a git repository: /proj is not one'])
+})
+
+test('with no folder open, Add says to open one instead of asking the room', async () => {
+  const asked = []
+  const { session, errors } = harness({
+    workRepo: undefined,
+    fetchImpl: async url => {
+      if (String(url).includes('/events')) return { ok: true, status: 200, body: sseBody([]) }
+      asked.push(String(url))
+      return { ok: true, status: 200, json: async () => ({ ok: true, handle: 'worker-1' }) }
+    },
+  })
+  await session.start()
+  await session.pool.add()
+  session.stop()
+  assert.deepEqual(errors, ["Claude Room: Open a folder first: Claude Room workers run in your open project's git repository."])
+  assert.ok(!asked.some(u => u.includes('worker')), 'no spawn request reached the room')
 })
