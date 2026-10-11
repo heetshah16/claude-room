@@ -82,7 +82,7 @@
     "vscode:prepublish": "node ../scripts/bundle-room.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "@modelcontextprotocol/sdk": "1.30.0"
   },
   "devDependencies": {
     "@vscode/test-cli": "^0.0.15",
