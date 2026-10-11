@@ -2,8 +2,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createWorkerFleet, nextHandle, worktreeFor, workerRecipe, listWorkersView } from '../src/workers.mjs'
+import { createWorkerFleet, nextHandle, worktreeFor, workerRecipe, listWorkersView, defaultIsGitRepo } from '../src/workers.mjs'
 import { worktreeFor as launcherWorktreeFor } from '../scripts/room-seat.mjs'
 import { Registry, createMember, createAgentMember, isDelegatable } from '../src/identity.mjs'
 import { Seats } from '../src/seats.mjs'
@@ -63,6 +66,57 @@ test('spawn checks the configured repo root and launches normally inside a git r
   assert.deepEqual(r, { ok: true, handle: 'worker-1' })
   assert.deepEqual(seen, ['/repo'])
   assert.equal(h.spawned.length, 1)
+})
+
+// Real git, not a stub: the bare-repo and missing-git cases are exactly the
+// ones a stub would have got wrong. The ceiling stops git walking up out of
+// the temp dir, so a home directory that happens to be a git work tree cannot
+// make the "not a repo" case pass for the wrong reason.
+process.env.GIT_CEILING_DIRECTORIES = tmpdir()
+
+function tempDir(t) {
+  const dir = mkdtempSync(join(tmpdir(), 'roomgit-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  return dir
+}
+
+test('the git check refuses a plain directory that is not a repository', t => {
+  const dir = tempDir(t)
+  assert.match(defaultIsGitRepo(dir), /workers need a git repository: .* is not one/)
+})
+
+test('the git check accepts a real git work tree', t => {
+  const dir = tempDir(t)
+  execFileSync('git', ['init', '-q', dir])
+  assert.equal(defaultIsGitRepo(dir), true)
+})
+
+test('the git check refuses a bare repository, which has no work tree to put worktrees beside', t => {
+  // rev-parse --is-inside-work-tree prints "false" and exits 0 here, so an
+  // exit-code-only check would wave it through.
+  const dir = tempDir(t)
+  execFileSync('git', ['init', '-q', '--bare', dir])
+  assert.match(defaultIsGitRepo(dir), /is not one/)
+})
+
+test('when git itself is missing the refusal says so, instead of blaming the folder', () => {
+  const exec = () => { throw Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' }) }
+  const r = defaultIsGitRepo('/repo', exec)
+  assert.match(r, /git is not on PATH/)
+  assert.doesNotMatch(r, /is not one/)
+})
+
+test('the git check gives up after a bounded time rather than hanging a spawn', () => {
+  let opts
+  defaultIsGitRepo('/repo', (cmd, args, o) => { opts = o; return 'true\n' })
+  assert.equal(opts.timeout, 10_000)
+})
+
+test("the fleet refuses with the check's own reason when it gives one", async () => {
+  const h = fleetHarness({ isGitRepo: () => 'workers need git, and git is not on PATH' })
+  const r = await h.fleet.spawn()
+  assert.deepEqual(r, { ok: false, errors: ['workers need git, and git is not on PATH'] })
+  assert.equal(h.spawned.length, 0)
 })
 
 test('nextHandle takes the lowest free number, so a stopped worker\'s handle comes back', () => {

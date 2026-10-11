@@ -41,7 +41,8 @@ export function nextHandle(existing) {
  * Where a handle's worktree lives.
  *
  * Byte-identical to scripts/room-seat.mjs's `worktreeFor`, which is what
- * actually creates the directory (scripts/room-opencode-seat.mjs:44-48).
+ * actually creates the directory (its `ensureWorktree`, which
+ * scripts/room-opencode-seat.mjs calls).
  * Duplicated rather than imported because src/ must not depend on scripts/ —
  * the dependency runs the other way. test/workers.test.mjs pins the two
  * together so a change to either fails the suite rather than silently
@@ -101,17 +102,36 @@ export function listWorkersView({ onlineSeats, isBusy, fleetWorkers }) {
   return rows
 }
 
-/** Worktrees need a repo: without this a worker launches, then dies on `git worktree add`. */
-export function defaultIsGitRepo(dir) {
+/** The refusal for a folder that has no git work tree. */
+const notARepo = dir => `workers need a git repository: ${dir} is not one — open a git project folder (or set ROOM_REPO) and try again`
+
+/**
+ * Worktrees need a repo: without this a worker launches, then dies on `git
+ * worktree add`. Returns `true` when the folder will do, else the reason it
+ * will not (a string), so the refusal can name the actual problem.
+ *
+ * - stdout must say `true`: a bare repo prints `false` and exits 0, and has
+ *   no work tree to put worktrees beside.
+ * - ENOENT means git itself is missing, which is not the folder's fault —
+ *   saying "<path> is not a git repository" there sends the user to the wrong fix.
+ * - The timeout bounds a git that hangs (a network drive, a credential
+ *   prompt), so a spawn request cannot wait forever.
+ */
+export function defaultIsGitRepo(dir, exec = execFileSync) {
   try {
-    execFileSync('git', ['-C', dir, 'rev-parse', '--is-inside-work-tree'], { stdio: 'ignore', windowsHide: true })
-    return true
-  } catch { return false }
+    const out = exec('git', ['-C', dir, 'rev-parse', '--is-inside-work-tree'], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, timeout: 10_000,
+    })
+    return String(out).trim() === 'true' || notARepo(dir)
+  } catch (err) {
+    if (err?.code === 'ENOENT') return 'workers need git, and git is not on PATH — install git, restart the editor so it sees the new PATH, and try again'
+    return notARepo(dir)
+  }
 }
 
 /**
  * @param {{registry:object, seats:object, config:object, store:object, bus:object,
- *          spawn?:Function, isGitRepo?:(dir:string) => boolean, repoRoot:string, roomUrl:string,
+ *          spawn?:Function, isGitRepo?:(dir:string) => true|false|string, repoRoot:string, roomUrl:string,
  *          log?:Function, now?:() => number}} deps
  */
 export function createWorkerFleet({
@@ -176,8 +196,11 @@ export function createWorkerFleet({
         return { ok: false, errors: ['this room has no owner to charge a worker to'] }
       }
 
-      if (!isGitRepo(repoRoot)) {
-        return { ok: false, errors: [`workers need a git repository: ${repoRoot} is not one — open a git project folder (or set ROOM_REPO) and try again`] }
+      // `true` is fine; anything else is a refusal — the check's own reason
+      // when it gave one, the generic one for a plain `false`.
+      const repoOk = isGitRepo(repoRoot)
+      if (repoOk !== true) {
+        return { ok: false, errors: [typeof repoOk === 'string' ? repoOk : notARepo(repoRoot)] }
       }
 
       const handle = nextHandle([
