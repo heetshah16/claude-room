@@ -60,7 +60,9 @@ function roomRecipe({ repoRoot, stateDir, port, host = '127.0.0.1', advertise, n
         // undefined) so the room's own advertiseHost() autodetection still runs
         // for the plain-LAN/Tailscale case, unchanged from before this task.
         ...(advertise ? { ROOM_ADVERTISE: advertise } : {}),
-        ...(typeof workRepo === 'string' && workRepo ? { ROOM_REPO: workRepo } : {}),
+        // No folder: the room must refuse workers itself, since its repo would
+        // otherwise fall back to its own (possibly bundled) directory.
+        ...(typeof workRepo === 'string' && workRepo ? { ROOM_REPO: workRepo } : { ROOM_WORKERS: 'off' }),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     },

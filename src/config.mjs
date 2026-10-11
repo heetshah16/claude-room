@@ -89,6 +89,10 @@ export function loadConfig(env = process.env) {
     // repo being worked on; ROOM_REPO is for when it is not — the room's own
     // checkout and the work's checkout are not always the same tree.
     repoRoot: env.ROOM_REPO || process.cwd(),
+    // The extension sets this when no folder is open: with no ROOM_REPO,
+    // repoRoot above is the room's own install dir, and a worktree must never
+    // land there. Only the exact value "off" counts.
+    workersOff: env.ROOM_WORKERS === 'off',
     // Verification's own deadline (spec §2.4), deliberately independent of a
     // worker's turn deadline: a hanging test command must not wedge a
     // delegation forever, and the worker's number does not bound the room's.

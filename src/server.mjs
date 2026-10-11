@@ -115,6 +115,9 @@ let delegator = null
 // known until the socket is bound — so, for the same reason and in the same
 // shape as `delegator` above, it is declared here and assigned in listen().
 let fleet = null
+// Same text as extension/src/workers.js's NO_FOLDER: the room enforces the
+// rule the extension's pool states, so a direct caller cannot sidestep it.
+const noFolder = { ok: false, errors: ["Open a folder first: Claude Room workers run in your open project's git repository."] }
 const noFleet = { ok: false, errors: ['the room is not listening yet'] }
 
 const channel = createChannel({
@@ -141,7 +144,7 @@ const channel = createChannel({
     isBusy: handle => queue.busy(handle),
     fleetWorkers: fleet ? fleet.list() : [],
   }),
-  onSpawnWorker: a => (fleet ? fleet.spawn({ model: a?.model ?? null }) : noFleet),
+  onSpawnWorker: a => (config.workersOff ? noFolder : fleet ? fleet.spawn({ model: a?.model ?? null }) : noFleet),
   onStopWorker: a => (fleet ? fleet.stop(String(a?.handle ?? '')) : noFleet),
 })
 
@@ -217,7 +220,7 @@ const web = createWeb({
   onDelegate: input => delegator.delegate(input),
   // The same fleet the spawn_worker tool reaches, over HTTP — for the
   // extension, which may drive a standalone room with no channel session.
-  onSpawnWorker: body => (fleet ? fleet.spawn({ model: body?.model ?? null }) : noFleet),
+  onSpawnWorker: body => (config.workersOff ? noFolder : fleet ? fleet.spawn({ model: body?.model ?? null }) : noFleet),
   onStopWorker: body => (fleet ? fleet.stop(String(body?.handle ?? '')) : noFleet),
 })
 

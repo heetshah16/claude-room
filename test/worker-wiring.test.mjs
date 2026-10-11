@@ -43,3 +43,19 @@ test('stopping a worker the room never started is refused by name, not by crashi
     room.child.kill()
   }
 })
+
+test('with ROOM_WORKERS=off the HTTP spawn route refuses before any fleet is touched', async () => {
+  // No folder open means ROOM_REPO is unset and repoRoot falls back to the
+  // room's own install dir; the refusal has to come from the room itself.
+  const room = await bootRoom({ ROOM_STANDALONE: '1', ROOM_WORKERS: 'off' })
+  try {
+    const res = await fetch(`http://127.0.0.1:${room.port}/api/spawn-worker?token=${room.ownerToken}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    })
+    const body = await res.json()
+    assert.equal(body.ok, false)
+    assert.deepEqual(body.errors, ["Open a folder first: Claude Room workers run in your open project's git repository."])
+  } finally {
+    room.child.kill()
+  }
+})

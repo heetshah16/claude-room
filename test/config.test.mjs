@@ -113,3 +113,10 @@ test('an unset worker model stays null, so the launcher\'s own default wins', ()
   assert.equal(loadConfig({}).workerModel, null)
   assert.equal(loadConfig({ ROOM_WORKER_MODEL: 'opencode/x' }).workerModel, 'opencode/x')
 })
+
+test('ROOM_WORKERS=off turns workers off, and only that exact value does', () => {
+  assert.equal(loadConfig({}).workersOff, false)
+  assert.equal(loadConfig({ ROOM_WORKERS: 'off' }).workersOff, true)
+  assert.equal(loadConfig({ ROOM_WORKERS: 'OFF' }).workersOff, false)
+  assert.equal(loadConfig({ ROOM_WORKERS: '1' }).workersOff, false)
+})

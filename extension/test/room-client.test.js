@@ -297,3 +297,11 @@ test('each workspace gets its own room state, so two windows never share one ros
 test('with no folder open there is no workspace storage, so the room falls back to global', () => {
   assert.equal(roomStateDir({ storageUri: undefined, globalStorageUri: { fsPath: '/global' } }), path.join('/global', 'room-state'))
 })
+
+test('with no folder open the room is told to refuse workers, and with one it is not', () => {
+  const without = roomRecipe({ repoRoot: '/room', stateDir: '/s', port: 1, env: {} })
+  assert.equal(without.opts.env.ROOM_WORKERS, 'off')
+  assert.equal(roomRecipe({ repoRoot: '/room', stateDir: '/s', port: 1, env: {}, workRepo: '' }).opts.env.ROOM_WORKERS, 'off')
+  const withRepo = roomRecipe({ repoRoot: '/room', stateDir: '/s', port: 1, env: {}, workRepo: '/proj' })
+  assert.equal('ROOM_WORKERS' in withRepo.opts.env, false)
+})
