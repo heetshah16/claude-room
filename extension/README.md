@@ -63,9 +63,9 @@ below for what that means in practice. (`@modelcontextprotocol/sdk` is a
 
 This is a standard VS Code extension and it runs in **Cursor** as well, which
 is a VS Code fork. The API surface it uses is small and old — `createWebviewPanel`,
-`asWebviewUri`, `cspSource`, `globalStorageUri`, `workspaceState`,
+`asWebviewUri`, `cspSource`, `storageUri`, `globalStorageUri`, `workspaceState`,
 `registerCommand`, `showErrorMessage`, `createOutputChannel` — and the newest
-of those (`globalStorageUri`) landed in VS Code **1.44**.
+of those (`storageUri`) landed in VS Code **1.48**.
 
 `engines.vscode` is set to `^1.75.0` rather than that true floor, because 1.74
 is where VS Code began generating activation events automatically from
@@ -94,9 +94,10 @@ From a repo checkout the room is the checkout's own `src/`, even if a stale
 
 ## Installing
 
-- **VS Code:** install from the Marketplace, or from a `.vsix`:
-  `code --install-extension <file>.vsix`, or Extensions view → `…` → **Install
-  from VSIX…**.
+- **VS Code:** install from a `.vsix`: `code --install-extension <file>.vsix`,
+  or Extensions view → `…` → **Install from VSIX…**. The Marketplace listing is
+  0.0.1, which predates the bundled room: it cannot start a room without a
+  clone of this repo beside it. Use the `.vsix` until 0.0.2 is published.
 - **Cursor (and any Open VSX editor):** Cursor installs from Open VSX, not the
   VS Code Marketplace, so the Marketplace listing does not appear in its
   library. Install a `.vsix` today: `cursor --install-extension <file>.vsix`.
@@ -122,7 +123,13 @@ From a repo checkout the room is the checkout's own `src/`, even if a stale
   `<that folder>/.worktrees/<handle>`. If it is not a git repo, spawning is
   refused with "workers need a git repository: <path> is not one — open a git
   project folder (or set ROOM_REPO) and try again". With no folder open,
-  workers cannot run. Workers also need `git` and `opencode` on PATH.
+  adding a worker is refused with "Open a folder first: Claude Room workers
+  run in your open project's git repository." Refusals show as an error
+  notification as well as in the Claude Room Output channel.
+- **Worker tools on PATH:** `git`, `opencode`, and `node` (18 or newer).
+  Each worker's OpenCode registers the room's reply bridge as `node <bridge>`,
+  so workers need a system Node even though the room itself does not (see
+  below). The orchestrator chat's MCP bridge runs under `node` too.
 - **What workers leave in your repo:** each worker creates a branch named after
   it (`worker-1`, `worker-2`, …) and a worktree at `.worktrees/worker-N`.
   `.worktrees/` is added to the repo's local exclude file
@@ -136,7 +143,10 @@ From a repo checkout the room is the checkout's own `src/`, even if a stale
   ```
 - **Orchestrator chat:** `claude` on PATH.
 - **Node.js:** not needed for the room itself. It is launched with the editor's
-  own `process.execPath`; the extension does not look for a system Node.
+  own `process.execPath`. Workers and the chat bridge do need it, as above.
+- **Room state:** kept per workspace (VS Code's workspace storage), so two
+  windows on two folders run two independent rooms. With no folder open it
+  falls back to the extension's global storage.
 
 ## Manual verification
 

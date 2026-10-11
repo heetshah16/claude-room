@@ -188,8 +188,10 @@ being *busy*. That version silently dropped work.
 
 ## 4. The extension (`extension/`)
 
-~2,000 lines, **CommonJS**, no runtime dependencies, no build step. The room
-stays ESM; nothing crosses that boundary by import.
+~2,000 lines, **CommonJS**, no build step. The extension's own code requires
+nothing beyond Node built-ins and `vscode`; its one runtime dependency,
+`@modelcontextprotocol/sdk`, is the room's, shipped so the room bundled into a
+`.vsix` can run. The room stays ESM; nothing crosses that boundary by import.
 
 ```
 VS Code extension host

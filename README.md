@@ -610,7 +610,7 @@ stderr, run `room-admin`, launch a seat in a second terminal, open a browser. Th
 extension in [`extension/`](extension/) is that same machinery, packaged.
 
 It runs in **VS Code and Cursor** — Cursor is a VS Code fork, and the API surface used
-here is small and old (the newest is `globalStorageUri`, from 1.44). `engines.vscode` is
+here is small and old (the newest is `storageUri`, from 1.48). `engines.vscode` is
 `^1.75.0`, chosen because 1.74 is where activation events began being generated from
 `contributes.commands`.
 
@@ -646,14 +646,18 @@ Development Host at `extension/`. Then `Ctrl+Shift+P` → **"Claude Room: Open O
 Chat"**, and open a folder in that window first: the orchestrator needs a working
 directory.
 
-To install it properly, there is no build step:
+To install it properly, package a `.vsix`. The extension's own code has no build step,
+but packaging copies the room into it, and the room's one runtime dependency (its MCP
+SDK) ships in the extension's `node_modules`, so install that first:
 
 ```bash
 cd extension
+npm install                  # the room's MCP SDK, shipped inside the .vsix
 npx @vscode/vsce package     # then: Extensions: Install from VSIX…
 ```
 
-`opencode` must be on `PATH` for delegation to work — the chat itself does not need it.
+Workers need `git`, `opencode` and `node` (18 or newer) on `PATH` — the chat itself
+does not need `opencode`. See [`extension/README.md`](extension/README.md#what-it-needs-on-your-machine).
 
 ### What is built, and what is not
 
