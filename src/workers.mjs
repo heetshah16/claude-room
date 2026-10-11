@@ -221,11 +221,13 @@ export function createWorkerFleet({
           repoRoot, handle, token: member.token, roomUrl, model: chosen,
         }))
       } catch (err) {
+        // The token rides on argv, so a spawn error can quote it; it is masked
+        // below because this message reaches the orchestrator and the HTTP caller.
         // A seat with no process is worse than no seat: the orchestrator would
         // see the handle and delegate into something that never answers.
         registry.revoke(member.id)
         store?.saveRegistry?.(registry)
-        return { ok: false, errors: [`could not start ${handle}: ${err?.message ?? err}`] }
+        return { ok: false, errors: [`could not start ${handle}: ${String(err?.message ?? err).replaceAll(member.token, '***')}`] }
       }
 
       workers.set(handle, {

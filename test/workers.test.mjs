@@ -319,3 +319,18 @@ test('with no fleet at all, the view is exactly what seats.online() already gave
   const rows = listWorkersView({ onlineSeats: [{ handle: 'claude-1' }], isBusy: () => false, fleetWorkers: [] })
   assert.deepEqual(rows, [{ handle: 'claude-1', busy: false, state: 'online' }])
 })
+
+test('a launch failure never echoes the seat token, which rides on argv', async () => {
+  let token = null
+  const { fleet } = fleetHarness({
+    spawnImpl: (cmd, args) => {
+      token = args[args.indexOf('--token') + 1]
+      throw new Error(`spawn failed: ${cmd} ${args.join(' ')}`)
+    },
+  })
+  const r = await fleet.spawn({})
+  assert.ok(token, 'the recipe must carry a token for this test to mean anything')
+  assert.equal(r.ok, false)
+  assert.equal(r.errors[0].includes(token), false)
+  assert.ok(r.errors[0].includes('***'))
+})
