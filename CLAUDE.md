@@ -5,7 +5,7 @@ Read `ARCHITECTURE.md`, `docs/design-system.md`, and `extension/README.md` first
 ## Repo shape
 
 - `src/` — the room server (ESM, `.mjs`). Runs standalone (`ROOM_STANDALONE=1`) or as an MCP stdio child.
-- `extension/` — the VS Code/Cursor extension (CommonJS, zero runtime deps, no build step, no `"type"` field).
+- `extension/` — the VS Code/Cursor extension (CommonJS, no build step, no `"type"` field). Its one runtime dependency is the room's `@modelcontextprotocol/sdk`, shipped for the bundled room; extension code itself requires nothing.
 - `scripts/` — launchers (`room-opencode-seat.mjs` etc.).
 - `docs/superpowers/plans/` and `docs/superpowers/specs/` — the design specs and implementation plans this codebase was built from. `.superpowers/sdd/*/progress.md` are the execution ledgers (task-by-task record of what was built, reviewed, and found).
 
