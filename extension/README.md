@@ -123,6 +123,17 @@ From a repo checkout the room is the checkout's own `src/`, even if a stale
   refused with "workers need a git repository: <path> is not one — open a git
   project folder (or set ROOM_REPO) and try again". With no folder open,
   workers cannot run. Workers also need `git` and `opencode` on PATH.
+- **What workers leave in your repo:** each worker creates a branch named after
+  it (`worker-1`, `worker-2`, …) and a worktree at `.worktrees/worker-N`.
+  `.worktrees/` is added to the repo's local exclude file
+  (`.git/info/exclude`, never your tracked `.gitignore`), so it stays out of
+  `git status` and `git add -A`. Stopping a worker does not delete either; to
+  clean one up, from the repo root:
+
+  ```bash
+  git worktree remove .worktrees/worker-1
+  git branch -D worker-1
+  ```
 - **Orchestrator chat:** `claude` on PATH.
 - **Node.js:** not needed for the room itself. It is launched with the editor's
   own `process.execPath`; the extension does not look for a system Node.

@@ -15,13 +15,13 @@
  * two agents writing one checkout silently clobber each other.
  */
 import { createServer } from 'node:http'
-import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnPortable } from '../src/spawn.mjs'
 import { createOpenCodeSeat, opencodeSeatArgs, DEFAULT_MODEL, DEFAULT_TURN_TIMEOUT_MS } from '../src/opencode.mjs'
-import { worktreeFor } from './room-seat.mjs'
+// The same worktree creation a Claude seat uses — including the info/exclude
+// entry that keeps `.worktrees/` out of the user's `git status`.
+import { ensureWorktree } from './room-seat.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const SEAT_BRIDGE = join(__dirname, '..', 'src', 'seat.mjs')
@@ -39,12 +39,6 @@ function freePort() {
       s.close(() => res(port))
     })
   })
-}
-
-function ensureWorktree(repo, handle) {
-  const dir = worktreeFor(repo, handle)
-  if (!existsSync(dir)) execFileSync('git', ['worktree', 'add', dir], { cwd: repo, stdio: 'inherit' })
-  return dir
 }
 
 /** Wait for `opencode serve` to answer, rather than racing it. */

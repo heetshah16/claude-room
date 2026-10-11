@@ -19,7 +19,7 @@
  * <token> comes from `room-admin seat add <name> --owner <member>`.
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -117,9 +117,32 @@ function die(msg, code = 1) {
   process.exit(code)
 }
 
-/** Creates the worktree on first run; reuses it on every run after. */
-function ensureWorktree(repo, handle) {
+/**
+ * Keeps `.worktrees/` out of the user's `git status` (and out of a `git add
+ * -A`, which would commit each worktree as an embedded repo).
+ *
+ * The repo-local exclude file, not .gitignore: the repo is the user's project,
+ * and its tracked files are theirs. `--git-common-dir` rather than `.git`
+ * because the repo may itself be a worktree, whose `.git` is a file; the
+ * common dir is where git actually reads `info/exclude` from.
+ */
+export function excludeWorktrees(repo) {
+  const common = execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: repo, encoding: 'utf8' }).trim()
+  const file = join(resolve(repo, common), 'info', 'exclude')
+  const text = existsSync(file) ? readFileSync(file, 'utf8') : ''
+  if (text.split(/\r?\n/).some(l => l.trim() === '.worktrees/')) return
+  mkdirSync(dirname(file), { recursive: true })
+  appendFileSync(file, `${text && !text.endsWith('\n') ? '\n' : ''}.worktrees/\n`)
+}
+
+/**
+ * Creates the worktree on first run; reuses it on every run after. Runs the
+ * exclude every time, not just on creation, so worktrees made before it
+ * existed get hidden too.
+ */
+export function ensureWorktree(repo, handle) {
   const dir = worktreeFor(repo, handle)
+  excludeWorktrees(repo)
   if (!existsSync(dir)) {
     execFileSync('git', ['worktree', 'add', dir], { cwd: repo, stdio: 'inherit' })
   }

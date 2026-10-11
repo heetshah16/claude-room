@@ -1,8 +1,42 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { seatArgs, worktreeFor, meetsModFloor, MOD_DIR } from '../scripts/room-seat.mjs'
+import { seatArgs, worktreeFor, meetsModFloor, ensureWorktree, MOD_DIR } from '../scripts/room-seat.mjs'
+
+/** A real repo with one commit: `git worktree add` needs a HEAD to branch from. */
+function tempRepo() {
+  const dir = mkdtempSync(join(tmpdir(), 'roomseat-'))
+  const git = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8' })
+  git('init', '-q')
+  git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init')
+  return { dir, git }
+}
+
+test("a worker's worktree never shows up as untracked in the user's repo", t => {
+  const { dir, git } = tempRepo()
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  // No info/ at all: a repo made by a tool that skipped the templates.
+  rmSync(join(dir, '.git', 'info'), { recursive: true, force: true })
+  ensureWorktree(dir, 'worker-1')
+  ensureWorktree(dir, 'worker-2')
+  assert.ok(existsSync(join(dir, '.worktrees', 'worker-1')))
+  assert.equal(git('status', '--porcelain'), '')
+  const exclude = readFileSync(join(dir, '.git', 'info', 'exclude'), 'utf8')
+  assert.equal(exclude.split(/\r?\n/).filter(l => l === '.worktrees/').length, 1, 'appended once, not per worker')
+  assert.ok(!existsSync(join(dir, '.gitignore')), "the user's tracked .gitignore is never touched")
+})
+
+test('the exclude line is appended after existing entries, never over them', t => {
+  const { dir } = tempRepo()
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const file = join(dir, '.git', 'info', 'exclude')
+  writeFileSync(file, '*.log') // no trailing newline: the append must add one
+  ensureWorktree(dir, 'worker-1')
+  assert.deepEqual(readFileSync(file, 'utf8').split(/\r?\n/).filter(Boolean), ['*.log', '.worktrees/'])
+})
 
 const base = { configDir: '/cfg/ana', roomUrl: 'http://127.0.0.1:8787', token: 'tok', handle: 'ana-agent', repo: '/repo' }
 
