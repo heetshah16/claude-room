@@ -31,6 +31,19 @@ function roomDir(extensionDir, exists = fs.existsSync) {
   return exists(path.join(checkout, 'src', 'server.mjs')) ? checkout : path.join(extensionDir, 'room')
 }
 
+/**
+ * Where the room keeps its state (members.json, the owner token).
+ *
+ * Per workspace when there is one: two windows on two folders run two rooms,
+ * and on one shared members.json the last writer wins. With no folder open
+ * VS Code gives no workspace storage, so it falls back to global storage.
+ */
+function roomStateDir(context) {
+  const base = context.storageUri?.fsPath ?? context.storagePath
+    ?? context.globalStorageUri?.fsPath ?? context.globalStoragePath
+  return join(base, 'room-state')
+}
+
 function roomRecipe({ repoRoot, stateDir, port, host = '127.0.0.1', advertise, nodePath = process.execPath, env = process.env, workRepo }) {
   return {
     cmd: nodePath,
@@ -155,4 +168,4 @@ function createRoomClient({ roomUrl, token, fetchImpl = fetch }) {
   }
 }
 
-module.exports = { roomDir, roomRecipe, readOwnerToken, createRoomClient, PUBLISHED_HOST }
+module.exports = { roomDir, roomStateDir, roomRecipe, readOwnerToken, createRoomClient, PUBLISHED_HOST }

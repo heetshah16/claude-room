@@ -2,7 +2,7 @@
 const { test } = require('node:test')
 const assert = require('node:assert/strict')
 const path = require('node:path')
-const { roomRecipe, readOwnerToken, createRoomClient, roomDir } = require('../src/room-client.js')
+const { roomRecipe, readOwnerToken, createRoomClient, roomDir, roomStateDir } = require('../src/room-client.js')
 
 test('the room is launched standalone, because the extension owns its lifecycle', () => {
   // Not as an MCP child of Claude Code: the extension has to choose the port,
@@ -281,4 +281,19 @@ test('the room is told which repo workers work in, and only when there is one', 
   assert.equal(withRepo.opts.cwd, '/room')
   const without = roomRecipe({ repoRoot: '/room', stateDir: '/s', port: 1, env: {} })
   assert.equal('ROOM_REPO' in without.opts.env, false)
+})
+
+test('each workspace gets its own room state, so two windows never share one roster', () => {
+  // Two windows on two folders run two rooms; on one members.json the last
+  // writer wins and each room's owner token goes stale under the other.
+  const ctx = folder => ({
+    storageUri: { fsPath: path.join('/ws', folder) },
+    globalStorageUri: { fsPath: '/global' },
+  })
+  assert.equal(roomStateDir(ctx('a')), path.join('/ws', 'a', 'room-state'))
+  assert.notEqual(roomStateDir(ctx('a')), roomStateDir(ctx('b')))
+})
+
+test('with no folder open there is no workspace storage, so the room falls back to global', () => {
+  assert.equal(roomStateDir({ storageUri: undefined, globalStorageUri: { fsPath: '/global' } }), path.join('/global', 'room-state'))
 })

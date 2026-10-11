@@ -21,7 +21,7 @@ const { createWorkersView } = require('./chat/workers-view.js')
 const { createRoomView } = require('./chat/room-view.js')
 const { createWorkerPanel } = require('./chat/worker-panel.js')
 const { createSession } = require('./session.js')
-const { roomDir } = require('./room-client.js')
+const { roomDir, roomStateDir } = require('./room-client.js')
 const { detectTools, installPlan } = require('./install.js')
 
 // The room's code: the checkout above this extension when run from source,
@@ -85,8 +85,7 @@ function openWorker(context, session, handle) {
  */
 async function ensureSession(context) {
   if (roomSession) return roomSession
-  const storageDir = context.globalStorageUri?.fsPath ?? context.globalStoragePath
-  const stateDir = path.join(storageDir, 'room-state')
+  const stateDir = roomStateDir(context)
   fs.mkdirSync(stateDir, { recursive: true })
 
   const s = createSession({ repoRoot: REPO_ROOT, workRepo: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath, stateDir, supervisor, ui: vscodeUi, log })
@@ -295,8 +294,7 @@ async function openChat(context) {
   const session = await ensureSession(context)
   if (!session) return
   const { roomUrl, token, pool } = session
-  const storageDir = context.globalStorageUri?.fsPath ?? context.globalStoragePath
-  const stateDir = path.join(storageDir, 'room-state')
+  const stateDir = roomStateDir(context)
 
   const mcpConfigPath = path.join(stateDir, 'mcp-config.json')
   fs.writeFileSync(mcpConfigPath, JSON.stringify(bridgeMcpConfig(REPO_ROOT), null, 2))
@@ -335,7 +333,7 @@ async function openChat(context) {
   // a value that exists yet. Both are assigned synchronously before either
   // callback can actually fire, so by the time a message arrives on either
   // side the other half is always ready.
-  const attachmentsDir = path.join(storageDir, 'attachments')
+  const attachmentsDir = path.join(context.globalStorageUri?.fsPath ?? context.globalStoragePath, 'attachments')
 
   /**
    * The three ways a file reaches the composer.
