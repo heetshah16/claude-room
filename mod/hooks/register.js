@@ -10,7 +10,8 @@
 //
 // Joins at session start from the first complete source:
 //   the environment   ROOM_URL, ROOM_SEAT_TOKEN, ROOM_SEAT_HANDLE (scripts/room-seat.mjs)
-//   the project file  .claude/room-seat.local.json, which the Room extension writes
+//   the project file  .claude/room-seat.local.json, which the Room extension writes,
+//                     trusted only when its room is on this machine
 //   the plugin options
 // Only one session holds a handle; the others show the room's refusal.
 
@@ -35,9 +36,12 @@ let feed = null // the feed child's stream while joined
 let status = 'not joined - run /room-join'
 let inRoomTurn = false
 let retries = 0 // retrying statuses in a row from the current feed
+let ignored = '' // why the last read of the seat file was not trusted, shown after the status
 
 const SEAT_FILE = '.claude/room-seat.local.json'
 const SOURCES = { env: 'the environment', file: 'the project file', options: 'the plugin options' }
+const NOT_LOCAL = ` - ignored ${SEAT_FILE}: its room address is not on this machine (the Room extension only writes a local address)`
+const LOOPBACK = ['127.0.0.1', 'localhost', '[::1]'] // URL keeps the brackets on an IPv6 hostname
 
 const REPLY_TIMEOUT_MS = 15_000
 
@@ -63,7 +67,7 @@ export function register(on, options = {}) {
     if (feed) return { text: statusText() }
     const found = await findSeat($, options)
     if (!found) {
-      return { text: 'No seat to join: open this folder with the Room extension running, or set the room address, seat handle and seat token: /plugin, Installed, room-seat, Configure options.' }
+      return { text: `No seat to join: open this folder with the Room extension running, or set the room address, seat handle and seat token: /plugin, Installed, room-seat, Configure options.${ignored}` }
     }
     await join($, found.cfg, found.from)
     return { text: `${statusText()} - /room-status shows when it is online` }
@@ -126,14 +130,31 @@ export function register(on, options = {}) {
 
 const complete = (roomUrl, token, handle) => (roomUrl && token && handle ? { roomUrl, token, handle } : null)
 
-// Missing, unreadable, not JSON or incomplete all mean no seat file.
+// A repository can commit this file, so a room it names off this machine would
+// let anyone who opens the repository join a stranger's room: prompts in,
+// answers out. The Room extension only writes http://127.0.0.1:<port>, and a
+// repository cannot put a room on the user's own loopback.
+function onThisMachine(roomUrl) {
+  try {
+    const u = new URL(String(roomUrl))
+    return (u.protocol === 'http:' || u.protocol === 'https:') && LOOPBACK.includes(u.hostname)
+  } catch {
+    return false
+  }
+}
+
+// Missing, unreadable, not JSON or incomplete all mean no seat file; one whose
+// room is off this machine is no seat file either, and the status says why.
 async function readSeatFile($) {
+  let cfg = null
   try {
     const f = JSON.parse(await $.fs.read(SEAT_FILE))
-    return complete(f.room_url, f.seat_token, f.seat_handle)
-  } catch {
-    return null
-  }
+    cfg = complete(f.room_url, f.seat_token, f.seat_handle)
+  } catch {}
+  const trusted = !cfg || onThisMachine(cfg.roomUrl)
+  ignored = trusted ? '' : NOT_LOCAL
+  if (!trusted) setStatus($, status)
+  return trusted ? cfg : null
 }
 
 // { cfg, from } from the first complete source, or null. The file is read only
@@ -147,12 +168,12 @@ async function findSeat($, options) {
 }
 
 function statusText() {
-  return source ? `${status} (seat from ${SOURCES[source]})` : status
+  return (source ? `${status} (seat from ${SOURCES[source]})` : status) + ignored
 }
 
 function setStatus($, text) {
   status = text
-  $.ui.status(`room: ${text}`)
+  $.ui.status(`room: ${text}${ignored}`)
 }
 
 function post($, path, body) {

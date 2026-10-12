@@ -183,6 +183,41 @@ for (const [what, file] of [
   })
 }
 
+// A committed seat file must not join a stranger's room: only a room on this
+// machine is trusted from it, which is all the Room extension ever writes.
+const IGNORED = /ignored \.claude\/room-seat\.local\.json: its room address is not on this machine/
+
+for (const url of ['http://evil.example.com:8787', 'http://127.0.0.1@evil.com/', 'http://127.0.0.2:8787', 'ftp://127.0.0.1:8787', 'not a url']) {
+  test(`a seat file pointing at ${url} is ignored, and says why`, async ($, on) => {
+    const seen = stubRoom(on, { file: seatFile({ room_url: url }), lines: [{ status: 'online' }] })
+    await start($)
+    expect(seen.spawns.length).toBe(0)
+    expect((await $.command.run({ command: 'room-status', args: '' })).text).toMatch(IGNORED)
+    expect((await $.command.run({ command: 'room-join', args: '' })).text).toMatch(IGNORED)
+    expect(seen.spawns.length).toBe(0)
+  })
+}
+
+test('a seat file pointing off this machine falls through to the plugin options, still saying why', { options: CONFIG }, async ($, on) => {
+  const seen = stubRoom(on, { file: seatFile({ room_url: 'http://evil.example.com:8787' }), lines: [{ status: 'online' }] })
+  await start($)
+  expect(seen.spawns.length).toBe(1)
+  expect(seen.spawns[0].env).toEqual({ ROOM_URL: 'http://room.test', ROOM_SEAT_TOKEN: 'tok', ROOM_SEAT_HANDLE: 'ana-agent' })
+  const status = await statusOnce($, /online/)
+  expect(status).toMatch(/online as @ana-agent .*plugin options/)
+  expect(status).toMatch(IGNORED)
+})
+
+for (const url of ['http://localhost:8787', 'http://[::1]:8787', 'https://127.0.0.1:8787']) {
+  test(`a seat file pointing at ${url} joins`, async ($, on) => {
+    const seen = stubRoom(on, { file: seatFile({ room_url: url }), lines: [{ status: 'online' }] })
+    await start($)
+    expect(seen.spawns.length).toBe(1)
+    expect(seen.spawns[0].env.ROOM_URL).toBe(url)
+    expect(await statusOnce($, /online/)).not.toMatch(/ignored/)
+  })
+}
+
 // A feed that prints `lines` and exits with code 2, as feed.mjs does on a fatal.
 function failing(lines: object[]) {
   return async function* () {
@@ -212,6 +247,43 @@ test('a fatal with a changed seat file rejoins once with the new token, and not 
   expect(await statusOnce($, /offline/)).toMatch(/offline: the room refused/)
   await settle($)
   expect(seen.spawns.length).toBe(2)
+})
+
+test('a fatal with the seat file now pointing off this machine does not rejoin, and says why', async ($, on) => {
+  let file = seatFile({ seat_token: 'old' })
+  const seen = stubRoom(on, {
+    file: () => file,
+    spawn: () => {
+      if (seen.spawns.length === 1) file = seatFile({ room_url: 'http://evil.example.com:8787', seat_token: 'evil' })
+      return failing([{ status: 'fatal', reason: 'the room refused this seat token (HTTP 401)' }])()
+    },
+  })
+  await start($)
+  for (let i = 0; i < 50 && seen.reads.length < 2; i++) await settle($)
+  await settle($)
+  await settle($)
+  expect(seen.reads.length).toBe(2)
+  expect(seen.spawns.length).toBe(1)
+  const status = (await $.command.run({ command: 'room-status', args: '' })).text
+  expect(status).toMatch(/offline: the room refused/)
+  expect(status).toMatch(IGNORED)
+})
+
+test('three retrying statuses with the seat file now pointing off this machine do not rejoin', async ($, on) => {
+  let file = seatFile()
+  const seen = stubRoom(on, {
+    file: () => file,
+    spawn: (signal: AbortSignal) => {
+      if (seen.spawns.length === 1) file = seatFile({ room_url: 'http://127.0.0.1@evil.com/' })
+      return playing([retrying, retrying, retrying])(signal)
+    },
+  })
+  await start($)
+  for (let i = 0; i < 50 && seen.reads.length < 2; i++) await settle($)
+  await settle($)
+  expect(seen.spawns.length).toBe(1)
+  expect(seen.ended).toBe(0) // the loopback feed keeps retrying
+  expect((await $.command.run({ command: 'room-status', args: '' })).text).toMatch(IGNORED)
 })
 
 test('a fatal with an unchanged seat file stays offline with the reason', async ($, on) => {

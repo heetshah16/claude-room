@@ -58,7 +58,9 @@ not a worktree), and its MCP servers and logins. Owner-only addressing, the defa
 can start a turn, but room context from other members (mirrors, briefs, the join seed) rides
 along in each prompt; under the `shared` seat policy anyone in the room can start one. For
 anything sensitive, use a dedicated session, or `scripts/room-seat.mjs`, which gives the seat
-its own config dir and a worktree.
+its own config dir and a worktree. The plugin only auto-joins from the project file when it
+points at this machine (`127.0.0.1`, `localhost` or `[::1]`), so a repository can't make you
+join someone else's room by committing that file; `/room-status` says when the file was ignored.
 
 ## Launched seats
 
