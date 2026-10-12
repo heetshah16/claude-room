@@ -474,6 +474,8 @@ test('start gives the open folder its seat, at the loopback URL', async () => {
   assert.equal(seatCalls[0].roomUrl, 'http://127.0.0.1:51820')
   assert.equal(seatCalls[0].workRepo, '/proj')
   assert.equal(seatCalls[0].client, session.roomClient)
+  // ensureLocalSeat reads the seat's real token from <stateDir>/members.json.
+  assert.equal(seatCalls[0].stateDir, '/state')
 })
 
 test('publishing and stopping sharing re-ensure the seat, never with the tunnel URL', async () => {

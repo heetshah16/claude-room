@@ -217,7 +217,7 @@ function createSession({
   async function ensureSeat() {
     if (!workRepo || !api.roomClient) return
     try {
-      const r = await ensureLocalSeat({ client: api.roomClient, workRepo, roomUrl: api.roomUrl, username: username() })
+      const r = await ensureLocalSeat({ client: api.roomClient, workRepo, roomUrl: api.roomUrl, username: username(), stateDir })
       if (!r.ok) log(`local seat not set up: ${r.reason}`)
     } catch (err) {
       log(`local seat not set up: ${err?.message ?? err}`)

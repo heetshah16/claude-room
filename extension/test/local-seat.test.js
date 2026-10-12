@@ -11,21 +11,29 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'local-seat-'))
 const seatFile = repo => path.join(repo, '.claude', 'room-seat.local.json')
 const read = repo => JSON.parse(fs.readFileSync(seatFile(repo), 'utf8'))
 
+// The room's own persisted roster (`<stateDir>/members.json`) is the only place
+// a seat's token lives; adminState() never exposes tokens.
 function fakeClient({ members, state } = {}) {
-  const roster = members ?? [{ id: 'o1', role: 'owner', name: 'Owner' }]
+  const stateDir = tmp()
+  const roster = members ?? [{ id: 'o1', role: 'owner', name: 'Owner', token: 'tok-owner' }]
+  const persist = () => fs.writeFileSync(path.join(stateDir, 'members.json'), JSON.stringify(roster))
+  persist()
   const calls = []
   return {
-    calls,
-    adminState: async () => (state === null ? null : { ok: true, members: roster }),
+    calls, stateDir, roster, persist,
+    adminState: async () => (state === null ? null : { ok: true, members: roster.map(({ token, ...m }) => m) }),
     addSeat: async a => {
       calls.push(['addSeat', a])
-      roster.push({ id: 'a1', role: 'member', kind: 'agent', handle: a.handle })
+      roster.push({ id: 'a1', role: 'member', kind: 'agent', handle: a.handle, ownerId: a.ownerId, token: 'tok-new' })
+      persist()
       return { ok: true, token: 'tok-new', member: { id: 'a1' } }
     },
     rotate: async id => { calls.push(['rotate', id]); return { ok: true, token: 'tok-rot' } },
   }
 }
-const run = (o) => ensureLocalSeat({ username: 'Admin', roomUrl: 'http://127.0.0.1:5000', git: () => null, ...o })
+const run = (o) => ensureLocalSeat({ username: 'Admin', roomUrl: 'http://127.0.0.1:5000', git: () => null, stateDir: o.client.stateDir, ...o })
+const seat = (o = {}) => ({ id: 'a9', role: 'member', kind: 'agent', handle: 'admin-claude', ownerId: 'o1', token: 'tok-live', ...o })
+const owner = { id: 'o1', role: 'owner', token: 'tok-owner' }
 
 test('seatHandle lowercases, strips and suffixes', () => {
   assert.equal(seatHandle('Admin'), 'admin-claude')
@@ -49,20 +57,72 @@ test('second run reuses the seat and only updates room_url', async () => {
   assert.deepEqual(read(repo), { room_url: 'http://127.0.0.1:6000', seat_handle: 'admin-claude', seat_token: 'tok-new' })
 })
 
-test('seat exists but the file is missing or corrupt: rotates, never duplicates', async () => {
+test('seat exists but the file is missing or corrupt: written from the roster, no rotate, no duplicate', async () => {
   const repo = tmp()
-  const members = [{ id: 'o1', role: 'owner' }, { id: 'a9', kind: 'agent', handle: 'admin-claude' }]
-  const client = fakeClient({ members })
-  await run({ client, workRepo: repo })
-  assert.deepEqual(client.calls, [['rotate', 'a9']])
-  assert.equal(read(repo).seat_token, 'tok-rot')
+  const client = fakeClient({ members: [{ ...owner }, seat()] })
+  assert.equal((await run({ client, workRepo: repo })).ok, true)
+  assert.deepEqual(client.calls, [])
+  assert.equal(read(repo).seat_token, 'tok-live')
   fs.writeFileSync(seatFile(repo), '{nope')
   await run({ client, workRepo: repo })
-  assert.equal(client.calls.length, 2)
   fs.writeFileSync(seatFile(repo), JSON.stringify({ seat_handle: 'someone-else', seat_token: 'x' }))
   await run({ client, workRepo: repo })
-  assert.equal(client.calls.length, 3)
-  assert.equal(read(repo).seat_handle, 'admin-claude')
+  assert.deepEqual(client.calls, [])
+  assert.deepEqual(read(repo), { room_url: 'http://127.0.0.1:5000', seat_handle: 'admin-claude', seat_token: 'tok-live' })
+})
+
+test('a rotated token in the roster rewrites a file that still names the seat', async () => {
+  const repo = tmp(); const client = fakeClient()
+  await run({ client, workRepo: repo })
+  client.roster.find(m => m.id === 'a1').token = 'tok-rotated'; client.persist()
+  const r = await run({ client, workRepo: repo })
+  assert.equal(r.ok, true)
+  assert.deepEqual(client.calls.map(c => c[0]), ['addSeat'])
+  assert.equal(read(repo).seat_token, 'tok-rotated')
+})
+
+test('an up-to-date file is not rewritten', async () => {
+  const repo = tmp(); const client = fakeClient()
+  await run({ client, workRepo: repo })
+  let writes = 0
+  const spy = { ...fs, renameSync: (...a) => { writes++; return fs.renameSync(...a) } }
+  assert.equal((await run({ client, workRepo: repo, fs: spy })).ok, true)
+  assert.equal(writes, 0)
+})
+
+test('a seat whose token is not in the roster is not written', async () => {
+  const repo = tmp()
+  const client = fakeClient({ members: [{ ...owner }, seat({ token: undefined })] })
+  const r = await run({ client, workRepo: repo })
+  assert.equal(r.ok, false)
+  assert.match(r.reason, /token/)
+  assert.equal(fs.existsSync(seatFile(repo)), false)
+})
+
+test('a seat with that handle owned by someone else is left alone', async () => {
+  const repo = tmp()
+  const client = fakeClient({ members: [{ ...owner }, { id: 'o2', role: 'member' }, seat({ ownerId: 'o2' })] })
+  fs.mkdirSync(path.dirname(seatFile(repo)), { recursive: true })
+  fs.writeFileSync(seatFile(repo), 'untouched')
+  const r = await run({ client, workRepo: repo })
+  assert.equal(r.ok, false)
+  assert.match(r.reason, /admin-claude/)
+  assert.deepEqual(client.calls, [])
+  assert.equal(fs.readFileSync(seatFile(repo), 'utf8'), 'untouched')
+})
+
+test('a seat file tracked by git is never given a token', async () => {
+  const repo = tmp()
+  execFileSync('git', ['init', '-q'], { cwd: repo })
+  fs.mkdirSync(path.dirname(seatFile(repo)), { recursive: true })
+  fs.writeFileSync(seatFile(repo), '{}')
+  execFileSync('git', ['add', '.claude/room-seat.local.json'], { cwd: repo })
+  execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'seat'], { cwd: repo })
+  const client = fakeClient()
+  const r = await ensureLocalSeat({ client, workRepo: repo, roomUrl: 'u', username: 'a', stateDir: client.stateDir })
+  assert.deepEqual(r, { ok: false, reason: '.claude/room-seat.local.json is tracked by git; not writing a seat token into it' })
+  assert.equal(fs.readFileSync(seatFile(repo), 'utf8'), '{}')
+  assert.deepEqual(client.calls, [])
 })
 
 test('no workRepo: no file, no call', async () => {
@@ -74,7 +134,7 @@ test('no workRepo: no file, no call', async () => {
 
 test('a non-git folder gets the file and no exclude, without throwing', async () => {
   const repo = tmp()
-  const r = await ensureLocalSeat({ client: fakeClient(), workRepo: repo, roomUrl: 'u', username: 'a' })
+  const r = await run({ client: fakeClient(), workRepo: repo, roomUrl: 'u', username: 'a', git: undefined })
   assert.equal(r.ok, true)
   assert.ok(fs.existsSync(seatFile(repo)))
 })
@@ -83,8 +143,8 @@ test('a git repo gets the file excluded, once', async () => {
   const repo = tmp()
   execFileSync('git', ['init', '-q'], { cwd: repo })
   const client = fakeClient()
-  await ensureLocalSeat({ client, workRepo: repo, roomUrl: 'u', username: 'a' })
-  await ensureLocalSeat({ client, workRepo: repo, roomUrl: 'v', username: 'a' })
+  await run({ client, workRepo: repo, roomUrl: 'u', username: 'a', git: undefined })
+  await run({ client, workRepo: repo, roomUrl: 'v', username: 'a', git: undefined })
   const ex = fs.readFileSync(path.join(repo, '.git', 'info', 'exclude'), 'utf8')
   assert.equal(ex.split('\n').filter(l => l === '**/.claude/room-seat.local.json').length, 1)
   assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }).trim(), '')
@@ -104,16 +164,16 @@ test('a folder inside a larger repo stays clean in git status', async () => {
   const top = tmp()
   execFileSync('git', ['init', '-q'], { cwd: top })
   const repo = path.join(top, 'packages', 'app'); fs.mkdirSync(repo, { recursive: true })
-  await ensureLocalSeat({ client: fakeClient(), workRepo: repo, roomUrl: 'u', username: 'a' })
+  await run({ client: fakeClient(), workRepo: repo, roomUrl: 'u', username: 'a', git: undefined })
   assert.ok(fs.existsSync(seatFile(repo)))
   assert.equal(execFileSync('git', ['status', '--porcelain', '-uall'], { cwd: top, encoding: 'utf8' }).trim(), '')
 })
 
 test('a reuse run adds an exclude entry the first run could not', async () => {
   const repo = tmp(); const client = fakeClient()
-  await ensureLocalSeat({ client, workRepo: repo, roomUrl: 'u', username: 'a', git: () => null })
+  await run({ client, workRepo: repo, roomUrl: 'u', username: 'a' })
   execFileSync('git', ['init', '-q'], { cwd: repo })
-  const r = await ensureLocalSeat({ client, workRepo: repo, roomUrl: 'u', username: 'a' })
+  const r = await run({ client, workRepo: repo, roomUrl: 'u', username: 'a', git: undefined })
   assert.equal(r.ok, true); assert.equal(client.calls.length, 1)
   assert.match(fs.readFileSync(path.join(repo, '.git', 'info', 'exclude'), 'utf8'), /room-seat.local.json/)
 })
