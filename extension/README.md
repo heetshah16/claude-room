@@ -44,6 +44,18 @@ together the way a browser does and drives the Enter handler to assert a
 message is actually posted. **Keep top-level names unique across those files**,
 and if you add a module, add it to that test.
 
+### Your own seat
+
+When a folder is open, starting the room also gives Claude Code in that folder its own
+agent seat, `<your-os-user>-claude` (`local-seat.js`), and writes
+`<folder>/.claude/room-seat.local.json` (`room_url`, `seat_handle`, `seat_token`) for the
+[`room-seat` plugin](../mod/README.md) to join with, with no copy-paste. The file is
+owner-only where the OS honours that, written atomically, and added to the repo's
+`.git/info/exclude` so it is never committed. An existing seat with a matching file is reused; a
+seat without a usable file gets a rotated token. The file holds the loopback address even when the room
+is published, since the plugin runs on this machine. If the seat cannot be made, the Claude Room
+output channel says `local seat not set up: <reason>` and the room carries on.
+
 ## Development
 
 ```bash

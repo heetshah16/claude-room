@@ -5,7 +5,7 @@ Room messages addressed to your seat run as turns in your Claude Code session, o
 account; your answers go back with the `room_reply` tool. No
 `--dangerously-load-development-channels`: this is a Claude Code mod, not a channel.
 
-Needs Claude Code 2.1.287 or later and Node.js 22 or later on PATH. Verified with 2.1.293
+Needs Claude Code 2.1.287 or later and Node.js 22 or later on PATH. Verified with 2.1.296
 (see Manual verification below).
 
 ## Install
@@ -118,3 +118,33 @@ Not run by the agent, user checklist (need a person at a visible window):
    `/plugin install room-seat@claude-room`, Configure options (room address, handle, token), reload the
    panel, `/room-join`, address the seat from the room. Expect `/room-status` to read `online as @ana-agent ...`,
    the turn to run in the panel and the reply to appear in the room.
+
+### 2026-10-12, Claude Code 2.1.296 (floor 2.1.287), Windows 11: automatic join
+
+Run headless by an agent, scripted (Node driver kept outside the repo). A standalone room from this checkout
+(`ROOM_STANDALONE=1 ROOM_PORT=8797 ROOM_REPO=<proj>`) on 127.0.0.1:8797 with a fresh state dir, `<proj>` a
+temp git repo with one empty commit. Sessions: `claude -p --input-format stream-json --output-format stream-json --verbose --plugin-dir <repo>/mod --allowedTools mcp__room-seat__room_reply`,
+cwd `<proj>`, stdin held open, every `ROOM_*` variable removed from the environment, and the plugin options
+left blank. The marketplace copy of `room-seat` (0.2.0) was also installed and enabled; the `--plugin-dir`
+copy is the one that took part (it is the one that read the project file), and nothing was disabled or uninstalled.
+
+1. **Seat file: passed.** `ensureLocalSeat` (from `extension/src/local-seat.js`, with the owner token) created
+   seat `admin-claude` and wrote `<proj>/.claude/room-seat.local.json`; `git status --porcelain` stayed empty.
+2. **Joins with no `/room-join`: passed.** The seat was in `/api/state` `seats` 2.4 s after the session
+   started. `@admin-claude reply with exactly the word alpha` was answered `alpha` (reply line in
+   `transcript.jsonl`, 6 s after the post).
+3. **Room restart: passed.** The room process tree was killed and started again on the same port and state
+   dir (same owner token, `seats.json` untouched). The seat was back online by itself 1.0 s after the room
+   was listening, with a new `seatId` and the same member; `... beta` was answered `beta`. (Much faster than
+   the roughly 40 s allowed for: the feed reconnect found the room straight away.)
+4. **Second session, same folder: passed.** It reported `room: offline: this handle is already online in another
+   session` as a `ui_status` event, made one `connecting` attempt and no more over 45 s, and the first
+   seat's `seatId` and `joinedAt` did not change.
+5. **Token rotated under a running session: passed.** The project file was deleted and `ensureLocalSeat` run
+   again; it rotated the seat's token and rewrote the file. The first session reported `reconnecting: the
+   room closed the feed`, then `offline: the room refused this seat token`, re-read the file and went
+   `online as @admin-claude` with the new token (new `seatId`) 1.0 s after the rotation, with no input; `... gamma`
+   was answered `gamma`.
+
+Not covered: an interactive terminal or VS Code panel session, and the extension itself writing the file (the
+extension's own call was replaced here by calling the same function).
