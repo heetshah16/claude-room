@@ -111,18 +111,18 @@ From a repo checkout the room is the checkout's own `src/`, even if a stale
 - **VS Code:** install from a `.vsix`: `code --install-extension <file>.vsix`,
   or Extensions view → `…` → **Install from VSIX…**. The Marketplace listing is
   0.0.1, which predates the bundled room: it cannot start a room without a
-  clone of this repo beside it. Use the `.vsix` until 0.0.2 is published.
+  clone of this repo beside it. Use the `.vsix` until a newer version is published there.
 - **Cursor (and any Open VSX editor):** Cursor installs from Open VSX, not the
-  VS Code Marketplace, so the Marketplace listing does not appear in its
-  library. Install a `.vsix` today: `cursor --install-extension <file>.vsix`.
-  Publishing to Open VSX (`npx ovsx publish <file>.vsix -p <token>`, which needs
-  an Open VSX account and namespace) is not done yet, so it is not listed there.
+  VS Code Marketplace. Search for **Claude Room** in the Extensions view
+  ([open-vsx.org/extension/claude-room/claude-room-orchestrator](https://open-vsx.org/extension/claude-room/claude-room-orchestrator)),
+  or install a `.vsix`: `cursor --install-extension <file>.vsix`. To publish a new
+  version: `OVSX_PAT=<token> npx ovsx publish <file>.vsix` (namespace `claude-room`).
 - **Building the `.vsix` yourself:**
 
   ```bash
   cd extension
   npm install                     # the room's SDK ships in the package's node_modules
-  npx @vscode/vsce package        # produces claude-room-orchestrator-0.0.2.vsix (~4.9 MB)
+  npx @vscode/vsce package        # produces claude-room-orchestrator-0.0.3.vsix (~4.9 MB)
   ```
 
   `vsce package` runs `vscode:prepublish` (`node ../scripts/bundle-room.mjs`),
