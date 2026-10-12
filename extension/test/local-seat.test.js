@@ -86,7 +86,7 @@ test('a git repo gets the file excluded, once', async () => {
   await ensureLocalSeat({ client, workRepo: repo, roomUrl: 'u', username: 'a' })
   await ensureLocalSeat({ client, workRepo: repo, roomUrl: 'v', username: 'a' })
   const ex = fs.readFileSync(path.join(repo, '.git', 'info', 'exclude'), 'utf8')
-  assert.equal(ex.split('\n').filter(l => l === '.claude/room-seat.local.json').length, 1)
+  assert.equal(ex.split('\n').filter(l => l === '**/.claude/room-seat.local.json').length, 1)
   assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }).trim(), '')
 })
 
@@ -98,4 +98,40 @@ test('client failures return ok:false and never throw', async () => {
   const boom = fakeClient(); boom.adminState = async () => { throw new Error('boom') }
   assert.deepEqual(await run({ client: boom, workRepo: repo }), { ok: false, reason: 'boom' })
   assert.equal(fs.existsSync(seatFile(repo)), false)
+})
+
+test('a folder inside a larger repo stays clean in git status', async () => {
+  const top = tmp()
+  execFileSync('git', ['init', '-q'], { cwd: top })
+  const repo = path.join(top, 'packages', 'app'); fs.mkdirSync(repo, { recursive: true })
+  await ensureLocalSeat({ client: fakeClient(), workRepo: repo, roomUrl: 'u', username: 'a' })
+  assert.ok(fs.existsSync(seatFile(repo)))
+  assert.equal(execFileSync('git', ['status', '--porcelain', '-uall'], { cwd: top, encoding: 'utf8' }).trim(), '')
+})
+
+test('a reuse run adds an exclude entry the first run could not', async () => {
+  const repo = tmp(); const client = fakeClient()
+  await ensureLocalSeat({ client, workRepo: repo, roomUrl: 'u', username: 'a', git: () => null })
+  execFileSync('git', ['init', '-q'], { cwd: repo })
+  const r = await ensureLocalSeat({ client, workRepo: repo, roomUrl: 'u', username: 'a' })
+  assert.equal(r.ok, true); assert.equal(client.calls.length, 1)
+  assert.match(fs.readFileSync(path.join(repo, '.git', 'info', 'exclude'), 'utf8'), /room-seat.local.json/)
+})
+
+test('the seat file has exactly the three keys, owner-only, and no temp file is left', async () => {
+  const repo = tmp()
+  fs.mkdirSync(path.dirname(seatFile(repo)), { recursive: true })
+  fs.writeFileSync(seatFile(repo), 'stale', { mode: 0o644 })
+  await run({ client: fakeClient(), workRepo: repo })
+  assert.deepEqual(Object.keys(read(repo)).sort(), ['room_url', 'seat_handle', 'seat_token'])
+  assert.deepEqual(fs.readdirSync(path.dirname(seatFile(repo))), ['room-seat.local.json'])
+  if (process.platform !== 'win32') assert.equal(fs.statSync(seatFile(repo)).mode & 0o777, 0o600)
+})
+
+test('a failed write leaves no temp file and reports ok:false', async () => {
+  const repo = tmp()
+  const bad = { ...fs, renameSync: () => { throw new Error('rename failed') } }
+  const r = await run({ client: fakeClient(), workRepo: repo, fs: bad })
+  assert.deepEqual(r, { ok: false, reason: 'rename failed' })
+  assert.deepEqual(fs.readdirSync(path.dirname(seatFile(repo))), [])
 })

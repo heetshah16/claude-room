@@ -9,7 +9,8 @@ const path = require('node:path')
 const { execFileSync } = require('node:child_process')
 
 const SEAT_FILE = path.join('.claude', 'room-seat.local.json')
-const EXCLUDE_LINE = '.claude/room-seat.local.json'
+// `**/` so it matches when the open folder is a subfolder of the git toplevel.
+const EXCLUDE_LINE = '**/.claude/room-seat.local.json'
 
 /** `Admin` -> `admin-claude`: lowercase [a-z0-9-], dashes collapsed. */
 function seatHandle(username) {
@@ -43,6 +44,21 @@ function readSeatFile(file, fs) {
   } catch { return null }
 }
 
+// Owner-only and atomic: the file holds a seat token, and a reader must never
+// see a half-written one. Windows largely ignores the mode bits; harmless there.
+function writeSeatFile(file, text, fs) {
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 })
+  const tmp = `${file}.${process.pid}.tmp`
+  try {
+    fs.writeFileSync(tmp, text, { flag: 'wx', mode: 0o600 })
+    fs.renameSync(tmp, file)
+  } catch (err) {
+    try { fs.unlinkSync(tmp) } catch { /* nothing to clean */ }
+    throw err
+  }
+  try { fs.chmodSync(file, 0o600) } catch { /* best effort: tightens an older, looser file */ }
+}
+
 async function ensureLocalSeat({ client, workRepo, roomUrl, username, fs = nodeFs, git = defaultGit }) {
   if (!workRepo) return { ok: false, reason: 'no folder open' }
   try {
@@ -59,7 +75,11 @@ async function ensureLocalSeat({ client, workRepo, roomUrl, username, fs = nodeF
 
     if (existing && saved?.seat_handle === handle && saved.seat_token) {
       // The roster never exposes tokens, so a file naming a live seat is trusted.
-      if (saved.room_url === roomUrl) return { ok: true, handle, file }
+      if (saved.room_url === roomUrl) {
+        // Idempotent; retried here in case the first run's exclude failed.
+        try { excludeSeatFile(workRepo, fs, git) } catch { /* a courtesy */ }
+        return { ok: true, handle, file }
+      }
       token = saved.seat_token
     } else {
       // No seat: mint one. A seat without a usable file: rotate for a fresh
@@ -71,8 +91,7 @@ async function ensureLocalSeat({ client, workRepo, roomUrl, username, fs = nodeF
       token = r.token
     }
 
-    fs.mkdirSync(path.dirname(file), { recursive: true })
-    fs.writeFileSync(file, JSON.stringify({ room_url: roomUrl, seat_handle: handle, seat_token: token }, null, 2) + '\n')
+    writeSeatFile(file, JSON.stringify({ room_url: roomUrl, seat_handle: handle, seat_token: token }, null, 2) + '\n', fs)
     try { excludeSeatFile(workRepo, fs, git) } catch { /* hiding the file is a courtesy */ }
     return { ok: true, handle, file }
   } catch (err) {

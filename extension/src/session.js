@@ -19,7 +19,7 @@ const { roomRecipe, readOwnerToken, createRoomClient, PUBLISHED_HOST } = require
 const { detectDevtunnel, tunnelRecipe, parseTunnelUrl, isLoggedIn: devtunnelLoggedIn } = require('./tunnel.js')
 const { createEventRouter } = require('./events.js')
 const { createWorkerPool } = require('./workers.js')
-const { ensureLocalSeat } = require('./local-seat.js')
+const { ensureLocalSeat: realEnsureLocalSeat } = require('./local-seat.js')
 
 const realSleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -164,6 +164,7 @@ function createSession({
   sleep = realSleep,
   now = Date.now,
   username = () => os.userInfo().username,
+  ensureLocalSeat = realEnsureLocalSeat,
 }) {
   const roomListeners = new Set()
   const workerListeners = new Set()

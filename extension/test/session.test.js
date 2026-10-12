@@ -28,6 +28,7 @@ function harness(over = {}) {
   const errors = []
   const infos = []
   const copied = []
+  const seatCalls = []
   let clock = 0
   const session = createSession({
     repoRoot: '/repo',
@@ -48,6 +49,8 @@ function harness(over = {}) {
     now: () => (clock += 1000),
     fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({}) }),
     log: () => {},
+    // Never touch the real filesystem or room admin API from session tests.
+    ensureLocalSeat: async a => { seatCalls.push(a); return { ok: true } },
     ...over,
     // DEVIATION FROM THE BRIEF (see task-4 report): `supervisor` moved after
     // `...over`. The brief has it before, with its own `...(over.supervisor
@@ -63,7 +66,7 @@ function harness(over = {}) {
       ...(over.supervisor ?? {}),
     },
   })
-  return { session, started, stopped, errors, infos, copied }
+  return { session, started, stopped, errors, infos, copied, seatCalls }
 }
 
 test('start launches the room on a port nothing else holds, then waits for its token', async () => {
@@ -462,4 +465,39 @@ test('with no folder open, Add says to open one instead of asking the room', asy
   session.stop()
   assert.deepEqual(errors, ["Claude Room: Open a folder first: Claude Room workers run in your open project's git repository."])
   assert.ok(!asked.some(u => u.includes('worker')), 'no spawn request reached the room')
+})
+
+test('start gives the open folder its seat, at the loopback URL', async () => {
+  const { session, seatCalls } = harness()
+  await session.start()
+  assert.equal(seatCalls.length, 1)
+  assert.equal(seatCalls[0].roomUrl, 'http://127.0.0.1:51820')
+  assert.equal(seatCalls[0].workRepo, '/proj')
+  assert.equal(seatCalls[0].client, session.roomClient)
+})
+
+test('publishing and stopping sharing re-ensure the seat, never with the tunnel URL', async () => {
+  const { session, seatCalls } = harness()
+  await session.start()
+  await session.republish(true)
+  assert.equal(seatCalls.length, 2)
+  await session.republish(false)
+  assert.equal(seatCalls.length, 3)
+  assert.deepEqual(seatCalls.map(c => c.roomUrl), Array(3).fill('http://127.0.0.1:51820'))
+})
+
+test('with no folder open no seat is requested', async () => {
+  const { session, seatCalls } = harness({ workRepo: undefined })
+  await session.start()
+  await session.republish(true)
+  assert.equal(seatCalls.length, 0)
+})
+
+test('a seat helper that throws or rejects does not fail start', async () => {
+  const logs = []
+  for (const ensureLocalSeat of [async () => { throw new Error('boom') }, () => { throw new Error('sync boom') }]) {
+    const { session } = harness({ ensureLocalSeat, log: m => logs.push(m) })
+    assert.equal((await session.start()).ok, true)
+  }
+  assert.equal(logs.filter(m => /local seat not set up/.test(m)).length, 2)
 })
