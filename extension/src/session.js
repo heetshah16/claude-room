@@ -13,11 +13,13 @@
 // line below testable without an extension host.
 'use strict'
 const net = require('node:net')
+const os = require('node:os')
 
 const { roomRecipe, readOwnerToken, createRoomClient, PUBLISHED_HOST } = require('./room-client.js')
 const { detectDevtunnel, tunnelRecipe, parseTunnelUrl, isLoggedIn: devtunnelLoggedIn } = require('./tunnel.js')
 const { createEventRouter } = require('./events.js')
 const { createWorkerPool } = require('./workers.js')
+const { ensureLocalSeat } = require('./local-seat.js')
 
 const realSleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -161,6 +163,7 @@ function createSession({
   isLoggedIn = devtunnelLoggedIn,
   sleep = realSleep,
   now = Date.now,
+  username = () => os.userInfo().username,
 }) {
   const roomListeners = new Set()
   const workerListeners = new Set()
@@ -205,6 +208,21 @@ function createSession({
     return token
   }
 
+  /**
+   * Claude Code in the open folder gets its own seat, and the file that lets the
+   * room-seat plugin join it. The loopback URL even when published: the plugin
+   * runs on this machine. Failure is logged, never thrown -- the room is up.
+   */
+  async function ensureSeat() {
+    if (!workRepo || !api.roomClient) return
+    try {
+      const r = await ensureLocalSeat({ client: api.roomClient, workRepo, roomUrl: api.roomUrl, username: username() })
+      if (!r.ok) log(`local seat not set up: ${r.reason}`)
+    } catch (err) {
+      log(`local seat not set up: ${err?.message ?? err}`)
+    }
+  }
+
   async function start() {
     if (api.roomClient) return { ok: true, roomUrl: api.roomUrl, token: api.token }
 
@@ -247,6 +265,7 @@ function createSession({
     api.token = token
     api.roomClient = roomClient
     api.pool = pool
+    await ensureSeat()
     return { ok: true, roomUrl, token }
   }
 
@@ -331,6 +350,7 @@ function createSession({
       }
       await waitForRoomUp(api.roomUrl)
       published = next
+      await ensureSeat()
     } catch (err) {
       // State from what actually happened, not from what was asked for. A
       // failed publish leaves a tunnel pointing at a room that is not serving,

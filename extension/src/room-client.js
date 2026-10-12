@@ -148,6 +148,8 @@ function createRoomClient({ roomUrl, token, fetchImpl = fetch }) {
     // briefly restarting is worse than one that does not render at all.
     adminState: () => get('/api/admin/state'),
     invite: ({ name, role }) => post('/api/admin/invite', { name, role }),
+    // The seat for Claude Code in the open folder: an agent member, name = handle.
+    addSeat: ({ handle, ownerId }) => post('/api/admin/invite', { name: handle, kind: 'agent', handle, ownerId }),
     joinLink: memberId => post('/api/admin/joinLink', { memberId }),
     rotate: memberId => post('/api/admin/rotate', { memberId }),
     remove: memberId => post('/api/admin/remove', { memberId }),
