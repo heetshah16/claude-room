@@ -22,12 +22,12 @@ export function extractJSON(text) {
 // surface removed rather than merely unused.
 const NO_TOOLS = 'Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch,Task,NotebookEdit'
 
-function defaultSpawn(cmd, args, prompt) {
+function defaultSpawn(cmd, args, prompt, opts = {}) {
   return new Promise(resolve => {
     // spawnPortable rather than a bare spawn: on a machine where `claude` is
     // an npm .cmd shim, a bare spawn fails ENOENT and the observer silently
     // never produces a brief.
-    const child = spawnPortable(cmd, args, { stdio: ['pipe', 'pipe', 'pipe'] })
+    const child = spawnPortable(cmd, args, { ...opts, stdio: ['pipe', 'pipe', 'pipe'] })
     let stdout = ''
     let stderr = ''
     child.stdout.on('data', d => { stdout += d })
@@ -50,7 +50,8 @@ export function makeRunner(config, { spawn = defaultSpawn } = {}) {
   ]
 
   return async function runModel(prompt) {
-    const { stdout, stderr, code } = await spawn('claude', args, prompt)
+    // ROOM_SEAT_SKIP: a room process, so the room-seat plugin must not join it as the user's seat.
+    const { stdout, stderr, code } = await spawn('claude', args, prompt, { env: { ...process.env, ROOM_SEAT_SKIP: '1' } })
     if (code !== 0) throw new Error(`observer exit ${code}: ${String(stderr).slice(0, 200)}`)
 
     let parsed

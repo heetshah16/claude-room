@@ -70,6 +70,15 @@ test('the bridge is told where the room is, through the environment', () => {
   assert.equal(r.opts.env.ROOM_TOKEN, 'tok')
 })
 
+test('the orchestrator is marked as a room process, so the room-seat plugin never joins it as a seat', () => {
+  const r = orchestratorRecipe({
+    repoRoot: '/repo', roomUrl: 'http://room:1', token: 'tok', sessionId: 's',
+    workspace: '/ws', mcpConfigPath: '/c', env: { PATH: '/bin' },
+  })
+  assert.equal(r.opts.env.ROOM_SEAT_SKIP, '1')
+  assert.equal(r.opts.env.PATH, '/bin')
+})
+
 test('a turn is one JSON line on stdin', () => {
   const child = fakeChild()
   const o = createOrchestrator({ child, onEvent: () => {} })

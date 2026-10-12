@@ -47,6 +47,16 @@ test('the runner spawns a tool-less claude -p and sums cached input into usage',
   assert.equal(out.tokens.output, 4)
 })
 
+test('the observer is marked as a room process, so the room-seat plugin never joins it as a seat', async () => {
+  let seenOpts = null
+  const runner = makeRunner(loadConfig({}), {
+    spawn: (cmd, args, prompt, opts) => { seenOpts = opts; return { stdout: '{}', code: 0 } },
+  })
+  await runner('p')
+  assert.equal(seenOpts?.env?.ROOM_SEAT_SKIP, '1')
+  assert.equal(seenOpts.env.PATH ?? seenOpts.env.Path, process.env.PATH ?? process.env.Path)
+})
+
 test('a non-zero exit throws so the observer keeps its previous brief', async () => {
   const runner = makeRunner(loadConfig({}), { spawn: () => ({ stdout: '', stderr: 'boom', code: 1 }) })
   await assert.rejects(() => runner('x'), /boom/)

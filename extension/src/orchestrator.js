@@ -62,7 +62,8 @@ function orchestratorRecipe({
     ],
     opts: {
       cwd: workspace,
-      env: { ...env, ROOM_URL: roomUrl, ROOM_TOKEN: token },
+      // ROOM_SEAT_SKIP: a room process, so the room-seat plugin must not join it as the user's seat.
+      env: { ...env, ROOM_URL: roomUrl, ROOM_TOKEN: token, ROOM_SEAT_SKIP: '1' },
       stdio: ['pipe', 'pipe', 'pipe'],
     },
   }
