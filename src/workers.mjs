@@ -28,7 +28,6 @@ import { spawnPortable } from './spawn.mjs'
  */
 const LAUNCHER = fileURLToPath(new URL('../scripts/room-opencode-seat.mjs', import.meta.url))
 
-/** The lowest free `worker-N`, so a stopped worker's handle comes back. */
 /**
  * Agent members left from a previous room whose process cannot have survived it:
  * fleet workers (flagged, or legacy records matching worker-N with no flag) that
@@ -37,6 +36,7 @@ const LAUNCHER = fileURLToPath(new URL('../scripts/room-opencode-seat.mjs', impo
 export const staleWorkers = (agents, isOnline) =>
   agents.filter(a => (a.worker === true || (a.worker === undefined && /^worker-\d+$/.test(a.handle))) && !isOnline(a.handle))
 
+/** The lowest free `worker-N`, so a stopped worker's handle comes back. */
 export function nextHandle(existing) {
   const taken = new Set(existing)
   for (let i = 1; ; i++) {
