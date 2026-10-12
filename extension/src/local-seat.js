@@ -6,7 +6,7 @@
 'use strict'
 const nodeFs = require('node:fs')
 const path = require('node:path')
-const { execFileSync } = require('node:child_process')
+const { execFileSync, spawnSync } = require('node:child_process')
 
 const SEAT_FILE = path.join('.claude', 'room-seat.local.json')
 // `**/` so it matches when the open folder is a subfolder of the git toplevel.
@@ -56,15 +56,26 @@ function writeSeatFile(file, text, fs) {
     try { fs.unlinkSync(tmp) } catch { /* nothing to clean */ }
     throw err
   }
-  try { fs.chmodSync(file, 0o600) } catch { /* best effort: tightens an older, looser file */ }
 }
 
-// True only when git says the file is tracked; a non-git folder or a missing git is "not tracked".
-function isTracked(repo, rel) {
-  try {
-    execFileSync('git', ['ls-files', '--error-unmatch', rel], { cwd: repo, stdio: 'ignore' })
-    return true
-  } catch { return false }
+const defaultRunGit = (repo, args) => spawnSync('git', args, { cwd: repo, stdio: 'ignore' })
+
+// A `.git` dir or file (a worktree's) in repo or any folder above it.
+function insideRepo(repo, fs) {
+  for (let dir = path.resolve(repo); ; dir = path.dirname(dir)) {
+    if (fs.existsSync(path.join(dir, '.git'))) return true
+    if (path.dirname(dir) === dir) return false
+  }
+}
+
+// 'tracked', 'untracked', or 'unknown'. Fails closed: git missing or failing
+// (exit 128 covers "not a repository" but also e.g. safe.directory refusals)
+// counts as untracked only when no `.git` is anywhere up the tree.
+function trackedState(repo, rel, runGit, fs) {
+  const r = runGit(repo, ['ls-files', '--error-unmatch', rel])
+  if (!r?.error && r?.status === 0) return 'tracked'
+  if (!r?.error && r?.status === 1) return 'untracked'
+  return insideRepo(repo, fs) ? 'unknown' : 'untracked'
 }
 
 // The seat's real token, from the room's own persisted roster (same file and
@@ -77,11 +88,15 @@ function rosterToken(stateDir, id, fs) {
   } catch { return null }
 }
 
-async function ensureLocalSeat({ client, workRepo, roomUrl, username, stateDir, fs = nodeFs, git = defaultGit }) {
+async function ensureLocalSeat({ client, workRepo, roomUrl, username, stateDir, fs = nodeFs, git = defaultGit, runGit = defaultRunGit }) {
   if (!workRepo) return { ok: false, reason: 'no folder open' }
   try {
-    if (isTracked(workRepo, SEAT_FILE.split(path.sep).join('/'))) {
+    const tracked = trackedState(workRepo, SEAT_FILE.split(path.sep).join('/'), runGit, fs)
+    if (tracked === 'tracked') {
       return { ok: false, reason: '.claude/room-seat.local.json is tracked by git; not writing a seat token into it' }
+    }
+    if (tracked === 'unknown') {
+      return { ok: false, reason: 'could not check whether .claude/room-seat.local.json is tracked by git (is git on PATH?); not writing a seat token' }
     }
     const handle = seatHandle(username)
     const state = await client.adminState()
@@ -108,6 +123,8 @@ async function ensureLocalSeat({ client, workRepo, roomUrl, username, stateDir, 
     if (saved?.room_url !== roomUrl || saved?.seat_handle !== handle || saved?.seat_token !== token) {
       writeSeatFile(file, JSON.stringify({ room_url: roomUrl, seat_handle: handle, seat_token: token }, null, 2) + '\n', fs)
     }
+    // Every run, written or not: tightens an older, looser file. Best effort.
+    try { fs.chmodSync(file, 0o600) } catch { /* Windows largely ignores mode bits */ }
     // Idempotent; retried every run in case an earlier exclude failed.
     try { excludeSeatFile(workRepo, fs, git) } catch { /* hiding the file is a courtesy */ }
     return { ok: true, handle, file }

@@ -195,3 +195,52 @@ test('a failed write leaves no temp file and reports ok:false', async () => {
   assert.deepEqual(r, { ok: false, reason: 'rename failed' })
   assert.deepEqual(fs.readdirSync(path.dirname(seatFile(repo))), [])
 })
+
+const UNCHECKED = 'could not check whether .claude/room-seat.local.json is tracked by git (is git on PATH?); not writing a seat token'
+const noGit = () => ({ status: null, error: Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' }) })
+
+test('an untracked seat file in a real repo is written', async () => {
+  const repo = tmp()
+  execFileSync('git', ['init', '-q'], { cwd: repo })
+  const r = await run({ client: fakeClient(), workRepo: repo, git: undefined })
+  assert.equal(r.ok, true)
+  assert.equal(read(repo).seat_token, 'tok-new')
+})
+
+test('git missing inside a repo: refuses, since the file might be tracked', async () => {
+  const repo = tmp()
+  fs.mkdirSync(path.join(repo, '.git'))
+  const sub = path.join(repo, 'pkg'); fs.mkdirSync(sub)
+  for (const workRepo of [repo, sub]) {
+    const client = fakeClient()
+    const r = await run({ client, workRepo, runGit: noGit })
+    assert.deepEqual(r, { ok: false, reason: UNCHECKED })
+    assert.equal(fs.existsSync(seatFile(workRepo)), false)
+    assert.deepEqual(client.calls, [])
+  }
+})
+
+test('git missing outside any repo: written', async () => {
+  const repo = tmp()
+  const r = await run({ client: fakeClient(), workRepo: repo, runGit: noGit })
+  assert.equal(r.ok, true)
+  assert.equal(read(repo).seat_token, 'tok-new')
+})
+
+test('git failing in an unexpected way inside a repo: refuses', async () => {
+  const repo = tmp()
+  fs.writeFileSync(path.join(repo, '.git'), 'gitdir: elsewhere\n') // a worktree's .git file
+  const r = await run({ client: fakeClient(), workRepo: repo, runGit: () => ({ status: 128 }) })
+  assert.deepEqual(r, { ok: false, reason: UNCHECKED })
+})
+
+test('a reuse run tightens an older, looser file whose content is already right', async () => {
+  const repo = tmp(); const client = fakeClient()
+  await run({ client, workRepo: repo })
+  fs.chmodSync(seatFile(repo), 0o644)
+  const chmods = []
+  const spy = { ...fs, chmodSync: (p, m) => { chmods.push([p, m]); return fs.chmodSync(p, m) }, renameSync: () => { throw new Error('no write expected') } }
+  assert.equal((await run({ client, workRepo: repo, fs: spy })).ok, true)
+  assert.deepEqual(chmods, [[seatFile(repo), 0o600]])
+  if (process.platform !== 'win32') assert.equal(fs.statSync(seatFile(repo)).mode & 0o777, 0o600)
+})
