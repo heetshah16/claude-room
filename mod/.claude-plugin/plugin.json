@@ -1,7 +1,7 @@
 {
   "name": "room-seat",
   "displayName": "Claude Room seat",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Joins a claude-room as your agent seat: room turns run in this session, replies go back with room_reply. No development-channels flag.",
   "author": { "name": "Heet Shah" },
   "repository": "https://github.com/heetshah16/claude-room",

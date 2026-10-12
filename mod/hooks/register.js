@@ -8,10 +8,11 @@
 //   room_reply MCP tool            -> $.tool.register + a tool.call hook
 //   generated hooks settings file  -> classic.* hooks, forwarded during room turns
 //
-// Joins at once when ROOM_URL, ROOM_SEAT_TOKEN and ROOM_SEAT_HANDLE are set
-// (scripts/room-seat.mjs launches a session to be a seat). Plugin options are
-// per user, not per session, so they wait for /room-join: auto-joining from
-// them would make every session claim the same handle.
+// Joins at session start from the first complete source:
+//   the environment   ROOM_URL, ROOM_SEAT_TOKEN, ROOM_SEAT_HANDLE (scripts/room-seat.mjs)
+//   the project file  .claude/room-seat.local.json, which the Room extension writes
+//   the plugin options
+// Only one session holds a handle; the others show the room's refusal.
 
 const REPLY_TOOL = {
   name: 'room_reply',
@@ -28,10 +29,15 @@ const REPLY_TOOL = {
 }
 
 let seat = null // { roomUrl, token, handle } while joined
-let envSeat = null // the launch environment's seat settings, for /room-join to rejoin with
+let envSeat = null // the launch environment's seat settings
+let source = null // the SOURCES key the last join came from
 let feed = null // the feed child's stream while joined
 let status = 'not joined - run /room-join'
 let inRoomTurn = false
+let retries = 0 // retrying statuses in a row from the current feed
+
+const SEAT_FILE = '.claude/room-seat.local.json'
+const SOURCES = { env: 'the environment', file: 'the project file', options: 'the plugin options' }
 
 const REPLY_TIMEOUT_MS = 15_000
 
@@ -46,26 +52,21 @@ export function register(on, options = {}) {
     await $.command.register({ name: 'room-join', description: 'Bring this session online as your room seat', immediate: true })
     await $.command.register({ name: 'room-leave', description: "Take this session's room seat offline", immediate: true })
     await $.command.register({ name: 'room-status', description: "Show this session's room seat", immediate: true })
-    const roomUrl = await $.env.get('ROOM_URL')
-    const token = await $.env.get('ROOM_SEAT_TOKEN')
-    const handle = await $.env.get('ROOM_SEAT_HANDLE')
+    envSeat = complete(await $.env.get('ROOM_URL'), await $.env.get('ROOM_SEAT_TOKEN'), await $.env.get('ROOM_SEAT_HANDLE'))
     const started = await next(e)
-    if (roomUrl && token && handle) {
-      envSeat = { roomUrl, token, handle }
-      await join($, envSeat)
-    }
+    const found = await findSeat($, options)
+    if (found) await join($, found.cfg, found.from)
     return started
   })
 
   on('command.run', { command: 'room-join' }, async ($) => {
-    if (feed) return { text: status }
-    const opts = { roomUrl: options.room_url, token: options.seat_token, handle: options.seat_handle }
-    const cfg = opts.roomUrl && opts.token && opts.handle ? opts : envSeat
-    if (!cfg) {
-      return { text: 'Set the room address, seat handle and seat token first: /plugin, Installed, room-seat, Configure options.' }
+    if (feed) return { text: statusText() }
+    const found = await findSeat($, options)
+    if (!found) {
+      return { text: 'No seat to join: open this folder with the Room extension running, or set the room address, seat handle and seat token: /plugin, Installed, room-seat, Configure options.' }
     }
-    await join($, cfg)
-    return { text: `${status} - /room-status shows when it is online` }
+    await join($, found.cfg, found.from)
+    return { text: `${statusText()} - /room-status shows when it is online` }
   })
 
   on('command.run', { command: 'room-leave' }, async ($) => {
@@ -79,7 +80,7 @@ export function register(on, options = {}) {
     return { text: status }
   })
 
-  on('command.run', { command: 'room-status' }, async () => ({ text: status }))
+  on('command.run', { command: 'room-status' }, async () => ({ text: statusText() }))
 
   on('tool.call', { tool: 'mcp__room-seat__room_reply' }, async ($, e) => {
     if (!seat) return { deny: 'room_reply: this session is not joined to a room' }
@@ -123,6 +124,32 @@ export function register(on, options = {}) {
   })
 }
 
+const complete = (roomUrl, token, handle) => (roomUrl && token && handle ? { roomUrl, token, handle } : null)
+
+// Missing, unreadable, not JSON or incomplete all mean no seat file.
+async function readSeatFile($) {
+  try {
+    const f = JSON.parse(await $.fs.read(SEAT_FILE))
+    return complete(f.room_url, f.seat_token, f.seat_handle)
+  } catch {
+    return null
+  }
+}
+
+// { cfg, from } from the first complete source, or null. The file is read only
+// when the environment has no seat.
+async function findSeat($, options) {
+  if (envSeat) return { cfg: envSeat, from: 'env' }
+  const file = await readSeatFile($)
+  if (file) return { cfg: file, from: 'file' }
+  const opts = complete(options.room_url, options.seat_token, options.seat_handle)
+  return opts ? { cfg: opts, from: 'options' } : null
+}
+
+function statusText() {
+  return source ? `${status} (seat from ${SOURCES[source]})` : status
+}
+
 function setStatus($, text) {
   status = text
   $.ui.status(`room: ${text}`)
@@ -148,8 +175,12 @@ function forward($, event, payload) {
     .catch(err => $.ui.log(`room hook ${event} failed: ${err?.message ?? err}`, { to: 'debug' }))
 }
 
-async function join($, cfg) {
-  seat = { roomUrl: String(cfg.roomUrl).replace(/\/+$/, ''), token: String(cfg.token), handle: String(cfg.handle).replace(/^@/, '') }
+const seatOf = cfg => ({ roomUrl: String(cfg.roomUrl).replace(/\/+$/, ''), token: String(cfg.token), handle: String(cfg.handle).replace(/^@/, '') })
+
+async function join($, cfg, from) {
+  seat = seatOf(cfg)
+  source = from
+  retries = 0
   inRoomTurn = false
   setStatus($, `connecting to ${seat.roomUrl} as @${seat.handle}`)
   await $.tool.register(REPLY_TOOL)
@@ -178,7 +209,7 @@ async function pump($, stream) {
       while (feed === stream && (i = buf.indexOf('\n')) !== -1) {
         const line = buf.slice(0, i)
         buf = buf.slice(i + 1)
-        if (line.trim()) await onLine($, line)
+        if (line.trim()) await onLine($, line, stream)
       }
     }
     ended = await stream.result?.catch(() => null)
@@ -194,17 +225,44 @@ async function pump($, stream) {
   }
 }
 
-async function onLine($, line) {
+async function onLine($, line, stream) {
   let msg
   try {
     msg = JSON.parse(line)
   } catch {
     return
   }
-  if (msg.status === 'online') return setStatus($, `online as @${seat.handle} in ${seat.roomUrl}`)
-  if (msg.status === 'retrying') return setStatus($, `reconnecting: ${msg.reason}`)
-  if (msg.status === 'fatal') return setStatus($, `offline: ${msg.reason}`)
+  if (msg.status === 'online') {
+    retries = 0
+    return setStatus($, `online as @${seat.handle} in ${seat.roomUrl}`)
+  }
+  if (msg.status === 'retrying') {
+    setStatus($, `reconnecting: ${msg.reason}`)
+    if (++retries >= 3) await followSeatFile($, stream)
+    return
+  }
+  if (msg.status === 'fatal') {
+    setStatus($, `offline: ${msg.reason}`)
+    return followSeatFile($, stream)
+  }
   if (typeof msg.text === 'string') await submit($, msg.text)
+}
+
+// The Room extension rewrites the seat file when the room moves to a new port
+// or the seat gets a new token. A seat from it that is refused, or keeps
+// failing, rejoins with what the file says now - only when that differs from
+// the address and token in use, so an unchanged file never loops.
+async function followSeatFile($, stream) {
+  if (source !== 'file') return
+  retries = 0
+  const cfg = await readSeatFile($)
+  if (!cfg || feed !== stream) return // the seat left or joined again meanwhile
+  const next = seatOf(cfg)
+  if (next.roomUrl === seat.roomUrl && next.token === seat.token) return
+  feed = null
+  seat = null
+  await stream.return?.()
+  await join($, cfg, 'file')
 }
 
 async function submit($, text) {

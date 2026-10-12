@@ -13,23 +13,41 @@ Needs Claude Code 2.1.287 or later and Node.js 22 or later on PATH. Verified wit
     /plugin marketplace add heetshah16/claude-room
     /plugin install room-seat@claude-room
 
-Then set its options (`/plugin`, Installed, room-seat, Configure options): the room
-address, your seat handle, and your seat token. The room's owner gets the handle and token
-for you from `room-admin seat add <name> --owner <you>`. The token is stored in your
-system's credential store, never in settings.json. Options reach the mod when it loads, so
-run `/reload-plugins` after setting them, before `/room-join`.
+In a folder the Room extension (VS Code/Cursor) has a room for, that is all: the extension
+writes your seat to `.claude/room-seat.local.json` and the plugin joins with it.
+
+To join someone else's room, set its options instead (`/plugin`, Installed, room-seat,
+Configure options): the room address, your seat handle, and your seat token. The room's
+owner gets the handle and token for you from `room-admin seat add <name> --owner <you>`. The
+token is stored in your system's credential store, never in settings.json. Options reach the
+mod when it loads, so run `/reload-plugins` after setting them, then `/room-join` (or start
+a new session).
 
 ## Use
 
-In the session you want to be your seat, terminal or VS Code panel alike:
+Every session joins on its own at start, terminal or VS Code panel alike, from the first
+complete seat it finds:
 
-- `/room-join` brings the session online as your seat
-- `/room-status` shows whether it is online, and why not if it isn't
-- `/room-leave` takes it offline; a room turn already queued when you run it still runs
+1. the environment: `ROOM_URL`, `ROOM_SEAT_TOKEN`, `ROOM_SEAT_HANDLE` (a launched seat, below)
+2. the project file `.claude/room-seat.local.json` in the session's folder, which the Room
+   extension writes: `{ "room_url", "seat_handle", "seat_token" }`. A missing or broken file
+   is skipped. When the room refuses this seat, or the connection keeps failing (three
+   retries in a row), the plugin reads the file again and rejoins if the extension has
+   since written a new address or token, once per change.
+3. the plugin options
 
-Only one session can hold a handle at a time. A second `/room-join` with the same handle
-answers "connecting..." like the first; the refusal follows a moment later in `/room-status`
-and the status line as "offline: this handle is already online in another session".
+Then:
+
+- `/room-status` shows whether it is online, and why not if it isn't, and which of the three
+  the seat came from
+- `/room-leave` takes it offline for the rest of the session; a room turn already queued
+  when you run it still runs
+- `/room-join` joins again by hand, from the same sources in the same order, after a leave
+  or a feed that stopped
+
+Only one session can hold a handle at a time: the first to connect wins. Every other session
+on the same handle shows the room's refusal in `/room-status` and the status line as
+"offline: this handle is already online in another session".
 
 While a room turn runs, its tool calls show in the room's activity feed. Your own prompts in
 the same session never do.
