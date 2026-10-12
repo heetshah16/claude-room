@@ -160,7 +160,8 @@ copy is the one that took part (it is the one that read the project file), and n
    again; it rotated the seat's token and rewrote the file. The first session reported `reconnecting: the
    room closed the feed`, then `offline: the room refused this seat token`, re-read the file and went
    `online as @admin-claude` with the new token (new `seatId`) 1.0 s after the rotation, with no input; `... gamma`
-   was answered `gamma`.
+   was answered `gamma`. (Since then the extension no longer rotates here: it rewrites the file from the
+   room's roster, `members.json`.)
 
 Not covered: an interactive terminal or VS Code panel session, and the extension itself writing the file (the
 extension's own call was replaced here by calling the same function).

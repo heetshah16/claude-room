@@ -11,8 +11,9 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'local-seat-'))
 const seatFile = repo => path.join(repo, '.claude', 'room-seat.local.json')
 const read = repo => JSON.parse(fs.readFileSync(seatFile(repo), 'utf8'))
 
-// The room's own persisted roster (`<stateDir>/members.json`) is the only place
-// a seat's token lives; adminState() never exposes tokens.
+// The extension reads a seat's token from the room's own persisted roster
+// (`<stateDir>/members.json`) rather than parsing it out of a join URL, so the
+// fake adminState() carries no token.
 function fakeClient({ members, state } = {}) {
   const stateDir = tmp()
   const roster = members ?? [{ id: 'o1', role: 'owner', name: 'Owner', token: 'tok-owner' }]
@@ -243,4 +244,29 @@ test('a reuse run tightens an older, looser file whose content is already right'
   assert.equal((await run({ client, workRepo: repo, fs: spy })).ok, true)
   assert.deepEqual(chmods, [[seatFile(repo), 0o600]])
   if (process.platform !== 'win32') assert.equal(fs.statSync(seatFile(repo)).mode & 0o777, 0o600)
+})
+
+test("a repo's core.fsmonitor command is never run by the seat's git checks", async () => {
+  const repo = tmp()
+  execFileSync('git', ['init', '-q'], { cwd: repo })
+  const marker = path.join(repo, 'fsmonitor-ran').split(path.sep).join('/')
+  const hook = path.join(repo, 'hook.sh')
+  fs.writeFileSync(hook, `#!/bin/sh\necho ran >> "${marker}"\nexit 1\n`, { mode: 0o755 })
+  execFileSync('git', ['config', 'core.fsmonitor', hook.split(path.sep).join('/')], { cwd: repo })
+  const r = await run({ client: fakeClient(), workRepo: repo, git: undefined })
+  assert.equal(r.ok, true)
+  assert.equal(fs.existsSync(marker), false)
+})
+
+test('the tracked check turns fsmonitor off before anything else', async () => {
+  const seen = []
+  await run({ client: fakeClient(), workRepo: tmp(), runGit: (repo, args) => { seen.push(args); return { status: 1 } } })
+  assert.deepEqual(seen.map(a => a.slice(0, 2)), [['-c', 'core.fsmonitor=false']])
+})
+
+test('a timed-out tracked check inside a repo refuses', async () => {
+  const repo = tmp()
+  fs.mkdirSync(path.join(repo, '.git'))
+  const timedOut = () => ({ status: null, signal: 'SIGTERM', error: Object.assign(new Error('spawnSync git ETIMEDOUT'), { code: 'ETIMEDOUT' }) })
+  assert.deepEqual(await run({ client: fakeClient(), workRepo: repo, runGit: timedOut }), { ok: false, reason: UNCHECKED })
 })

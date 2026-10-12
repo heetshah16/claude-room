@@ -11,6 +11,11 @@ const { execFileSync, spawnSync } = require('node:child_process')
 const SEAT_FILE = path.join('.claude', 'room-seat.local.json')
 // `**/` so it matches when the open folder is a subfolder of the git toplevel.
 const EXCLUDE_LINE = '**/.claude/room-seat.local.json'
+// Every git call here: a repository's own config must not run commands (git
+// ls-files runs core.fsmonitor; command-line -c outranks repo config), and a
+// hung git must not hold the room start. A timeout is an error: fails closed.
+const GIT_SAFE = ['-c', 'core.fsmonitor=false']
+const GIT_TIMEOUT_MS = 10_000
 
 /** `Admin` -> `admin-claude`: lowercase [a-z0-9-], dashes collapsed. */
 function seatHandle(username) {
@@ -22,7 +27,7 @@ function seatHandle(username) {
 // extension must not import it). Returns false for a non-git folder.
 function defaultGit(repo) {
   try {
-    const common = execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    const common = execFileSync('git', [...GIT_SAFE, 'rev-parse', '--git-common-dir'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GIT_TIMEOUT_MS }).trim()
     return path.resolve(repo, common)
   } catch { return null }
 }
@@ -58,7 +63,7 @@ function writeSeatFile(file, text, fs) {
   }
 }
 
-const defaultRunGit = (repo, args) => spawnSync('git', args, { cwd: repo, stdio: 'ignore' })
+const defaultRunGit = (repo, args) => spawnSync('git', args, { cwd: repo, stdio: 'ignore', timeout: GIT_TIMEOUT_MS })
 
 // A `.git` dir or file (a worktree's) in repo or any folder above it.
 function insideRepo(repo, fs) {
@@ -72,14 +77,15 @@ function insideRepo(repo, fs) {
 // (exit 128 covers "not a repository" but also e.g. safe.directory refusals)
 // counts as untracked only when no `.git` is anywhere up the tree.
 function trackedState(repo, rel, runGit, fs) {
-  const r = runGit(repo, ['ls-files', '--error-unmatch', rel])
+  const r = runGit(repo, [...GIT_SAFE, 'ls-files', '--error-unmatch', rel])
   if (!r?.error && r?.status === 0) return 'tracked'
   if (!r?.error && r?.status === 1) return 'untracked'
   return insideRepo(repo, fs) ? 'unknown' : 'untracked'
 }
 
 // The seat's real token, from the room's own persisted roster (same file and
-// shapes as room-client.js readOwnerToken); adminState() never exposes tokens.
+// shapes as room-client.js readOwnerToken), rather than parsing it out of the
+// joinUrl that adminState() carries for each member.
 function rosterToken(stateDir, id, fs) {
   try {
     const parsed = JSON.parse(fs.readFileSync(path.join(stateDir, 'members.json'), 'utf8'))
