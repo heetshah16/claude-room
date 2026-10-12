@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createWorkerFleet, nextHandle, worktreeFor, workerRecipe, listWorkersView, defaultIsGitRepo } from '../src/workers.mjs'
+import { createWorkerFleet, nextHandle, worktreeFor, workerRecipe, listWorkersView, defaultIsGitRepo, staleWorkers } from '../src/workers.mjs'
 import { worktreeFor as launcherWorktreeFor } from '../scripts/room-seat.mjs'
 import { Registry, createMember, createAgentMember, isDelegatable } from '../src/identity.mjs'
 import { Seats } from '../src/seats.mjs'
@@ -333,4 +333,23 @@ test('a launch failure never echoes the seat token, which rides on argv', async 
   assert.equal(r.ok, false)
   assert.equal(r.errors[0].includes(token), false)
   assert.ok(r.errors[0].includes('***'))
+})
+
+test('the fleet mints its members with worker: true, and the flag survives a registry save/load', async () => {
+  const { fleet, registry } = fleetHarness()
+  await fleet.spawn({})
+  assert.equal(registry.byHandle('worker-1').worker, true)
+  const back = Registry.fromJSON(JSON.parse(JSON.stringify(registry.toJSON())))
+  assert.equal(back.byHandle('worker-1').worker, true)
+})
+
+test('staleWorkers: only offline fleet workers (flagged or legacy worker-N) are stale, never a human-added seat', () => {
+  const human = createAgentMember({ name: 'ana-agent', handle: 'ana-agent', ownerId: 'o' })
+  const flagged = createAgentMember({ name: 'w', handle: 'build-bot', ownerId: 'o', worker: true })
+  const legacy = { ...createAgentMember({ name: 'worker-3', handle: 'worker-3', ownerId: 'o' }) }
+  delete legacy.worker
+  const online = createAgentMember({ name: 'worker-9', handle: 'worker-9', ownerId: 'o', worker: true })
+  const all = [human, flagged, legacy, online]
+  const stale = staleWorkers(all, h => h === 'worker-9')
+  assert.deepEqual(stale.map(a => a.handle), ['build-bot', 'worker-3'])
 })

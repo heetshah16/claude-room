@@ -29,6 +29,14 @@ import { spawnPortable } from './spawn.mjs'
 const LAUNCHER = fileURLToPath(new URL('../scripts/room-opencode-seat.mjs', import.meta.url))
 
 /** The lowest free `worker-N`, so a stopped worker's handle comes back. */
+/**
+ * Agent members left from a previous room whose process cannot have survived it:
+ * fleet workers (flagged, or legacy records matching worker-N with no flag) that
+ * are not online. Seats people added themselves are never stale.
+ */
+export const staleWorkers = (agents, isOnline) =>
+  agents.filter(a => (a.worker === true || (a.worker === undefined && /^worker-\d+$/.test(a.handle))) && !isOnline(a.handle))
+
 export function nextHandle(existing) {
   const taken = new Set(existing)
   for (let i = 1; ; i++) {
@@ -211,7 +219,7 @@ export function createWorkerFleet({
         ...registry.all().map(m => String(m.name).toLowerCase()),
       ])
       const member = registry.add(createAgentMember({
-        name: handle, handle, ownerId: owner.id, delegatable: true,
+        name: handle, handle, ownerId: owner.id, delegatable: true, worker: true,
       }))
       store?.saveRegistry?.(registry)
 

@@ -28,7 +28,7 @@ import { Observer } from './observer.mjs'
 import { makeRunner } from './run-model.mjs'
 import { createAdmin } from './admin.mjs'
 import { createDelegator } from './delegation.mjs'
-import { createWorkerFleet, worktreeFor, listWorkersView } from './workers.mjs'
+import { createWorkerFleet, staleWorkers, worktreeFor, listWorkersView } from './workers.mjs'
 import { verifyDelegation } from './verify.mjs'
 
 const log = s => process.stderr.write(`room: ${s}\n`)
@@ -90,8 +90,8 @@ const admin = createAdmin({ registry, bans, store, bus, config, queue, runtime, 
 // here, once, at boot (never again once real workers start connecting this
 // session) frees its handle to be reused rather than leaving a permanently
 // stale "member" nothing can ever restart under.
-for (const m of registry.agents()) {
-  if (!seats.isOnline(m.handle)) admin.run('remove', { memberId: m.id })
+for (const m of staleWorkers(registry.agents(), h => seats.isOnline(h))) {
+  admin.run('remove', { memberId: m.id })
 }
 
 // Rotation needs Console API keys. Verified 2026-08-22: a subscription OAuth
