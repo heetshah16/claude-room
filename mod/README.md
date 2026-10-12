@@ -14,7 +14,8 @@ Needs Claude Code 2.1.287 or later and Node.js 22 or later on PATH. Verified wit
     /plugin install room-seat@claude-room
 
 In a folder the Room extension (VS Code/Cursor) has a room for, that is all: the extension
-writes your seat to `.claude/room-seat.local.json` and the plugin joins with it.
+writes your seat to `.claude/room-seat.local.json` and the plugin joins with it (it only
+trusts that file when it points at this machine, see Use).
 
 To join someone else's room, set its options instead (`/plugin`, Installed, room-seat,
 Configure options): the room address, your seat handle, and your seat token. The room's
@@ -30,8 +31,10 @@ complete seat it finds:
 
 1. the environment: `ROOM_URL`, `ROOM_SEAT_TOKEN`, `ROOM_SEAT_HANDLE` (a launched seat, below)
 2. the project file `.claude/room-seat.local.json` in the session's folder, which the Room
-   extension writes: `{ "room_url", "seat_handle", "seat_token" }`. A missing or broken file
-   is skipped. When the room refuses this seat, or the connection keeps failing (three
+   extension writes: `{ "room_url", "seat_handle", "seat_token" }`. Trusted only when
+   `room_url` is http(s) on `127.0.0.1`, `localhost` or `[::1]`; otherwise it is skipped, with
+   the reason shown by `/room-status` (for a LAN or tunnel room, use the plugin options). A
+   missing or broken file is skipped too. When the room refuses this seat, or the connection keeps failing (three
    retries in a row), the plugin reads the file again and rejoins if the extension has
    since written a new address or token, once per change.
 3. the plugin options
@@ -58,9 +61,10 @@ not a worktree), and its MCP servers and logins. Owner-only addressing, the defa
 can start a turn, but room context from other members (mirrors, briefs, the join seed) rides
 along in each prompt; under the `shared` seat policy anyone in the room can start one. For
 anything sensitive, use a dedicated session, or `scripts/room-seat.mjs`, which gives the seat
-its own config dir and a worktree. The plugin only auto-joins from the project file when it
-points at this machine (`127.0.0.1`, `localhost` or `[::1]`), so a repository can't make you
-join someone else's room by committing that file; `/room-status` says when the file was ignored.
+its own config dir and a worktree. The plugin only joins from the project file when it
+points at this machine, so a repository can't make you join someone else's room by committing
+it. A committed file can still name a local port, and the plugin would then post the seat
+token to whatever local service listens there; low impact, as the token only works for that seat.
 
 ## Launched seats
 
@@ -122,6 +126,8 @@ Not run by the agent, user checklist (need a person at a visible window):
    the turn to run in the panel and the reply to appear in the room.
 
 ### 2026-10-12, Claude Code 2.1.296 (floor 2.1.287), Windows 11: automatic join
+
+This run predates the loopback check on the project file (2439b15); that check is covered by unit tests, not by this live run.
 
 Run headless by an agent, scripted (Node driver kept outside the repo). A standalone room from this checkout
 (`ROOM_STANDALONE=1 ROOM_PORT=8797 ROOM_REPO=<proj>`) on 127.0.0.1:8797 with a fresh state dir, `<proj>` a

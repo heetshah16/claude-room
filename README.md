@@ -426,7 +426,7 @@ instead.
 In a folder the [VS Code extension](#the-vs-code-extension) has a room for, none of that is
 needed: it creates your own seat (`<user>-claude`) and writes `.claude/room-seat.local.json`
 (git-excluded), and a session with the `room-seat` mod installed joins from that file when it
-starts. One session holds a seat at a time; a second shows "already online in another session".
+starts (the plugin only uses the file when it points at this machine). One session holds a seat at a time; a second shows "already online in another session".
 A room restart keeps people's seats (and their tokens); only dead fleet workers are pruned.
 
 `seat add` only registers the seat; a handle has to also be added with `handle` (or
