@@ -14,6 +14,8 @@
 //                     trusted only when its room is on this machine
 //   the plugin options
 // Only one session holds a handle; the others show the room's refusal.
+// A session the room itself runs (ROOM_SEAT_SKIP=1: its orchestrator, its
+// observer) joins only from the environment, never as the user's seat.
 
 const REPLY_TOOL = {
   name: 'room_reply',
@@ -37,6 +39,7 @@ let status = 'not joined - run /room-join'
 let inRoomTurn = false
 let retries = 0 // retrying statuses in a row from the current feed
 let ignored = '' // why the last read of the seat file was not trusted, shown after the status
+let seatPath = null // the seat file, absolute, fixed at session start so a later cd cannot switch rooms
 
 const SEAT_FILE = '.claude/room-seat.local.json'
 const SOURCES = { env: 'the environment', file: 'the project file', options: 'the plugin options' }
@@ -57,9 +60,12 @@ export function register(on, options = {}) {
     await $.command.register({ name: 'room-leave', description: "Take this session's room seat offline", immediate: true })
     await $.command.register({ name: 'room-status', description: "Show this session's room seat", immediate: true })
     envSeat = complete(await $.env.get('ROOM_URL'), await $.env.get('ROOM_SEAT_TOKEN'), await $.env.get('ROOM_SEAT_HANDLE'))
+    const skip = (await $.env.get('ROOM_SEAT_SKIP')) === '1'
     const started = await next(e)
-    const found = await findSeat($, options)
+    seatPath = `${String(await $.session.cwd()).replace(/[\\/]+$/, '')}/${SEAT_FILE}`
+    const found = envSeat || !skip ? await findSeat($, options) : null
     if (found) await join($, found.cfg, found.from)
+    else if (skip) setStatus($, 'this session is a room process; not joining')
     return started
   })
 
@@ -80,7 +86,7 @@ export function register(on, options = {}) {
     seat = null
     inRoomTurn = false
     setStatus($, 'left the room')
-    await stream.return?.()
+    await stream.return?.().catch(() => {})
     return { text: status }
   })
 
@@ -148,7 +154,7 @@ function onThisMachine(roomUrl) {
 async function readSeatFile($) {
   let cfg = null
   try {
-    const f = JSON.parse(await $.fs.read(SEAT_FILE))
+    const f = JSON.parse(await $.fs.read(seatPath ?? SEAT_FILE))
     cfg = complete(f.room_url, f.seat_token, f.seat_handle)
   } catch {}
   const trusted = !cfg || onThisMachine(cfg.roomUrl)
@@ -282,7 +288,7 @@ async function followSeatFile($, stream) {
   if (next.roomUrl === seat.roomUrl && next.token === seat.token) return
   feed = null
   seat = null
-  await stream.return?.()
+  await stream.return?.().catch(() => {})
   await join($, cfg, 'file')
 }
 

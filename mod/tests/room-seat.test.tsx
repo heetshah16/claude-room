@@ -38,8 +38,9 @@ const statusOnce = async ($, re: RegExp) => {
 // 200). Records posts and spawns. Overrides go through these options:
 // a second stub on the same event would never run, the first one answering.
 // `file` is the project's .claude/room-seat.local.json as text, or a function
-// giving it at each read; undefined means the file is missing.
-function stubRoom(on, { env = {}, lines = [] as object[], spawn = undefined as any, fetch = undefined as any, submit = undefined as any, file = undefined as any } = {}) {
+// giving it at each read; undefined means the file is missing. `cwd` is the
+// session's directory, or a function giving it at each $.session.cwd().
+function stubRoom(on, { env = {}, lines = [] as object[], spawn = undefined as any, fetch = undefined as any, submit = undefined as any, file = undefined as any, cwd = '/work' as any } = {}) {
   const seen = {
     posts: [] as { url: string; body: any }[],
     spawns: [] as any[],
@@ -60,6 +61,7 @@ function stubRoom(on, { env = {}, lines = [] as object[], spawn = undefined as a
     return { value: text }
   })
   on('session.start', () => ({ cwd: '/work' }))
+  on('session.cwd', () => ({ value: typeof cwd === 'function' ? cwd() : cwd }))
   on('command.register', () => ({ value: undefined }))
   on('tool.register', () => { seen.tools++; return { value: { tool: 'mcp__room-seat__room_reply' } } })
   on('ui.status', () => ({ value: undefined }))
@@ -302,6 +304,41 @@ test('a fatal with an unchanged seat file stays offline with the reason', async 
 })
 
 const retrying = { status: 'retrying', reason: 'ECONNREFUSED' }
+
+// The room's own claude children (the orchestrator, the observer) run in the
+// user's folder: they must never take the user's seat.
+test('a room process never joins from the seat file or the plugin options, and says why', { options: CONFIG }, async ($, on) => {
+  const seen = stubRoom(on, { env: { ROOM_SEAT_SKIP: '1' }, file: seatFile(), lines: [{ status: 'online' }] })
+  await start($)
+  await settle($)
+  expect(seen.spawns.length).toBe(0)
+  expect((await $.command.run({ command: 'room-status', args: '' })).text).toMatch(/this session is a room process; not joining/)
+})
+
+test('a seat launched through the environment joins even when marked a room process', async ($, on) => {
+  const seen = stubRoom(on, { env: { ...SEAT_ENV, ROOM_SEAT_SKIP: '1' }, lines: [{ status: 'online' }] })
+  await start($)
+  expect(seen.spawns.length).toBe(1)
+  expect(seen.spawns[0].env.ROOM_SEAT_TOKEN).toBe('tok')
+})
+
+test('the seat file is re-read from the folder the session started in, after a directory change', async ($, on) => {
+  let cwd = '/proj-a'
+  let file = seatFile({ seat_token: 'old' })
+  const seen = stubRoom(on, {
+    cwd: () => cwd,
+    file: () => file,
+    spawn: () => {
+      if (seen.spawns.length === 1) { cwd = '/proj-b'; file = seatFile({ seat_token: 'new' }) }
+      return failing([{ status: 'fatal', reason: 'the room refused this seat token (HTTP 401)' }])()
+    },
+  })
+  await start($)
+  await untilSpawns($, seen, 2)
+  expect(seen.spawns.length).toBe(2)
+  expect(seen.reads.length).toBeGreaterThanOrEqual(2)
+  for (const r of seen.reads) expect(r).toMatch(/\/proj-a\/\.claude\/room-seat\.local\.json$/)
+})
 
 test('three retrying statuses re-read the seat file and rejoin at a changed room address', async ($, on) => {
   let file = seatFile()
