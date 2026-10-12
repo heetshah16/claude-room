@@ -30,14 +30,22 @@ Every session joins on its own at start, terminal or VS Code panel alike, from t
 complete seat it finds:
 
 1. the environment: `ROOM_URL`, `ROOM_SEAT_TOKEN`, `ROOM_SEAT_HANDLE` (a launched seat, below)
-2. the project file `.claude/room-seat.local.json` in the session's folder, which the Room
-   extension writes: `{ "room_url", "seat_handle", "seat_token" }`. Trusted only when
-   `room_url` is http(s) on `127.0.0.1`, `localhost` or `[::1]`; otherwise it is skipped, with
-   the reason shown by `/room-status` (for a LAN or tunnel room, use the plugin options). A
-   missing or broken file is skipped too. When the room refuses this seat, or the connection keeps failing (three
-   retries in a row), the plugin reads the file again and rejoins if the extension has
+2. the project file `.claude/room-seat.local.json` in the folder the session started in,
+   which the Room extension writes: `{ "room_url", "seat_handle", "seat_token" }`. Trusted
+   only when `room_url` is http(s) on `127.0.0.1`, `localhost` or `[::1]`; otherwise it is
+   skipped, with the reason shown by `/room-status` (for a LAN or tunnel room, use the plugin
+   options). When the room refuses this seat, or the connection keeps failing (three
+   retries in a row), the plugin reads the same file again and rejoins if the extension has
    since written a new address or token, once per change.
 3. the plugin options
+
+Plugin options auto-join too: a room set in them drives whichever Claude Code session starts
+first, in any folder (the room's owner controls who may address the seat). To keep a project
+out, disable the plugin for that project: `/plugin`, room-seat, disable at project scope.
+
+A session the room itself starts (its orchestrator and observer, marked `ROOM_SEAT_SKIP=1`)
+joins only from the environment, never from the file or the options; `/room-status` says
+"this session is a room process; not joining".
 
 Then:
 

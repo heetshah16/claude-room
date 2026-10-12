@@ -51,8 +51,10 @@ agent seat, `<your-os-user>-claude` (`local-seat.js`), and writes
 `<folder>/.claude/room-seat.local.json` (`room_url`, `seat_handle`, `seat_token`) for the
 [`room-seat` plugin](../mod/README.md) to join with, with no copy-paste (the plugin only uses the file when it points at this machine). The file is
 owner-only where the OS honours that, written atomically, and added to the repo's
-`.git/info/exclude` so it is never committed. An existing seat with a matching file is reused; a
-seat without a usable file gets a rotated token. The file holds the loopback address even when the room
+`.git/info/exclude` so it is never committed. An existing seat is reused, and the file always gets
+the seat's current token from the room's own `members.json`, so a lost file or a `room-admin
+rotate` is repaired at the next room start. Nothing is written if git tracks the file, or if
+a seat with that handle belongs to someone else. The file holds the loopback address even when the room
 is published, since the plugin runs on this machine. If the seat cannot be made, the Claude Room
 output channel says `local seat not set up: <reason>` and the room carries on.
 
