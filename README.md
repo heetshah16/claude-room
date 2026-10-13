@@ -663,7 +663,7 @@ npx @vscode/vsce package     # then: Extensions: Install from VSIX…
 ```
 
 Workers need `git`, `opencode` and `node` (18 or newer) on `PATH` — the chat itself
-does not need `opencode`. See [`extension/README.md`](extension/README.md#what-it-needs-on-your-machine).
+does not need `opencode`. See [`extension/DEVELOPMENT.md`](extension/DEVELOPMENT.md#what-it-needs-on-your-machine).
 
 ### What is built, and what is not
 
@@ -678,7 +678,7 @@ picker, `--resume`, the delegation round trip) is still built but dormant behind
 Not built yet: login detection and guidance, conversation history, and a settings surface,
 specified in [`docs/superpowers/specs/2026-09-05-orchestrator-parity-design.md`](docs/superpowers/specs/2026-09-05-orchestrator-parity-design.md).
 
-[`extension/README.md`](extension/README.md) records exactly what has and has not been
+[`extension/DEVELOPMENT.md`](extension/DEVELOPMENT.md) records exactly what has and has not been
 verified, including the harness transcripts.
 
 ## The observer
@@ -940,7 +940,7 @@ Also:
 
 - [`docs/opencode-seat.md`](docs/opencode-seat.md) — operator guide for OpenCode workers,
   including the recorded smoke tests
-- [`extension/README.md`](extension/README.md) — what the extension's harnesses verified,
+- [`extension/DEVELOPMENT.md`](extension/DEVELOPMENT.md) — what the extension's harnesses verified,
   and what remains unseen
 - `multiplayer-claude-code-handoff.md` — the prior exploration this supersedes, kept as the
   original context transfer from 2026-08-19

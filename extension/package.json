@@ -1,8 +1,8 @@
 {
   "name": "claude-room-orchestrator",
   "displayName": "Claude Room Orchestrator",
-  "description": "Run, share and watch a Claude Room: publish the room, invite people, and see what the workers are doing.",
-  "version": "0.0.4",
+  "description": "A group chat for your team and your Claude Code sessions: invite people with a link, @mention Claude, and hand routine work to free-model workers.",
+  "version": "0.0.5",
   "publisher": "claude-room",
   "icon": "media/icon.png",
   "license": "MIT",
@@ -17,6 +17,16 @@
   "categories": [
     "AI",
     "Other"
+  ],
+  "keywords": [
+    "claude",
+    "claude code",
+    "ai",
+    "agents",
+    "multiplayer",
+    "collaboration",
+    "chat",
+    "opencode"
   ],
   "activationEvents": [],
   "main": "./src/extension.js",

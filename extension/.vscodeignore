@@ -12,3 +12,4 @@ package-lock.json
 **/*.test.tsx
 room/mod/tests/**
 room/mod/.claude-plugin/types/**
+DEVELOPMENT.md

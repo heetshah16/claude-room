@@ -1,6 +1,6 @@
 # claude-room — working notes for Claude
 
-Read `ARCHITECTURE.md`, `docs/design-system.md`, and `extension/README.md` first — this file only adds what those don't cover: practical gotchas discovered while actually running and testing this project.
+Read `ARCHITECTURE.md`, `docs/design-system.md`, and `extension/DEVELOPMENT.md` first — this file only adds what those don't cover: practical gotchas discovered while actually running and testing this project.
 
 ## Repo shape
 

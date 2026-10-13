@@ -312,7 +312,7 @@ sent, a module loaded via `module.exports` in tests and a `<script>` tag in
 production. The answer has been headless harnesses that compose the real
 modules against the real binaries, and mutation checks that prove a test fails
 when the behaviour it names is removed. Both are described in
-[extension/README.md](extension/README.md).
+[extension/DEVELOPMENT.md](extension/DEVELOPMENT.md).
 
 The one thing still unverified by anything is the **webview's appearance**,
 which needs a real VS Code host.
