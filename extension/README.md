@@ -122,7 +122,7 @@ From a repo checkout the room is the checkout's own `src/`, even if a stale
   ```bash
   cd extension
   npm install                     # the room's SDK ships in the package's node_modules
-  npx @vscode/vsce package        # produces claude-room-orchestrator-0.0.3.vsix (~4.9 MB)
+  npx @vscode/vsce package        # produces claude-room-orchestrator-0.0.4.vsix (~4.9 MB)
   ```
 
   `vsce package` runs `vscode:prepublish` (`node ../scripts/bundle-room.mjs`),
