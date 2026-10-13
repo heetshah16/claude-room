@@ -39,9 +39,54 @@ Run tests from the repo root (`node --test`, room-side) and from `extension/` se
 3. Confirm the window title says `[Extension Development Host]` before trusting anything you see in it.
 4. The "Claude Room" **Output channel** (View → Output → pick "Claude Room") is the single most useful piece of live evidence — it shows every `supervisor.js`-managed child process's stderr, room restarts, and worker lifecycle lines. Ask for its exact text rather than a description when debugging.
 
-## Where things stand (as of 2026-09-28)
+## Testing in a real Cursor window without a person
 
-- The extension-maturation plan (13 tasks: Room/Workers sidebar views, `session.js`, chat going dormant behind `claudeRoom.enableChat`, `.vsix` packaging) is functionally complete and merged to `master`. **Task 12 (the real F5 manual walkthrough) and Task 13 (README/ARCHITECTURE/design-system doc catch-up) were never formally closed out** — the docs these would update (`extension/README.md`'s Status/Manual verification sections, `ARCHITECTURE.md`'s module table, `docs/design-system.md`) still describe an earlier state of the extension.
-- The delegation-skills plan (5 tasks) is unblocked (its prerequisites — `spawn_worker`/`verified`/`likelySucceeded` — landed with the delegation-robustness plan) but not started.
-- Two cosmetic malformed-commit-message defects remain un-amended by design (found during earlier work, never fixed per this repo's "never amend without being asked" rule) — not worth chasing further, but see git history around `34c4e74` and `0799b7e` if it ever matters.
-- `graphify-out/` holds a live knowledge graph of this repo. Update it after a batch of changes with `/graphify --update` (incremental — only re-extracts changed files) rather than a full rebuild.
+`scripts/dev/cursor-window.ps1` drives ONE Cursor window by title (command palette, typing,
+window-only screenshots) and refuses every keystroke unless that window is in the foreground,
+so nothing is ever typed into another app. The loop that worked (2026-10-13): `git worktree add
+--detach .worktrees/gui-check master` (inside this trusted repo, so no trust prompt), `cursor
+--new-window <that folder>` (add `--extensionDevelopmentPath=<repo>/extension` to run the
+checkout instead of the installed copy), then palette "Focus on Room View" → "Claude Code: Open
+in New Tab" → type `/room-status`. Read the screenshot after every step; close with palette
+"Close Window" and confirm. Never screenshot the whole desktop (it shows the user's private apps).
+The room's process is `Cursor.exe` running `…/server.mjs` (the extension uses `process.execPath`),
+not `node.exe`. `scripts/dev/seat-latency.cjs` measures a seat's reply time from the room's own
+`turns.json`.
+
+## Where things stand (as of 2026-10-13)
+
+- **Released:** extension **0.0.4** on Open VSX (namespace `claude-room`, unverified) and
+  installed in the user's Cursor; plugin `room-seat` **0.3.0** from the GitHub marketplace
+  (`heetshah16/claude-room`). `master` = `origin/master` = `origin/orchestrator-parity`.
+  Publish with the token in the user-scope env var `OVSX_PAT` (never echo it):
+  `OVSX_PAT=… npx ovsx publish <vsix>`. The VS Code Marketplace is still on 0.0.1 (needs an
+  Azure DevOps PAT from the user).
+- **Seats join on their own.** Opening the Room view starts the room, which writes
+  `.claude/room-seat.local.json`; any Claude Code session started after that in the folder joins
+  as `@<os-user>-claude`. Verified in a real Cursor window on 0.0.4: `/room-status` → "online as
+  @admin-claude … (seat from the project file)", a room message answered in ~7 s. Plan:
+  `docs/superpowers/plans/2026-10-12-seat-auto-join.md`; ledger (git-ignored)
+  `.superpowers/sdd/2026-10-12-seat-auto-join/progress.md` has every ruling and deferred minor.
+- **Unmerged branch `perf/seat-first-reply` (5cf2818):** `room_reply` registered with
+  `isDeferred: false` (no ToolSearch before the first reply) and `REPLY_DIRECTIVE` ends the turn
+  after `room_reply`. Measured 7.1 s → 5.1 s first reply, room busy 10.1 s → 6.4 s. Tests green.
+  To release: bump `mod/.claude-plugin/plugin.json` to 0.3.1, merge, push, then
+  `claude plugin marketplace update claude-room` + `claude plugin update room-seat@claude-room`.
+- **Next session's topic (user's call): brainstorm room-turn latency** — what remains is model
+  thinking (Opus 5.5 High, ~3 s even for one word), the user's own hooks (~1.2 s per prompt), and
+  the closing message Claude writes after `room_reply` (the room's turn stays open until Stop).
+- **Known open issues:**
+  - If the room process dies, `extension.js` keeps the dead `roomSession` until "Claude Room:
+    Restart" (the exit handler stops it but does not clear it).
+  - `.mcp.json` uses `${CLAUDE_PROJECT_DIR}`, which Claude Code does not expand, so the `room` MCP
+    server never connects in this repo (fix proposed in `src/server.mjs`, never approved — it
+    would start a room on 8787 in every session here).
+  - Reused `.worktrees/worker-N` are never moved to the current HEAD; Publish restarts the room,
+    which kills its workers; env-sourced seats (`ROOM_URL` etc.) have no loopback check.
+- **Older plans:** extension-maturation is merged; its Task 13 doc catch-up is partly done
+  (`docs/design-system.md` still has no Room-view surface). The delegation-skills plan (5 tasks)
+  is unblocked but not started.
+- Two cosmetic malformed-commit-message defects remain un-amended by design (never amend without
+  being asked) — see git history around `34c4e74` and `0799b7e` if it ever matters.
+- `graphify-out/` holds a knowledge graph of this repo. Update it after a batch of changes with
+  `/graphify --update` (incremental) rather than a full rebuild.

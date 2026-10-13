@@ -92,6 +92,14 @@ no allowlist applies. Two consequences worth knowing before changing it:
 - **Forwarding is never awaited.** `$.http.fetch` has no timeout; a hook waiting on an
   unreachable room would hold every tool call in the session.
 
+**Joining is automatic.** At session start the mod takes the first complete seat from: the
+environment (`ROOM_URL`/`ROOM_SEAT_TOKEN`/`ROOM_SEAT_HANDLE`, a launched seat), then
+`.claude/room-seat.local.json` (written by the extension; trusted only when `room_url` is
+127.0.0.1, localhost or [::1], so a committed file cannot join you to someone else's room), then
+the plugin options. When the file is the source and the room refuses or keeps failing, it
+re-reads the file once per change, which is how a session follows the room to a new port.
+`ROOM_SEAT_SKIP=1` (set on the room's own `claude` children) suppresses file and options joins.
+
 `mod/lib/protocol.mjs` holds the protocol pieces both sides use (`readFrames`,
 `PendingContext`, `REPLY_DIRECTIVE`, `turnFields`). It lives in `mod/` because a
 marketplace install copies `mod/` alone; the room imports it from there.
@@ -205,13 +213,24 @@ VS Code extension host
 
 | Module | Responsibility |
 |---|---|
-| `extension.js` | activation, startup sequence, SSE subscription, lifecycle |
+| `extension.js` | activation, the sidebar views, commands; `ensureSession` starts the room once |
+| `session.js` | the room's lifecycle: start, publish/unpublish restarts, the SSE feed, the local seat |
+| `local-seat.js` | mints `<os-user>-claude` and writes `.claude/room-seat.local.json` (git-excluded) |
 | `supervisor.js` | start/watch/stop children; **kills process trees** |
-| `room-client.js` | launch recipe, owner token, HTTP client |
-| `orchestrator.js` | the `claude` recipe and the turn/relay interface |
+| `room-client.js` | `roomDir()` (checkout `src/`, else bundled `extension/room/`), launch recipe, owner token, HTTP client |
+| `workers.js` | the worker pool behind the Workers view |
+| `tunnel.js` | Dev Tunnels: detect, login state, recipe, URL parsing |
+| `install.js` | which tools are missing, and the visible install plan |
+| `orchestrator.js` | the `claude` recipe and the turn/relay interface (chat is dormant behind `claudeRoom.enableChat`) |
 | `stream.js` | `stream-json` → the small event set a chat renders |
 | `events.js` | one SSE stream, fanned out to panel and orchestrator |
-| `chat/` | the webview: markdown renderer, model picker, panel |
+| `chat/` | the webviews: Room and Workers sidebar views, worker tab, chat panel |
+
+The room starts at the **first reveal of either sidebar view**, not at activation. Both views
+ask at once, so `ensureSession` shares one in-flight start: two starts under the supervisor's
+single `'room'` name used to replace each other and kill the room (found in a real window,
+fixed in 0.0.4). State is per workspace (`context.storageUri`); with no folder open the room
+runs with `ROOM_WORKERS=off`.
 
 ### The orchestrator is not a seat
 

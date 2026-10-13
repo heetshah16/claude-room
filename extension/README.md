@@ -10,19 +10,23 @@ itself.
 Under active development. This tree is CommonJS (`extension/package.json` has
 no `"type"` field), independent of the ESM room server in the repo's `src/`.
 
-**Working:** the chat, with streaming prose, rendered markdown, collapsible
-tool cards and a live thinking indicator; a model picker (`/model` works in
-headless print mode, and switching genuinely takes effect); process supervision
-with tree-kill; crash recovery via `--resume`; and the full delegation round
-trip, worker result included.
+**Released:** 0.0.4 on Open VSX (`claude-room.claude-room-orchestrator`); the
+VS Code Marketplace listing is still 0.0.1.
 
-**Not built yet**, and specified in
+**Working:** the Room and Workers sidebar views (the room starts when either is
+first shown), Publish with Dev Tunnels, invites, the worker pool, and your own
+seat (below). The room is bundled into the package, so no checkout is needed.
+Checked in a real Cursor window on 0.0.4 (2026-10-13, see the end of this file):
+the room starting from the sidebar, and a Claude Code panel joining by itself and
+answering a room message. Publish, invites and workers were not re-run there.
+
+**Dormant:** the orchestrator chat panel (streaming prose, tool cards, model
+picker, `--resume` recovery, the delegation round trip) is still in the tree but
+hidden behind the `claudeRoom.enableChat` setting.
+
+**Not built**, specified in
 [`../docs/superpowers/specs/2026-09-05-orchestrator-parity-design.md`](../docs/superpowers/specs/2026-09-05-orchestrator-parity-design.md):
-login detection and guidance, conversation history, skill and slash-command
-completions, a settings surface, and the workers panel.
-
-**Unverified:** the webview's appearance. Everything else here has been run
-against real binaries; nothing has ever *looked* at the chat.
+login detection and guidance, conversation history, and a settings surface.
 
 ### If you edit the webview, read this first
 
@@ -111,7 +115,7 @@ From a repo checkout the room is the checkout's own `src/`, even if a stale
 - **VS Code:** install from a `.vsix`: `code --install-extension <file>.vsix`,
   or Extensions view → `…` → **Install from VSIX…**. The Marketplace listing is
   0.0.1, which predates the bundled room: it cannot start a room without a
-  clone of this repo beside it. Use the `.vsix` until a newer version is published there.
+  clone of this repo beside it. Use the `.vsix` (or Open VSX) until a newer version is published there.
 - **Cursor (and any Open VSX editor):** Cursor installs from Open VSX, not the
   VS Code Marketplace. Search for **Claude Room** in the Extensions view
   ([open-vsx.org/extension/claude-room/claude-room-orchestrator](https://open-vsx.org/extension/claude-room/claude-room-orchestrator)),
@@ -282,3 +286,20 @@ Packaged with `npx @vscode/vsce package` (0.0.2) and run from an unzipped copy f
 - Worker without `ROOM_REPO` (cwd = unpacked `room/`): the POST still returned `{"ok":true,"handle":"worker-1"}`, but the seat crashed on `git worktree add <room>/.worktrees/worker-1` (status 128, git's own message not surfaced), the room logged "worker-1 exited with code 1", and no `.worktrees` was created in the extension. At that commit the failure was visible only in the room log, not in the spawn response.
   After the fix (bf5794d) the same POST returns `ok:false` with "workers need a git repository: <path> is not one — open a git project folder (or set ROOM_REPO) and try again"; nothing is minted or spawned and no `.worktrees` is created (checked against a standalone room with `ROOM_REPO` set to a non-git temp dir).
 - Cleanup note: in the test harness only the room's own PID was killed, which left the worker's `seat.mjs` and `opencode serve` running; they had to be stopped by hand. The extension's supervisor kills the whole process tree (`taskkill /F /T`), so this is a harness artifact, not verified against the extension itself. No stray processes remain.
+
+## Real-window verification (2026-10-13, 0.0.4)
+
+Driven with `scripts/dev/cursor-window.ps1` in a new Cursor window on a scratch worktree of
+this repo, using the installed extension (not a development host):
+
+- **Found in 0.0.3:** opening the sidebar started the room, then "Claude Room: the room did
+  not start listening within 10s" appeared and no room was left. Both views called
+  `ensureSession` at once; each started a room under the supervisor's single `'room'` name,
+  and the loser's timeout stopped the winner. Fixed in 0.0.4 (one shared in-flight start;
+  `test/ensure-session.test.js`).
+- **0.0.4:** 16 s after "Focus on Room View" the room still answered (process running from
+  `claude-room.claude-room-orchestrator-0.0.4/room/`), the view listed `owner` and
+  `admin-claude`, and `.claude/room-seat.local.json` was written and git-invisible.
+- A Claude Code panel opened afterwards showed, on `/room-status`, "room-seat: online as
+  @admin-claude in http://127.0.0.1:59589 (seat from the project file)" with no `/room-join`.
+  A room message to `@admin-claude` was answered through `room_reply` 7.5 s after it was sent.

@@ -667,13 +667,16 @@ does not need `opencode`. See [`extension/README.md`](extension/README.md#what-i
 
 ### What is built, and what is not
 
-Built: the chat with streaming prose, tool cards and rendered markdown; a model picker
-(`/model` works in headless print mode and switching genuinely takes effect); process
-supervision with tree-kill; crash recovery via `--resume`; and the delegation round trip.
+Built: the Room and Workers sidebar views (the room starts when either is first shown),
+Publish with Dev Tunnels, invites, the worker pool, and an automatic seat for Claude Code in
+the open folder (`.claude/room-seat.local.json`, joined by the
+[`room-seat` plugin](mod/README.md) with no `/room-join`). Released as 0.0.4 on Open VSX; the room
+start and the automatic seat were checked in a real Cursor window. The orchestrator chat (streaming prose, tool cards, model
+picker, `--resume`, the delegation round trip) is still built but dormant behind
+`claudeRoom.enableChat`.
 
-Not built yet, deliberately: login detection and guidance, conversation history, skill and
-slash-command completions, a settings surface, and the workers panel. Those are specified
-in [`docs/superpowers/specs/2026-09-05-orchestrator-parity-design.md`](docs/superpowers/specs/2026-09-05-orchestrator-parity-design.md).
+Not built yet: login detection and guidance, conversation history, and a settings surface,
+specified in [`docs/superpowers/specs/2026-09-05-orchestrator-parity-design.md`](docs/superpowers/specs/2026-09-05-orchestrator-parity-design.md).
 
 [`extension/README.md`](extension/README.md) records exactly what has and has not been
 verified, including the harness transcripts.

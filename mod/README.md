@@ -165,3 +165,19 @@ copy is the one that took part (it is the one that read the project file), and n
 
 Not covered: an interactive terminal or VS Code panel session, and the extension itself writing the file (the
 extension's own call was replaced here by calling the same function).
+
+### 2026-10-13, Claude Code 2.1.296, Windows 11: the VS Code panel in a real Cursor window
+
+Room extension 0.0.4 and `room-seat` 0.3.0, both installed (marketplace), no options set. In a new
+Cursor window on a scratch git worktree, "Focus on Room View" started the room and wrote the seat
+file; a Claude Code panel opened afterwards showed `/room-status` → "room-seat: online as
+@admin-claude in http://127.0.0.1:59589 (seat from the project file)". A room message to
+`@admin-claude` ran in the panel ("The room-seat plugin sent a message: owner addressed you") and
+was answered with `room_reply` 7.5 s after it was sent.
+
+Where those 7.5 s went (the session's own transcript timestamps): ~0.01 s room to prompt, 1.2 s of
+the user's own hook context, 4.1 s model thinking plus a `ToolSearch` to load `room_reply` (it was
+deferred), 2.0 s for a second model call to make the reply. The room's turn then stayed open 7.6 s
+more while Claude wrote a closing message to the panel. Branch `perf/seat-first-reply` registers
+`room_reply` with `isDeferred: false` and tells the model to end the turn after replying: measured
+headless, first reply 7.1 s → 5.1 s and room busy 10.1 s → 6.4 s (one run each).
