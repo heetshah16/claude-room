@@ -56,7 +56,7 @@ not `node.exe`. `scripts/dev/seat-latency.cjs` measures a seat's reply time from
 ## Where things stand (as of 2026-10-13)
 
 - **Released:** extension **0.0.4** on Open VSX (namespace `claude-room`, unverified) and
-  installed in the user's Cursor; plugin `room-seat` **0.3.0** from the GitHub marketplace
+  installed in the user's Cursor; plugin `room-seat` **0.3.1** from the GitHub marketplace
   (`heetshah16/claude-room`). `master` = `origin/master` = `origin/orchestrator-parity`.
   Publish with the token in the user-scope env var `OVSX_PAT` (never echo it):
   `OVSX_PAT=… npx ovsx publish <vsix>`. The VS Code Marketplace is still on 0.0.1 (needs an
@@ -67,12 +67,15 @@ not `node.exe`. `scripts/dev/seat-latency.cjs` measures a seat's reply time from
   @admin-claude … (seat from the project file)", a room message answered in ~7 s. Plan:
   `docs/superpowers/plans/2026-10-12-seat-auto-join.md`; ledger (git-ignored)
   `.superpowers/sdd/2026-10-12-seat-auto-join/progress.md` has every ruling and deferred minor.
-- **Unmerged branch `perf/seat-first-reply` (5cf2818):** `room_reply` registered with
-  `isDeferred: false` (no ToolSearch before the first reply) and `REPLY_DIRECTIVE` ends the turn
-  after `room_reply`. Measured 7.1 s → 5.1 s first reply, room busy 10.1 s → 6.4 s. Tests green.
-  To release: bump `mod/.claude-plugin/plugin.json` to 0.3.1, merge, push, then
-  `claude plugin marketplace update claude-room` + `claude plugin update room-seat@claude-room`.
-- **Next session's topic (user's call): brainstorm room-turn latency** — what remains is model
+- **room-seat 0.3.1 (merged 2026-10-13):** `room_reply` registered with `isDeferred: false` (no
+  ToolSearch before the first reply) and `REPLY_DIRECTIVE` ends the turn after `room_reply`.
+  Measured 7.1 s → 5.1 s first reply, room busy 10.1 s → 6.4 s. Release loop for a mod change:
+  bump `mod/.claude-plugin/plugin.json`, push, then `claude plugin marketplace update
+  claude-room` + `claude plugin update room-seat@claude-room` (sessions need a restart).
+  Bump the version with `sed`, not PowerShell 5.1 `Set-Content -Encoding utf8` (it adds a BOM).
+- **The core idea is verified end to end (user, 2026-10-13):** room messages reach seats and
+  seats delegate tasks to workers.
+- **Next session's topic (user's call): brainstorm room-turn latency** (re-measure on 0.3.1 first) — what remains is model
   thinking (Opus 5.5 High, ~3 s even for one word), the user's own hooks (~1.2 s per prompt), and
   the closing message Claude writes after `room_reply` (the room's turn stays open until Stop).
 - **Known open issues:**
