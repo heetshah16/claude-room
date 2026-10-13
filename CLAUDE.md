@@ -88,5 +88,8 @@ not `node.exe`. `scripts/dev/seat-latency.cjs` measures a seat's reply time from
   is unblocked but not started.
 - Two cosmetic malformed-commit-message defects remain un-amended by design (never amend without
   being asked) — see git history around `34c4e74` and `0799b7e` if it ever matters.
-- `graphify-out/` holds a knowledge graph of this repo. Update it after a batch of changes with
-  `/graphify --update` (incremental) rather than a full rebuild.
+- `graphify-out/` (git-ignored) holds a knowledge graph of this repo, refreshed 2026-10-13 (1,451
+  nodes, 118 communities). Update it after a batch of changes with `/graphify --update`
+  (incremental). `.graphifyignore` keeps out `videos/` (the user's local explainer-video project,
+  never staged). On Windows run graphify's Python from a script file with a `__main__` guard, not
+  stdin, or its process pool fails.
