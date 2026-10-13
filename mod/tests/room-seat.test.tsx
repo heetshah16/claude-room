@@ -45,6 +45,7 @@ function stubRoom(on, { env = {}, lines = [] as object[], spawn = undefined as a
     posts: [] as { url: string; body: any }[],
     spawns: [] as any[],
     tools: 0,
+    toolSpecs: [] as any[], // every tool.register's spec
     prompted: deferred<any>(), // the first prompt.submit event
     submits: [] as string[], // every prompt.submit's text
     ended: 0, // fake feeds that ended, killed or not
@@ -63,7 +64,7 @@ function stubRoom(on, { env = {}, lines = [] as object[], spawn = undefined as a
   on('session.start', () => ({ cwd: '/work' }))
   on('session.cwd', () => ({ value: typeof cwd === 'function' ? cwd() : cwd }))
   on('command.register', () => ({ value: undefined }))
-  on('tool.register', () => { seen.tools++; return { value: { tool: 'mcp__room-seat__room_reply' } } })
+  on('tool.register', ($, e) => { seen.tools++; seen.toolSpecs.push(e); return { value: { tool: 'mcp__room-seat__room_reply' } } })
   on('ui.status', () => ({ value: undefined }))
   on('ui.log', () => ({ value: undefined }))
   on('http.fetch', ($, e) => {
@@ -116,6 +117,13 @@ test('a session launched as a seat joins at once, with its settings in the envir
   expect(seen.spawns[0].env.ROOM_SEAT_TOKEN).toBe('tok')
   expect(seen.spawns[0].argv.join(' ')).not.toContain('tok')
   expect(seen.tools).toBe(1)
+})
+
+test('room_reply is in the prompt from the start, so a first reply needs no ToolSearch round trip', async ($, on) => {
+  const seen = stubRoom(on, { env: SEAT_ENV, lines: [{ status: 'online' }] })
+  await start($)
+  expect(seen.toolSpecs[0].name).toBe('room_reply')
+  expect(seen.toolSpecs[0].isDeferred).toBe(false)
 })
 
 test('a room turn from the feed is submitted as a prompt, framed as the plugin, not as the user', async ($, on) => {

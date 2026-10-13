@@ -29,6 +29,9 @@ const REPLY_TOOL = {
     },
     required: ['text'],
   },
+  // In the prompt from the start: behind ToolSearch, every session's first
+  // reply waited on an extra model call just to load this schema.
+  isDeferred: false,
 }
 
 let seat = null // { roomUrl, token, handle } while joined

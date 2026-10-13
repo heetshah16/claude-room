@@ -104,6 +104,7 @@ export const REPLY_DIRECTIVE = [
   'When you have finished, you MUST call the room_reply tool to report what you did.',
   'Your normal output does NOT reach the room — room_reply is the only channel to it.',
   'A turn that ends without calling room_reply looks like silence to the people waiting.',
+  'After room_reply, end your turn: anything you write after it reaches no one and keeps the room waiting.',
 ].join('\n')
 
 /**
