@@ -50,3 +50,7 @@ test('an empty turn and an unknown event produce nothing', () => {
   assert.equal(prompt('turn', { messages: [], room: 'r' }), null)
   assert.equal(prompt('decision', { text: 'x' }), null)
 })
+
+test('the reply rule ends the turn at room_reply, so the room is not kept busy by text no one sees', () => {
+  assert.match(REPLY_DIRECTIVE, /after room_reply.*end your turn/i)
+})
