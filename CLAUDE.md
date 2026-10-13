@@ -55,7 +55,7 @@ not `node.exe`. `scripts/dev/seat-latency.cjs` measures a seat's reply time from
 
 ## Where things stand (as of 2026-10-13)
 
-- **Released:** extension **0.0.4** on Open VSX (namespace `claude-room`, unverified) and
+- **Released:** extension **0.0.5** on Open VSX (namespace `claude-room`, unverified) and
   installed in the user's Cursor; plugin `room-seat` **0.3.1** from the GitHub marketplace
   (`heetshah16/claude-room`). `master` = `origin/master` = `origin/orchestrator-parity`.
   Publish with the token in the user-scope env var `OVSX_PAT` (never echo it):
@@ -73,6 +73,11 @@ not `node.exe`. `scripts/dev/seat-latency.cjs` measures a seat's reply time from
   bump `mod/.claude-plugin/plugin.json`, push, then `claude plugin marketplace update
   claude-room` + `claude plugin update room-seat@claude-room` (sessions need a restart).
   Bump the version with `sed`, not PowerShell 5.1 `Set-Content -Encoding utf8` (it adds a BOM).
+- **`extension/README.md` is the public Open VSX page** (written for people who have never heard
+  of Claude Room); development notes live in `extension/DEVELOPMENT.md` (left out of the
+  package). Keep claims there true to the code, and republish to change the store page.
+- **Installing the extension does not install the `room-seat` plugin**: that is a manual
+  one-time `/plugin` step (the README says so). Auto-offering it is a candidate feature.
 - **The core idea is verified end to end (user, 2026-10-13):** room messages reach seats and
   seats delegate tasks to workers.
 - **Next session's topic (user's call): brainstorm room-turn latency** (re-measure on 0.3.1 first) — what remains is model
