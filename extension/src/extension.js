@@ -31,6 +31,7 @@ const REPO_ROOT = roomDir(path.join(__dirname, '..'))
 let supervisor = null
 let output = null
 let roomSession = null // the room, its feed and its fleet — outlives any chat
+let roomStarting = null // the first start while it is still running, shared by every caller
 let chat = null // { panel } — the live chat session, if one is open
 let activeWorkersView = null // the sidebar, which outlives any session
 let activeRoomView = null // the room sidebar, which outlives any session
@@ -85,6 +86,13 @@ function openWorker(context, session, handle) {
  */
 async function ensureSession(context) {
   if (roomSession) return roomSession
+  // Both views ask at their first reveal, at once: a second start would replace
+  // the first room, and its timeout would then stop the one that won.
+  roomStarting ??= startSession(context).finally(() => { roomStarting = null })
+  return roomStarting
+}
+
+async function startSession(context) {
   const stateDir = roomStateDir(context)
   fs.mkdirSync(stateDir, { recursive: true })
 
@@ -463,4 +471,4 @@ async function openChat(context) {
   chat = { panel, orchestrator, roomUrl, token, stateDir, pool }
 }
 
-module.exports = { activate, deactivate }
+module.exports = { activate, deactivate, ensureSession }
